@@ -5,7 +5,7 @@ services:
     image: postgres:17-alpine
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-nectrix}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nectrix}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your .env file}
       POSTGRES_DB: ${POSTGRES_DB:-nectrix}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
@@ -71,7 +71,7 @@ services:
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-nectrix}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-nectrix123}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in your .env file}
     ports:
       - "${MINIO_API_PORT:-9000}:9000"
       - "${MINIO_CONSOLE_PORT:-9001}:9001"

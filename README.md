@@ -61,7 +61,7 @@ Local dev is Docker-only and self-contained — no Java, Go, or Node toolchain n
 | MinIO | 9000 (API), 9001 (console) | S3-compatible object storage |
 
 ```
-cp .env.example .env      # adjust credentials/ports if needed
+cp .env.example .env      # then set POSTGRES_PASSWORD and MINIO_ROOT_PASSWORD — no defaults are shipped
 make up                   # start all infra services
 make ps                   # check health
 make logs                 # tail logs
