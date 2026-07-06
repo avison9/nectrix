@@ -164,16 +164,36 @@ jobs:
         run: |
           POD=$(kubectl get pod -n copy-engine -l app=copy-engine -o jsonpath='{.items[0].metadata.name}')
           kubectl delete pod "$POD" -n copy-engine --wait=false
-          sleep 5
-          kubectl logs "$POD" -n copy-engine 2>&1 | grep -q "draining copy-engine" \
-            || { echo "::error::copy-engine drain log did not fire"; exit 1; }
+          FOUND=false
+          for _ in $(seq 1 10); do
+            if kubectl logs "$POD" -n copy-engine 2>/dev/null | grep -q "draining copy-engine"; then
+              FOUND=true
+              break
+            fi
+            sleep 1
+          done
+          if [ "$FOUND" != "true" ]; then
+            echo "::error::copy-engine drain log did not fire within 10s"
+            kubectl logs "$POD" -n copy-engine 2>&1 || true
+            exit 1
+          fi
       - name: Verify drain hook - behavioral assertion (broker-adapters)
         run: |
           POD=$(kubectl get pod -n copy-engine -l app=broker-adapters -o jsonpath='{.items[0].metadata.name}')
           kubectl delete pod "$POD" -n copy-engine --wait=false
-          sleep 5
-          kubectl logs "$POD" -n copy-engine 2>&1 | grep -q "draining broker-adapters" \
-            || { echo "::error::broker-adapters drain log did not fire"; exit 1; }
+          FOUND=false
+          for _ in $(seq 1 10); do
+            if kubectl logs "$POD" -n copy-engine 2>/dev/null | grep -q "draining broker-adapters"; then
+              FOUND=true
+              break
+            fi
+            sleep 1
+          done
+          if [ "$FOUND" != "true" ]; then
+            echo "::error::broker-adapters drain log did not fire within 10s"
+            kubectl logs "$POD" -n copy-engine 2>&1 || true
+            exit 1
+          fi
       - name: Wait for replacement pods to be healthy again
         run: |
           kubectl rollout status deployment/copy-engine -n copy-engine --timeout=60s
