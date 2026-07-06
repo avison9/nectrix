@@ -2,7 +2,11 @@
 	devcontainer-up devcontainer-build \
 	core-app-build core-app-test \
 	go-build go-test go-lint proto-gen \
-	ts-install ts-build ts-lint
+	ts-install ts-build ts-lint \
+	tf-fmt tf-validate tf-lint tf-checkov \
+	kind-netpol-test kind-hpa-test
+
+TF_DIRS = infra/terraform/aws infra/terraform/gcp
 
 COMPOSE = docker compose -f docker-compose.yml -f .devcontainer/docker-compose.yml
 DC_EXEC = $(COMPOSE) exec devcontainer
@@ -60,3 +64,28 @@ ts-build: ## Build the TS workspace via Turborepo
 
 ts-lint: ## Lint the TS workspace via Turborepo
 	$(DC_EXEC) bash -c "cd /workspace && npx turbo run lint"
+
+# --- infra/terraform: host-level tools (terraform, tflint, checkov), same
+# precedent as kind/kubectl/kustomize below — see infra/terraform/README.md.
+# Fully offline: no cloud credentials are read or required by any of these.
+
+tf-fmt: ## Check Terraform formatting for both clouds
+	terraform fmt -check -recursive infra/terraform
+
+tf-validate: ## terraform init -backend=false + validate for both clouds (no credentials)
+	for d in $(TF_DIRS); do (cd $$d && terraform init -backend=false -input=false && terraform validate); done
+
+tf-lint: ## tflint for both clouds (deep_check stays off — see .tflint.hcl)
+	for d in $(TF_DIRS); do (cd $$d && tflint --init && tflint); done
+
+tf-checkov: ## Static analysis (checkov) across both cloud dirs
+	checkov -d infra/terraform --config-file infra/terraform/.checkov.yaml
+
+# --- infra/kind: local hands-on verification harnesses (AC3/AC4) — host-level
+# tools (kind, kubectl), see infra/kind/README.md.
+
+kind-netpol-test: ## Real kind+Calico run proving the staging/production network-policy shape (AC3)
+	./infra/kind/netpol-test/run.sh
+
+kind-hpa-test: ## Real kind+metrics-server run proving HPA wiring (AC4)
+	./infra/kind/hpa-test/run.sh

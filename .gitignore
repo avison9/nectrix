@@ -22,6 +22,14 @@ node_modules/
 dist/
 .turbo/
 
+# Terraform (.terraform.lock.hcl IS committed, for reproducible provider versions)
+.terraform/
+terraform.tfstate
+terraform.tfstate.backup
+terraform.tfstate.d/
+*.tfplan
+deploy/components/local-minio/secret.yaml
+
 # IDE
 .idea/
 .vscode/*

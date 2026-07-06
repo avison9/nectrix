@@ -6,3 +6,6 @@ resources:
   - copy-engine
   - broker-adapters
   - mt5-bridge-gateway
+  - gateway
+  - admin-portal
+  - async

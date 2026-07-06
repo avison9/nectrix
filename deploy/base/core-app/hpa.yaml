@@ -1,0 +1,22 @@
+# HPA range from docs/16-deployment-architecture.md §16.1 ("Core App pods
+# (Java/Spring Boot) HPA 3-20"). Requires metrics-server in-cluster (see
+# infra/kind/hpa-test for the local proof — `make kind-hpa-test`).
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: core-app
+  namespace: core-app
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: core-app
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

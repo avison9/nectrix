@@ -1,0 +1,29 @@
+# Selected by deploy/overlays/{staging,production}/kustomization.yaml's
+# `components:` list once GCP is the chosen cloud (infra/terraform/gcp) — see
+# deploy/README.md and infra/terraform/README.md. No cluster-autoscaler
+# component here — GKE's node-pool autoscaling{} is built into the control
+# plane (infra/terraform/gcp/modules/gke), unlike AWS's ../cloud-aws.
+#
+# Image registry: once real, CI's `kustomize edit set image` (main-pipeline.yml)
+# should target infra/terraform/gcp/modules/artifact-registry's `repository_url`
+# output instead of ghcr.io — GKE nodes pull from Artifact Registry natively
+# via the node service account's artifactregistry.reader binding (see
+# modules/gke's dedicated node SA + modules/artifact-registry), no
+# imagePullSecret needed. No change required in this component itself.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  - backend-config.yaml
+
+patches:
+  - target:
+      kind: Ingress
+    patch: |-
+      - op: add
+        path: /spec/ingressClassName
+        value: gce
+      - op: add
+        path: /metadata/annotations
+        value:
+          cloud.google.com/backend-config: '{"default": "nectrix-backend-config"}'

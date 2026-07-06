@@ -1,0 +1,33 @@
+# Selected by deploy/overlays/{staging,production}/kustomization.yaml's
+# `components:` list once AWS is the chosen cloud (infra/terraform/aws) — see
+# deploy/README.md and infra/terraform/README.md.
+#
+# Image registry: once real, CI's `kustomize edit set image` (main-pipeline.yml)
+# should target infra/terraform/aws/modules/ecr's `repository_urls` output
+# instead of ghcr.io — EKS nodes pull from ECR natively via the node IAM role
+# (AmazonEC2ContainerRegistryReadOnly, already attached in modules/eks), no
+# imagePullSecret needed. No change required in this component itself.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  - cluster-autoscaler
+
+patches:
+  - target:
+      kind: Ingress
+    patch: |-
+      - op: add
+        path: /spec/ingressClassName
+        value: alb
+      - op: add
+        path: /metadata/annotations
+        value:
+          alb.ingress.kubernetes.io/scheme: internet-facing
+          alb.ingress.kubernetes.io/target-type: ip
+          # Placeholder — set to the real ACM cert ARN once a real AWS account/domain exists.
+          alb.ingress.kubernetes.io/certificate-arn: "REPLACE_WITH_ACM_CERT_ARN"
+          # WAF association: infra/terraform/aws/modules/alb-waf associates the
+          # WebACL directly with the ALB the controller creates from this
+          # Ingress (via `terraform apply -var alb_arn=<arn>` once it exists) —
+          # no annotation needed here for that part.

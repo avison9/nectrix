@@ -1,0 +1,9 @@
+# For local kind testing only (make kind-hpa-test and similar) — adds MinIO
+# in-cluster as a stand-in for the real S3/GCS bucket real environments get
+# from Terraform. Never used by staging/production.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+components:
+  - ../../components/local-minio

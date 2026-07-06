@@ -1,0 +1,11 @@
+# Selected by deploy/overlays/local/kustomization.yaml only — never by
+# staging/production (see deploy/README.md and infra/terraform/README.md's
+# "Object storage" section). secret.example.yaml is documentation only, not a
+# resource here — see it for the imperative `kubectl create secret` step you
+# need to run once before applying this overlay.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  - statefulset.yaml
+  - service.yaml

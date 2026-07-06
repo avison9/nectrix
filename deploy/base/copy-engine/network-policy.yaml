@@ -1,0 +1,37 @@
+# Base default-deny-egress posture toward broker endpoints, per
+# docs/16-deployment-architecture.md §16.2: "no environment before production
+# ever touches a live broker credential, enforced by ... environment-level
+# network policy blocking live-broker API endpoints from non-prod namespaces."
+# Covers copy-engine, broker-adapters, and mt5-bridge-gateway — all three
+# share this namespace (see deploy/README.md).
+#
+# CIDRs below are placeholders (RFC 5737 documentation ranges, not real
+# broker IPs) — TICKET-101 (the real cTrader/MT5 adapters) replaces these with
+# actual vendor demo/live API ranges. This manifest proves the *shape* of the
+# policy; the exact same shape is proven hands-on against a mocked broker
+# endpoint in infra/kind/netpol-test (see infra/kind/README.md and `make
+# kind-netpol-test`). production's live-broker allowance is layered on top by
+# deploy/overlays/production/patch-network-policy-live-allowed.yaml.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: broker-egress
+  namespace: copy-engine
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    # DNS must always be allowed, or nothing else resolves.
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Demo/sandbox broker endpoints — reachable from every environment
+    # (placeholder CIDR, see note above).
+    - to:
+        - ipBlock:
+            cidr: 203.0.113.0/24

@@ -1,0 +1,21 @@
+# Cloud-agnostic on purpose — ingressClassName + controller-specific annotations
+# (ALB vs. GCE) are patched in by deploy/components/cloud-{aws,gcp}, selected
+# per-overlay once a real cloud is chosen. Fronted by the WAF/Cloud Armor
+# policy from infra/terraform/{aws,gcp}/modules/{alb-waf,glb-cloud-armor}.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: gateway
+  namespace: gateway
+spec:
+  rules:
+    - host: app.nectrix.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: gateway
+                port:
+                  number: 8080

@@ -1,0 +1,24 @@
+# Standing in for "a pod in the staging-overlay's cluster" vs. "a pod in the
+# production-overlay's cluster" (AC3's literal wording assumes a single
+# cluster with both) — see infra/kind/README.md for why this is the right
+# test-harness simplification: it proves the NetworkPolicy *shape* that
+# deploy/base/copy-engine/network-policy.yaml (+ production's patch) applies
+# for real, per-environment, in deploy/.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: staging
+  labels:
+    env: staging
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: production
+  labels:
+    env: production
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: live-broker-sim

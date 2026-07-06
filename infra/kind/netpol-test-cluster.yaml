@@ -1,0 +1,9 @@
+# kindnet (kind's default CNI) does NOT enforce NetworkPolicy at all — silently
+# a no-op. Calico is installed instead (infra/kind/vendor/calico-v3.28.0.yaml),
+# which requires the default CNI disabled here first.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: nectrix-netpol-test
+networking:
+  disableDefaultCNI: true
+  podSubnet: "192.168.0.0/16"

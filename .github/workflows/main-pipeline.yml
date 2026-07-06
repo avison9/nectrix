@@ -57,6 +57,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write # for the ECR/Artifact Registry OIDC/WIF steps below — unused (no-op) until those repo variables exist
     strategy:
       # fail-fast (the default) cancels sibling matrix legs the instant one
       # leg fails, which was masking the real per-app error behind a generic
@@ -95,6 +96,45 @@ jobs:
           ignore-unfixed: true
       - name: Push (only reached if Trivy passed)
         run: docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.app.name }}:${{ github.sha }}
+
+      # --- Cloud-native registry mirror (infra/terraform/{aws,gcp}/modules/{ecr,artifact-registry}) ---
+      # Gated on repo variables that don't exist yet — no real cloud account
+      # has been applied against (see infra/terraform/README.md), so these
+      # steps are no-ops today and don't affect this pipeline's already-green
+      # status. Set AWS_ECR_PUSH_ROLE_ARN / GCP_WORKLOAD_IDENTITY_PROVIDER +
+      # GCP_CI_PUSH_SERVICE_ACCOUNT (from those modules' outputs) to activate
+      # whichever cloud is chosen.
+      - name: Configure AWS credentials (OIDC, no long-lived keys)
+        if: vars.AWS_ECR_PUSH_ROLE_ARN != ''
+        uses: aws-actions/configure-aws-credentials@v6.2.1
+        with:
+          role-to-assume: ${{ vars.AWS_ECR_PUSH_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+      - name: Push to ECR
+        if: vars.AWS_ECR_PUSH_ROLE_ARN != ''
+        env:
+          ECR_REGISTRY: ${{ vars.AWS_ECR_REGISTRY }} # e.g. <account-id>.dkr.ecr.<region>.amazonaws.com — from the ecr module's repository_urls output
+        run: |
+          aws ecr get-login-password --region "${{ vars.AWS_REGION || 'us-east-1' }}" | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+          docker tag "${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.app.name }}:${{ github.sha }}" "$ECR_REGISTRY/nectrix/${{ matrix.app.name }}:${{ github.sha }}"
+          docker push "$ECR_REGISTRY/nectrix/${{ matrix.app.name }}:${{ github.sha }}"
+
+      - name: Authenticate to GCP (Workload Identity Federation, no service-account key)
+        if: vars.GCP_WORKLOAD_IDENTITY_PROVIDER != ''
+        uses: google-github-actions/auth@v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_CI_PUSH_SERVICE_ACCOUNT }}
+
+      - name: Push to Artifact Registry
+        if: vars.GCP_WORKLOAD_IDENTITY_PROVIDER != ''
+        env:
+          AR_REPOSITORY: ${{ vars.GCP_ARTIFACT_REGISTRY_URL }} # e.g. <region>-docker.pkg.dev/<project>/nectrix — from the artifact-registry module's repository_url output
+        run: |
+          gcloud auth configure-docker "$(echo "$AR_REPOSITORY" | cut -d/ -f1)" --quiet
+          docker tag "${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.app.name }}:${{ github.sha }}" "$AR_REPOSITORY/${{ matrix.app.name }}:${{ github.sha }}"
+          docker push "$AR_REPOSITORY/${{ matrix.app.name }}:${{ github.sha }}"
 
   db-migration-staging:
     needs: [build-scan-push]

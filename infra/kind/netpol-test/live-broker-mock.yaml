@@ -1,0 +1,31 @@
+# Stands in for a real live-broker API endpoint — just needs to answer HTTP
+# so curl can prove reachability/unreachability.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: live-broker-mock
+  namespace: live-broker-sim
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: live-broker-mock }
+  template:
+    metadata:
+      labels: { app: live-broker-mock }
+    spec:
+      containers:
+        - name: live-broker-mock
+          image: nginxinc/nginx-unprivileged:1.27-alpine
+          ports:
+            - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: live-broker-mock
+  namespace: live-broker-sim
+spec:
+  selector: { app: live-broker-mock }
+  ports:
+    - port: 80
+      targetPort: 8080

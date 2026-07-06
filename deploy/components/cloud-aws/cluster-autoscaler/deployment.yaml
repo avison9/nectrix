@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cluster-autoscaler
+  namespace: kube-system
+  labels: { app: cluster-autoscaler }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: cluster-autoscaler }
+  template:
+    metadata:
+      labels: { app: cluster-autoscaler }
+    spec:
+      serviceAccountName: cluster-autoscaler
+      containers:
+        - name: cluster-autoscaler
+          image: registry.k8s.io/autoscaling/cluster-autoscaler:v1.31.0
+          command:
+            - ./cluster-autoscaler
+            - --cloud-provider=aws
+            # Auto-discovers node groups via the k8s.io/cluster-autoscaler/<cluster>
+            # and k8s.io/cluster-autoscaler/enabled tags set by
+            # infra/terraform/aws/modules/eks's aws_eks_node_group.
+            - --node-group-auto-discovery=asg:tag=k8s.io/cluster-autoscaler/enabled,k8s.io/cluster-autoscaler/CLUSTER_NAME_REPLACED_BY_OVERLAY
+            - --balance-similar-node-groups
+            - --skip-nodes-with-system-pods=false
+          resources:
+            requests: { cpu: 100m, memory: 300Mi }
+            limits: { cpu: 200m, memory: 600Mi }

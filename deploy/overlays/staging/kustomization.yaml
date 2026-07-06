@@ -2,6 +2,12 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../../base
+# One-line change once a real cloud is chosen for staging (see
+# infra/terraform/README.md) — e.g. components: [../../components/cloud-aws]
+components: []
 # `kustomize edit set image ghcr.io/avison9/nectrix/<app>:<sha>` (run by CI
 # from this directory) appends/updates entries here at deploy time.
 images: []
+# No network-policy patch here — deploy/base/copy-engine/network-policy.yaml's
+# demo-only default already matches staging's requirements exactly
+# (docs/16-deployment-architecture.md §16.2). Compare ../production.
