@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: broker-adapters
+  namespace: copy-engine
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: broker-adapters }
+  template:
+    metadata:
+      labels: { app: broker-adapters }
+    spec:
+      # Connection-draining (AC5): the app's own SIGTERM handler (main.go)
+      # logs "draining" and sleeps ~10s before shutting down its HTTP server —
+      # this budget must stay comfortably under terminationGracePeriodSeconds.
+      # No K8s-level preStop hook: distroless/static has no shell to exec
+      # into, and exec-hook stdout isn't captured by `kubectl logs` anyway
+      # (verified — there is no way to observe an exec preStop hook's output),
+      # so the observable drain behavior lives entirely in the app's own logs.
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: broker-adapters
+          image: ghcr.io/avison9/nectrix/broker-adapters:REPLACED_BY_CI
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8091
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8091 }
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8091 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: 200m, memory: 128Mi }

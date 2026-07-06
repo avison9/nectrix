@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: core-app
+  namespace: core-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: core-app }
+  template:
+    metadata:
+      labels: { app: core-app }
+    spec:
+      containers:
+        - name: core-app
+          image: ghcr.io/avison9/nectrix/core-app:REPLACED_BY_CI
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+          readinessProbe:
+            httpGet: { path: /hello, port: 8080 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /hello, port: 8080 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { cpu: 500m, memory: 512Mi }

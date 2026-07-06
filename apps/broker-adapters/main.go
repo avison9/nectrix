@@ -1,16 +1,23 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	domain "github.com/avison9/nectrix/go-domain"
 )
 
 const (
-	serviceName = "broker-adapters"
-	addr        = ":8091"
+	serviceName  = "broker-adapters"
+	addr         = ":8091"
+	drainSleep   = 10 * time.Second
+	shutdownWait = 5 * time.Second
 )
 
 type healthResponse struct {
@@ -29,6 +36,30 @@ func main() {
 		_ = json.NewEncoder(w).Encode(healthResponse{Service: serviceName, Status: "ok"})
 	})
 
-	log.Printf("%s listening on %s", serviceName, addr)
-	log.Fatal(http.ListenAndServe(addr, mux))
+	server := &http.Server{Addr: addr, Handler: mux}
+
+	go func() {
+		log.Printf("%s listening on %s", serviceName, addr)
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("%s: %v", serviceName, err)
+		}
+	}()
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
+	<-stop
+
+	// Connection-draining stub (TICKET-002 AC5): on a real rollout this
+	// would finish in-flight signal processing and hand off shard ownership
+	// before the process exits. terminationGracePeriodSeconds in the
+	// Deployment manifest must exceed drainSleep + shutdownWait.
+	log.Printf("%s draining: finishing in-flight signal processing, handing off shard ownership (stub)", serviceName)
+	time.Sleep(drainSleep)
+
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownWait)
+	defer cancel()
+	if err := server.Shutdown(ctx); err != nil {
+		log.Printf("%s: shutdown error: %v", serviceName, err)
+	}
+	log.Printf("%s: drained, exiting", serviceName)
 }

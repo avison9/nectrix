@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mt5-bridge-gateway
+  namespace: copy-engine
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: mt5-bridge-gateway }
+  template:
+    metadata:
+      labels: { app: mt5-bridge-gateway }
+    spec:
+      containers:
+        - name: mt5-bridge-gateway
+          image: ghcr.io/avison9/nectrix/mt5-bridge-gateway:REPLACED_BY_CI
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8092
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8092 }
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8092 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: 200m, memory: 128Mi }
