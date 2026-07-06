@@ -106,6 +106,13 @@ jobs:
           echo "migrations will run here, against staging Postgres, before the"
           echo "app deployment step below - per docs/16-deployment-architecture.md §16.3."
 
+  # deploy-staging, drain-hook verification, and the E2E smoke check are one
+  # job, not three: each GitHub Actions job runs on its own fresh runner VM,
+  # and the ephemeral kind cluster created here only exists as containers on
+  # THIS runner. A later job has no way to reach it — it would need its own
+  # kubeconfig/cluster that was never created, which is exactly the bug this
+  # consolidation fixes (previously split into deploy-staging/verify-drain-hook/
+  # e2e-staging, each on a different machine with no shared cluster).
   deploy-staging:
     needs: [db-migration-staging]
     runs-on: ubuntu-latest
@@ -147,25 +154,20 @@ jobs:
           kubectl rollout status deployment/broker-adapters -n copy-engine --timeout=120s
           kubectl rollout status deployment/mt5-bridge-gateway -n copy-engine --timeout=120s
           kubectl rollout status deployment/core-app -n core-app --timeout=180s
-
-  verify-drain-hook:
-    needs: [deploy-staging]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Static assertion - terminationGracePeriodSeconds is set
+      - name: Verify drain hook - static assertion (terminationGracePeriodSeconds is set)
         run: |
           for dep in copy-engine broker-adapters; do
             GRACE=$(kubectl get deployment "$dep" -n copy-engine -o jsonpath='{.spec.template.spec.terminationGracePeriodSeconds}')
             [ "$GRACE" = "30" ] || { echo "::error::$dep: terminationGracePeriodSeconds not set as expected (got '$GRACE')"; exit 1; }
           done
-      - name: Behavioral assertion - drain log actually fires (copy-engine)
+      - name: Verify drain hook - behavioral assertion (copy-engine)
         run: |
           POD=$(kubectl get pod -n copy-engine -l app=copy-engine -o jsonpath='{.items[0].metadata.name}')
           kubectl delete pod "$POD" -n copy-engine --wait=false
           sleep 5
           kubectl logs "$POD" -n copy-engine 2>&1 | grep -q "draining copy-engine" \
-            || { echo "::error::copy-engine preStop/drain log did not fire"; exit 1; }
-      - name: Behavioral assertion - drain log actually fires (broker-adapters)
+            || { echo "::error::copy-engine drain log did not fire"; exit 1; }
+      - name: Verify drain hook - behavioral assertion (broker-adapters)
         run: |
           POD=$(kubectl get pod -n copy-engine -l app=broker-adapters -o jsonpath='{.items[0].metadata.name}')
           kubectl delete pod "$POD" -n copy-engine --wait=false
@@ -176,12 +178,7 @@ jobs:
         run: |
           kubectl rollout status deployment/copy-engine -n copy-engine --timeout=60s
           kubectl rollout status deployment/broker-adapters -n copy-engine --timeout=60s
-
-  e2e-staging:
-    needs: [verify-drain-hook]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Smoke check core-app and copy-engine
+      - name: E2E smoke check (core-app and copy-engine)
         run: |
           kubectl port-forward -n copy-engine svc/copy-engine 18090:8090 &
           kubectl port-forward -n core-app svc/core-app 18080:8080 &
@@ -193,7 +190,7 @@ jobs:
         run: kind delete cluster --name nectrix-staging
 
   db-migration-production:
-    needs: [e2e-staging]
+    needs: [deploy-staging]
     runs-on: ubuntu-latest
     steps:
       - run: |
