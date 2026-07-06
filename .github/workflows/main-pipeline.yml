@@ -162,48 +162,38 @@ jobs:
           done
       - name: Verify drain hook - behavioral assertion (copy-engine)
         run: |
+          # Polling `kubectl logs` synchronously after delete races against
+          # kind/containerd tearing the pod down on the GitHub Actions runner
+          # (confirmed: the image itself responds to SIGTERM instantly when
+          # tested directly with `docker kill`; this is specifically about
+          # capturing that output through kubectl against a terminating pod
+          # in this environment) — stream logs to a file continuously
+          # *before* deleting instead, which keeps whatever was written up to
+          # whenever the connection actually breaks.
           POD=$(kubectl get pod -n copy-engine -l app=copy-engine -o jsonpath='{.items[0].metadata.name}')
+          kubectl logs -f "$POD" -n copy-engine > /tmp/copy-engine-drain.log 2>&1 &
+          LOGPID=$!
+          sleep 1
           kubectl delete pod "$POD" -n copy-engine --wait=false
-          FOUND=false
-          # The app's own SIGTERM handler logs "draining" immediately but
-          # then sleeps ~10s before shutting down (see main.go's drainSleep +
-          # shutdownWait) — the pod object disappears from the API server
-          # shortly after that, around the same 10-15s mark. A 10x1s budget
-          # raced against that window and lost intermittently; 25x1s gives
-          # real margin beyond the app's own ~15s exit timeline.
-          for _ in $(seq 1 25); do
-            if kubectl logs "$POD" -n copy-engine 2>/dev/null | grep -q "draining copy-engine"; then
-              FOUND=true
-              break
-            fi
-            sleep 1
-          done
-          if [ "$FOUND" != "true" ]; then
-            echo "::error::copy-engine drain log did not fire within 25s"
-            kubectl logs "$POD" -n copy-engine 2>&1 || true
+          sleep 20
+          kill "$LOGPID" 2>/dev/null || true
+          if ! grep -q "draining copy-engine" /tmp/copy-engine-drain.log; then
+            echo "::error::copy-engine drain log did not fire within 20s"
+            cat /tmp/copy-engine-drain.log || true
             exit 1
           fi
       - name: Verify drain hook - behavioral assertion (broker-adapters)
         run: |
           POD=$(kubectl get pod -n copy-engine -l app=broker-adapters -o jsonpath='{.items[0].metadata.name}')
+          kubectl logs -f "$POD" -n copy-engine > /tmp/broker-adapters-drain.log 2>&1 &
+          LOGPID=$!
+          sleep 1
           kubectl delete pod "$POD" -n copy-engine --wait=false
-          FOUND=false
-          # The app's own SIGTERM handler logs "draining" immediately but
-          # then sleeps ~10s before shutting down (see main.go's drainSleep +
-          # shutdownWait) — the pod object disappears from the API server
-          # shortly after that, around the same 10-15s mark. A 10x1s budget
-          # raced against that window and lost intermittently; 25x1s gives
-          # real margin beyond the app's own ~15s exit timeline.
-          for _ in $(seq 1 25); do
-            if kubectl logs "$POD" -n copy-engine 2>/dev/null | grep -q "draining broker-adapters"; then
-              FOUND=true
-              break
-            fi
-            sleep 1
-          done
-          if [ "$FOUND" != "true" ]; then
-            echo "::error::broker-adapters drain log did not fire within 25s"
-            kubectl logs "$POD" -n copy-engine 2>&1 || true
+          sleep 20
+          kill "$LOGPID" 2>/dev/null || true
+          if ! grep -q "draining broker-adapters" /tmp/broker-adapters-drain.log; then
+            echo "::error::broker-adapters drain log did not fire within 20s"
+            cat /tmp/broker-adapters-drain.log || true
             exit 1
           fi
       - name: Wait for replacement pods to be healthy again
