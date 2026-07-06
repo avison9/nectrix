@@ -16,8 +16,8 @@ jobs:
       go-apps: ${{ steps.filter.outputs.go-apps }}
       ts-apps: ${{ steps.filter.outputs.ts-apps }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
+      - uses: actions/checkout@v7.0.0
+      - uses: dorny/paths-filter@v4.0.2
         id: filter
         with:
           filters: |
