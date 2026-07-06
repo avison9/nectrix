@@ -37,7 +37,7 @@ Full rationale for each choice: `../nectrix_plan/docs/13-technology-stack.md`.
 
 ## Roadmap
 
-- **Phase 0 — Foundation** *(current)*: repo scaffolding, CI/CD, K8s/Terraform, DB schema/migrations, auth/RBAC, message bus, Redis caching, a stub broker adapter, observability, secrets/envelope encryption, and an empty Admin Portal shell. Nothing user-facing yet.
+- **Phase 0 — Foundation** *(current)*: repo scaffolding ✅, CI/CD, K8s/Terraform, DB schema/migrations, auth/RBAC, message bus, Redis caching, a stub broker adapter, observability, secrets/envelope encryption, and an empty Admin Portal shell. Nothing user-facing yet.
 - **Phase 1 — MVP**: real cTrader/MT5 adapters, the full copy engine (sizing, risk guard, partial-close/SL-TP sync, drawdown protection, reconciliation), invitation-based onboarding, broker IB links, both fee-collection methods, a basic leaderboard, the web dashboard, and Admin Portal MVP features.
 - **Phase 2 — V2**: native mobile apps, multi-master portfolios/follow-requests, reverse-copy, reviews, demo-preview copy, partner/IB program dashboard, dispute tooling, feature flags, exportable statements, fraud queue, table partitioning.
 - **Phase 3 — Enterprise**: MT5 Manager API broker partnerships, multi-region/active-active DR, white-label, negotiated take-rates, full KYC/AML, and additive AI features (strategy analysis, portfolio optimization, anomaly detection).
@@ -73,11 +73,47 @@ make clean                # stop and wipe local data volumes
 
 Application toolchains live in a VS Code Dev Container (`.devcontainer/`), not on the host:
 
-- Java 21 + Gradle
-- Go 1.23
-- Node LTS
+- Java 21 + Gradle 9.6.1
+- Go 1.23 + protoc/protoc-gen-go + golangci-lint
+- Node 22 + npm
 - Docker CLI (via docker-outside-of-docker, for building/testing images from inside the container)
 
-Open this repo in VS Code with the **Dev Containers** extension and "Reopen in Container" — it builds the toolchain image and joins the same Docker network as the infra services above, reachable from inside the container at `postgres:5432`, `redis:6379`, `kafka:29092`, `minio:9000`.
+Open this repo in VS Code with the **Dev Containers** extension and "Reopen in Container" — it builds the toolchain image and joins the same Docker network as the infra services above, reachable from inside the container at `postgres:5432`, `redis:6379`, `kafka:29092`, `minio:9000`. Ports `8080` (core-app), `8090`–`8092` (the three Go services), `3000` (web), and `3001` (admin-portal) are also forwarded to the host.
 
-Application scaffolding (`apps/core-app`, `apps/copy-engine`, `apps/broker-adapters`, `apps/mt5-bridge-gateway`, `apps/web`, `apps/admin-portal`) hasn't been created yet — that's `TICKET-001` in `phases/phase-0-foundation/`, tracked as the next piece of work.
+## Repository layout
+
+TICKET-001 (repo scaffolding) is done. The monorepo is polyglot on purpose — one JS-only tool doesn't fit Java/Go/TypeScript, so each language ecosystem uses its own idiomatic tooling:
+
+```
+apps/
+├── core-app/          Java 21 + Gradle multi-module Spring Boot app
+│   ├── bootstrap/         entrypoint + ArchUnit module-boundary tests
+│   ├── modules/           auth, invitations, social, billing, admin, analytics, notifications
+│   └── archunit-fixtures/ permanent fixture proving the boundary rule actually fires
+├── copy-engine/       Go — hello-world on :8090 (real pipeline lands in Phase 1)
+├── broker-adapters/   Go — hello-world on :8091
+├── mt5-bridge-gateway/ Go — hello-world on :8092
+├── web/               Next.js + TS + Tailwind, follower-facing, :3000
+└── admin-portal/      Next.js + TS + Tailwind, separate deployable, :3001
+
+packages/
+├── go-domain/         shared Go structs (normalized domain types) + Deduper idempotency interface
+├── event-contracts/   one canonical .proto, generated into Go and Java, with a shared round-trip test
+├── domain-model/      TypeScript mirror of the normalized types, for frontend DX
+└── api-client/        stub — populated once real HTTP APIs exist
+```
+
+Each app/package has its own README pointing back to the relevant `nectrix_plan/docs/` sections. Module/app boundaries are enforced automatically, not just by convention: ArchUnit blocks any Core App module from importing another's `repository`/`domain` package directly, and `eslint-plugin-boundaries` blocks `web` and `admin-portal` from importing each other.
+
+### Commands
+
+```
+make core-app-build   # ./gradlew build (Java)
+make core-app-test    # ./gradlew test — includes the ArchUnit boundary checks
+make go-build         # go build across all 5 Go modules
+make go-lint          # golangci-lint across all 5 Go modules
+make proto-gen        # regenerate Go code from packages/event-contracts/proto
+make ts-install       # npm install across the TS workspace
+make ts-build         # turbo run build (web, admin-portal, domain-model, api-client)
+make ts-lint          # turbo run lint, including the boundaries rule
+```
