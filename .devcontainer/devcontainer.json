@@ -8,19 +8,9 @@
   "workspaceFolder": "/workspace",
   "shutdownAction": "stopCompose",
   "features": {
-    "ghcr.io/devcontainers/features/java:1": {
-      "version": "21",
-      "installGradle": true
-    },
-    "ghcr.io/devcontainers/features/go:1": {
-      "version": "1.23"
-    },
-    "ghcr.io/devcontainers/features/node:1": {
-      "version": "lts"
-    },
     "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}
   },
-  "forwardPorts": [5432, 6379, 9092, 8081, 9000, 9001],
+  "forwardPorts": [5432, 6379, 9092, 8081, 9000, 9001, 8080, 8090, 8091, 8092, 3000, 3001],
   "postCreateCommand": "echo 'Nectrix dev container ready. Infra services reachable at postgres:5432, redis:6379, kafka:29092, minio:9000 (in-container hostnames).'",
   "customizations": {
     "vscode": {

@@ -1,0 +1,31 @@
+plugins {
+    java
+    application
+    id("org.springframework.boot") version "4.1.0"
+    id("io.spring.dependency-management") version "1.1.7"
+}
+
+dependencies {
+    implementation("org.springframework.boot:spring-boot-starter-web")
+    implementation("com.nectrix:event-contracts")
+
+    implementation(project(":modules:auth"))
+    implementation(project(":modules:invitations"))
+    implementation(project(":modules:social"))
+    implementation(project(":modules:billing"))
+    implementation(project(":modules:admin"))
+    implementation(project(":modules:analytics"))
+    implementation(project(":modules:notifications"))
+
+    testImplementation("org.springframework.boot:spring-boot-starter-test")
+    testImplementation("com.tngtech.archunit:archunit-junit5:1.4.2")
+    testImplementation(project(":archunit-fixtures"))
+}
+
+application {
+    mainClass.set("com.nectrix.coreapp.bootstrap.CoreAppApplication")
+}
+
+tasks.test {
+    useJUnitPlatform()
+}

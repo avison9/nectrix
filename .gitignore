@@ -8,6 +8,13 @@ build/
 
 # Go
 bin/
+# `go build` with no -o writes a binary named after the directory in place.
+apps/copy-engine/copy-engine
+apps/broker-adapters/broker-adapters
+apps/mt5-bridge-gateway/mt5-bridge-gateway
+
+# Native JDK/SDK bundles accidentally copied/symlinked into the tree
+*.jdk/
 
 # Node
 node_modules/

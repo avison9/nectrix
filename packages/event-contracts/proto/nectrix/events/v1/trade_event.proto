@@ -1,0 +1,63 @@
+syntax = "proto3";
+
+package nectrix.events.v1;
+
+option go_package = "github.com/avison9/nectrix/event-contracts/go/gen/nectrix/events/v1;eventsv1";
+option java_package = "com.nectrix.events.v1";
+option java_multiple_files = true;
+
+// Canonical wire representation of the types in
+// nectrix_plan/docs/05-domain-model.md §5.3 — one definition, generated into
+// both Java (core-app) and Go (copy-engine, broker-adapters) so the event
+// contract has a single source of truth instead of three hand-maintained copies.
+
+enum AssetClass {
+  ASSET_CLASS_UNSPECIFIED = 0;
+  ASSET_CLASS_FX = 1;
+  ASSET_CLASS_INDEX = 2;
+  ASSET_CLASS_COMMODITY = 3;
+  ASSET_CLASS_CRYPTO = 4;
+  ASSET_CLASS_STOCK_CFD = 5;
+}
+
+message NormalizedSymbol {
+  string canonical_code = 1; // platform's own symbol code, e.g. "EURUSD"
+  AssetClass asset_class = 2;
+}
+
+enum TradeDirection {
+  TRADE_DIRECTION_UNSPECIFIED = 0;
+  TRADE_DIRECTION_BUY = 1;
+  TRADE_DIRECTION_SELL = 2;
+}
+
+message NormalizedPosition {
+  string broker_position_id = 1;
+  NormalizedSymbol symbol = 2;
+  TradeDirection direction = 3;
+  double volume_lots = 4;
+  double open_price = 5;
+  optional double current_sl_price = 6;
+  optional double current_tp_price = 7;
+  string opened_at = 8;
+}
+
+enum TradeEventType {
+  TRADE_EVENT_TYPE_UNSPECIFIED = 0;
+  TRADE_EVENT_TYPE_POSITION_OPENED = 1;
+  TRADE_EVENT_TYPE_POSITION_MODIFIED = 2;
+  TRADE_EVENT_TYPE_POSITION_PARTIALLY_CLOSED = 3;
+  TRADE_EVENT_TYPE_POSITION_CLOSED = 4;
+}
+
+// The event a master's BrokerAdapter emits; input to the Copy Engine.
+message NormalizedTradeEvent {
+  string event_id = 1; // unique, used as idempotency source
+  string master_broker_account_id = 2;
+  TradeEventType event_type = 3;
+  NormalizedPosition position = 4;
+  optional double closed_volume_lots = 5; // for PARTIALLY_CLOSED / CLOSED
+  optional double fill_price = 6;
+  string server_timestamp = 7;
+  string received_at_gateway = 8; // when platform observed it
+}
