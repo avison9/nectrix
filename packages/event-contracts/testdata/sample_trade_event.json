@@ -1,0 +1,20 @@
+{
+  "eventId": "evt_01HXAMPLE0000000000000001",
+  "masterBrokerAccountId": "bacc_master_0001",
+  "eventType": "TRADE_EVENT_TYPE_POSITION_OPENED",
+  "position": {
+    "brokerPositionId": "pos_0001",
+    "symbol": {
+      "canonicalCode": "EURUSD",
+      "assetClass": "ASSET_CLASS_FX"
+    },
+    "direction": "TRADE_DIRECTION_BUY",
+    "volumeLots": 1.5,
+    "openPrice": 1.0851,
+    "currentSlPrice": 1.08,
+    "currentTpPrice": 1.095,
+    "openedAt": "2026-07-06T12:00:00Z"
+  },
+  "serverTimestamp": "2026-07-06T12:00:00Z",
+  "receivedAtGateway": "2026-07-06T12:00:00.150Z"
+}

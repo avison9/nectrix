@@ -1,11 +1,18 @@
 services:
   devcontainer:
     build:
-      context: .
+      context: ./.devcontainer
       dockerfile: Dockerfile
     volumes:
-      - ../..:/workspace:cached
+      - .:/workspace:cached
     command: sleep infinity
+    ports:
+      - "8080:8080"   # core-app
+      - "8090:8090"   # copy-engine
+      - "8091:8091"   # broker-adapters
+      - "8092:8092"   # mt5-bridge-gateway
+      - "3000:3000"   # web
+      - "3001:3001"   # admin-portal
     depends_on:
       postgres:
         condition: service_healthy
