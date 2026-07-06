@@ -2,7 +2,7 @@
 
 Broker Adapter workers — Go processes implementing the `BrokerAdapter` interface for each supported broker (cTrader via Open API first, in Phase 1), normalizing broker-specific behavior into the canonical domain types the Copy Engine operates on. A separate deployable from `copy-engine`, sharing the same normalized types and idempotency primitives.
 
-This ticket (TICKET-001) only stands up the module skeleton and a `/healthz` hello-world endpoint. The `BrokerAdapter` interface itself (and a stub adapter emitting synthetic events) is TICKET-009; real cTrader/MT5 connectivity is Phase 1.
+TICKET-001 stood up the module skeleton and a `/healthz` hello-world endpoint. TICKET-002 added connection-draining: an in-process `SIGTERM` handler logs a drain message and waits ~10s before shutting down its HTTP server — see `main.go`. The `BrokerAdapter` interface itself (and a stub adapter emitting synthetic events) is TICKET-009; real cTrader/MT5 connectivity is Phase 1.
 
 ## Design references
 
@@ -16,10 +16,21 @@ This ticket (TICKET-001) only stands up the module skeleton and a `/healthz` hel
 
 - `packages/go-domain` — shared normalized domain types and the `Deduper` idempotency interface, tied together via the root `go.work`.
 
+## Container image
+
+`Dockerfile` here is multi-stage (`golang:1.26.4-bookworm` build → `gcr.io/distroless/static-debian12:nonroot` runtime). **Build context must be the repo root**, not this directory:
+
+```
+docker build -f apps/broker-adapters/Dockerfile -t broker-adapters .
+```
+
+CI builds, Trivy-scans, and pushes this to `ghcr.io/avison9/nectrix/broker-adapters:<commit-sha>` on every merge to `main` — see the root README's CI/CD section. Deployed via `deploy/base/broker-adapters/` (Kustomize), in the `copy-engine` namespace.
+
 ## Commands
 
 ```
 make go-build   # builds all Go modules, including this one
+make go-test    # tests all Go modules, including this one
 make go-lint    # golangci-lint across all Go modules
 ```
 

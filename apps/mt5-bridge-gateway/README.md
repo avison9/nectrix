@@ -14,10 +14,21 @@ This ticket (TICKET-001) only stands up the module skeleton and a `/healthz` hel
 
 - `packages/go-domain` — shared normalized domain types and the `Deduper` idempotency interface, tied together via the root `go.work`.
 
+## Container image
+
+`Dockerfile` here is multi-stage (`golang:1.26.4-bookworm` build → `gcr.io/distroless/static-debian12:nonroot` runtime). **Build context must be the repo root**, not this directory:
+
+```
+docker build -f apps/mt5-bridge-gateway/Dockerfile -t mt5-bridge-gateway .
+```
+
+CI builds, Trivy-scans, and pushes this to `ghcr.io/avison9/nectrix/mt5-bridge-gateway:<commit-sha>` on every merge to `main` — see the root README's CI/CD section. Deployed via `deploy/base/mt5-bridge-gateway/` (Kustomize), in the `copy-engine` namespace. No connection-draining hook here (AC5 of TICKET-002 named only `copy-engine`/`broker-adapters`) — a one-line addition later if needed.
+
 ## Commands
 
 ```
 make go-build   # builds all Go modules, including this one
+make go-test    # tests all Go modules, including this one
 make go-lint    # golangci-lint across all Go modules
 ```
 

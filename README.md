@@ -37,7 +37,7 @@ Full rationale for each choice: `../nectrix_plan/docs/13-technology-stack.md`.
 
 ## Roadmap
 
-- **Phase 0 — Foundation** *(current)*: repo scaffolding ✅, CI/CD, K8s/Terraform, DB schema/migrations, auth/RBAC, message bus, Redis caching, a stub broker adapter, observability, secrets/envelope encryption, and an empty Admin Portal shell. Nothing user-facing yet.
+- **Phase 0 — Foundation** *(current)*: repo scaffolding ✅, CI/CD ✅, K8s/Terraform, DB schema/migrations, auth/RBAC, message bus, Redis caching, a stub broker adapter, observability, secrets/envelope encryption, and an empty Admin Portal shell. Nothing user-facing yet.
 - **Phase 1 — MVP**: real cTrader/MT5 adapters, the full copy engine (sizing, risk guard, partial-close/SL-TP sync, drawdown protection, reconciliation), invitation-based onboarding, broker IB links, both fee-collection methods, a basic leaderboard, the web dashboard, and Admin Portal MVP features.
 - **Phase 2 — V2**: native mobile apps, multi-master portfolios/follow-requests, reverse-copy, reviews, demo-preview copy, partner/IB program dashboard, dispute tooling, feature flags, exportable statements, fraud queue, table partitioning.
 - **Phase 3 — Enterprise**: MT5 Manager API broker partnerships, multi-region/active-active DR, white-label, negotiated take-rates, full KYC/AML, and additive AI features (strategy analysis, portfolio optimization, anomaly detection).
@@ -86,13 +86,13 @@ TICKET-001 (repo scaffolding) is done. The monorepo is polyglot on purpose — o
 
 ```
 apps/
-├── core-app/          Java 21 + Gradle multi-module Spring Boot app
+├── core-app/          Java 21 + Gradle multi-module Spring Boot app (+ Dockerfile)
 │   ├── bootstrap/         entrypoint + ArchUnit module-boundary tests
 │   ├── modules/           auth, invitations, social, billing, admin, analytics, notifications
 │   └── archunit-fixtures/ permanent fixture proving the boundary rule actually fires
-├── copy-engine/       Go — hello-world on :8090 (real pipeline lands in Phase 1)
-├── broker-adapters/   Go — hello-world on :8091
-├── mt5-bridge-gateway/ Go — hello-world on :8092
+├── copy-engine/       Go — :8090, in-process SIGTERM drain handler (+ Dockerfile)
+├── broker-adapters/   Go — :8091, in-process SIGTERM drain handler (+ Dockerfile)
+├── mt5-bridge-gateway/ Go — :8092 (+ Dockerfile)
 ├── web/               Next.js + TS + Tailwind, follower-facing, :3000
 └── admin-portal/      Next.js + TS + Tailwind, separate deployable, :3001
 
@@ -101,6 +101,17 @@ packages/
 ├── event-contracts/   one canonical .proto, generated into Go and Java, with a shared round-trip test
 ├── domain-model/      TypeScript mirror of the normalized types, for frontend DX
 └── api-client/        stub — populated once real HTTP APIs exist
+
+deploy/                Kustomize manifests for the 4 backend deployables
+├── base/               namespaces + per-app Deployment/Service/kustomization
+└── overlays/
+    ├── staging/        image tags patched in by CI at deploy time
+    └── production/     same shape, gated behind manual approval
+
+.github/workflows/
+├── _build-test.yml     reusable lint/build/test jobs, shared by both workflows below
+├── pr-checks.yml        on: pull_request — path-filtered per stack
+└── main-pipeline.yml    on: push(main) — full pipeline through production
 ```
 
 Each app/package has its own README pointing back to the relevant `nectrix_plan/docs/` sections. Module/app boundaries are enforced automatically, not just by convention: ArchUnit blocks any Core App module from importing another's `repository`/`domain` package directly, and `eslint-plugin-boundaries` blocks `web` and `admin-portal` from importing each other.
@@ -111,9 +122,34 @@ Each app/package has its own README pointing back to the relevant `nectrix_plan/
 make core-app-build   # ./gradlew build (Java)
 make core-app-test    # ./gradlew test — includes the ArchUnit boundary checks
 make go-build         # go build across all 5 Go modules
+make go-test          # go test across all 5 Go modules
 make go-lint          # golangci-lint across all 5 Go modules
 make proto-gen        # regenerate Go code from packages/event-contracts/proto
 make ts-install       # npm install across the TS workspace
 make ts-build         # turbo run build (web, admin-portal, domain-model, api-client)
 make ts-lint          # turbo run lint, including the boundaries rule
 ```
+
+## CI/CD pipeline
+
+TICKET-002 is done. Every PR runs lint/build/test (path-filtered per stack — a PR touching only `apps/web` doesn't trigger a Gradle build); merging to `main` runs the full pipeline unattended through a real GitHub Environment approval gate:
+
+```
+PR:    changes (path-filter) → build-test (core-app / go-apps / ts-apps, as relevant)
+
+main:  build-test → integration-test (ephemeral Postgres/Redis/Kafka via docker-compose)
+       → build-scan-push (4 backends: build image → Trivy scan, CRITICAL/HIGH gated → push to GHCR)
+       → db-migration-staging (no-op placeholder until TICKET-004)
+       → deploy-staging (ephemeral kind cluster: deploy, verify the connection-draining
+         hook fires, E2E smoke check, teardown — all in one job, since the cluster only
+         exists on that job's runner)
+       → db-migration-production (no-op placeholder)
+       → deploy-production (same shape, behind a required-reviewer approval gate)
+```
+
+Notes:
+- **No persistent cluster yet** (that's TICKET-003) — staging/production "deploys" are ephemeral `kind` clusters created and torn down within a single CI job, using `kubectl apply -k` against `deploy/overlays/{staging,production}`. Once a real cluster exists, a real GitOps controller (ArgoCD/Flux) reconciling it continuously is the natural next step.
+- **Connection-draining** (`copy-engine`, `broker-adapters`): handled by an in-process `SIGTERM` handler in each app (see `main.go`), not a Kubernetes `preStop` hook — the distroless runtime images have no shell to exec into, and (discovered the hard way) `kubectl logs` doesn't reliably capture an exec hook's output anyway.
+- **Registry**: `ghcr.io/avison9/nectrix/<app>:<commit-sha>`, packages default to private on first push.
+- **Branch protection** on `main` requires all `pr-checks.yml` job names as status checks (configured via the GitHub API, not committed YAML — a skipped job counts as passing).
+- **Production approval**: the `production` GitHub Environment requires a review from `avison9` before `deploy-production` proceeds — configured via the GitHub API/UI, not code.
