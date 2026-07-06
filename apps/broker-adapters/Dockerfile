@@ -4,7 +4,7 @@
 # via local `use` directives — those sibling directories must be in context.)
 
 # ---- Build stage ----
-FROM golang:1.23.4-bookworm AS build
+FROM golang:1.26.4-bookworm AS build
 WORKDIR /workspace
 
 COPY go.work go.work.sum ./

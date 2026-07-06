@@ -74,7 +74,7 @@ make clean                # stop and wipe local data volumes
 Application toolchains live in a VS Code Dev Container (`.devcontainer/`), not on the host:
 
 - Java 21 + Gradle 9.6.1
-- Go 1.23 + protoc/protoc-gen-go + golangci-lint
+- Go 1.26.4 + protoc/protoc-gen-go + golangci-lint
 - Node 22 + npm
 - Docker CLI (via docker-outside-of-docker, for building/testing images from inside the container)
 

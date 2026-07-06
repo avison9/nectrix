@@ -1,6 +1,6 @@
 FROM mcr.microsoft.com/devcontainers/base:ubuntu-24.04
 
-ARG GO_VERSION=1.23.4
+ARG GO_VERSION=1.26.4
 ARG NODE_MAJOR=22
 ARG GRADLE_VERSION=9.6.1
 
