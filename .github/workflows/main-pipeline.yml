@@ -131,6 +131,7 @@ jobs:
           done
       - name: Install kustomize
         run: |
+          mkdir -p /tmp/kustomize-bin
           curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash -s -- 5.7.1 /tmp/kustomize-bin
           echo "/tmp/kustomize-bin" >> "$GITHUB_PATH"
       - name: Patch image tags into the staging overlay
@@ -226,6 +227,7 @@ jobs:
           done
       - name: Install kustomize
         run: |
+          mkdir -p /tmp/kustomize-bin
           curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash -s -- 5.7.1 /tmp/kustomize-bin
           echo "/tmp/kustomize-bin" >> "$GITHUB_PATH"
       - name: Patch image tags into the production overlay
