@@ -29,7 +29,14 @@ jobs:
         run: ./gradlew build
 
   go-apps:
-    if: inputs.run-go-apps
+    # Deliberately no job-level `if:` here — a matrix only expands into its
+    # per-leg check-run names (e.g. "go-apps (apps/copy-engine, copy-engine)")
+    # once the job actually starts. A job-level `if: false` skips before that
+    # expansion, reporting one unexpanded "go-apps" check instead of the 5
+    # matrix-leg names branch protection's required-status-checks expects —
+    # those 5 required checks would then never report and block merges
+    # forever. Gating each step instead keeps the matrix always expanding
+    # into the same 5 named checks, whether or not there's real work to do.
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -40,17 +47,22 @@ jobs:
           - { dir: apps/broker-adapters, name: broker-adapters }
           - { dir: apps/mt5-bridge-gateway, name: mt5-bridge-gateway }
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - if: inputs.run-go-apps
+        uses: actions/checkout@v4
+      - if: inputs.run-go-apps
+        uses: actions/setup-go@v5
         with:
           go-version: "1.23.4"
       - name: Build (mirrors make go-build)
+        if: inputs.run-go-apps
         working-directory: ${{ matrix.module.dir }}
         run: go build -o /dev/null ./...
       - name: Test (mirrors make go-test)
+        if: inputs.run-go-apps
         working-directory: ${{ matrix.module.dir }}
         run: go test ./...
-      - uses: golangci/golangci-lint-action@v6
+      - if: inputs.run-go-apps
+        uses: golangci/golangci-lint-action@v6
         with:
           working-directory: ${{ matrix.module.dir }}
           version: latest

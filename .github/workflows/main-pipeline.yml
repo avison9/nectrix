@@ -1,0 +1,241 @@
+name: Main Pipeline
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAMESPACE: avison9/nectrix
+
+jobs:
+  build-test:
+    uses: ./.github/workflows/_build-test.yml
+    with:
+      run-core-app: true
+      run-go-apps: true
+      run-ts-apps: true
+
+  integration-test:
+    needs: [build-test]
+    runs-on: ubuntu-latest
+    env:
+      POSTGRES_PASSWORD: ci-throwaway-password
+      MINIO_ROOT_PASSWORD: ci-throwaway-password
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start ephemeral infra (Postgres, Redis, Kafka)
+        run: docker compose -f docker-compose.yml up -d --wait postgres redis kafka
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+      - name: core-app infra connectivity smoke test
+        working-directory: apps/core-app
+        run: ./gradlew integrationTest
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23.4"
+      - name: Go services infra connectivity smoke test
+        run: |
+          for d in apps/copy-engine apps/broker-adapters apps/mt5-bridge-gateway; do
+            (cd "$d" && go test -tags=integration ./...)
+          done
+      - name: Tear down infra
+        if: always()
+        run: docker compose -f docker-compose.yml down -v
+
+  build-scan-push:
+    needs: [integration-test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        app:
+          - { name: core-app, dockerfile: apps/core-app/Dockerfile }
+          - { name: copy-engine, dockerfile: apps/copy-engine/Dockerfile }
+          - { name: broker-adapters, dockerfile: apps/broker-adapters/Dockerfile }
+          - { name: mt5-bridge-gateway, dockerfile: apps/mt5-bridge-gateway/Dockerfile }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.app.dockerfile }}
+          push: false
+          load: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.app.name }}:${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.app.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.app.name }}
+      - uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.app.name }}:${{ github.sha }}
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          ignore-unfixed: true
+      - name: Push (only reached if Trivy passed)
+        run: docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.app.name }}:${{ github.sha }}
+
+  db-migration-staging:
+    needs: [build-scan-push]
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "::notice::No migration tool/schema exists yet (TICKET-004)."
+          echo "This stage is a structural placeholder: expand-phase (add-only)"
+          echo "migrations will run here, against staging Postgres, before the"
+          echo "app deployment step below - per docs/16-deployment-architecture.md §16.3."
+
+  deploy-staging:
+    needs: [db-migration-staging]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Pull the just-scanned images
+        run: |
+          for app in core-app copy-engine broker-adapters mt5-bridge-gateway; do
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/$app:${{ github.sha }}
+          done
+      - uses: helm/kind-action@v1.10.0
+        with:
+          cluster_name: nectrix-staging
+      - name: Load images into kind (no registry pull needed inside the cluster)
+        run: |
+          for app in core-app copy-engine broker-adapters mt5-bridge-gateway; do
+            kind load docker-image "${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/$app:${{ github.sha }}" --name nectrix-staging
+          done
+      - name: Install kustomize
+        run: |
+          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash -s -- 5.7.1 /tmp/kustomize-bin
+          echo "/tmp/kustomize-bin" >> "$GITHUB_PATH"
+      - name: Patch image tags into the staging overlay
+        working-directory: deploy/overlays/staging
+        run: |
+          for app in core-app copy-engine broker-adapters mt5-bridge-gateway; do
+            kustomize edit set image "${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/$app:${{ github.sha }}"
+          done
+      - run: kubectl apply -k deploy/overlays/staging
+      - name: Wait for rollouts
+        run: |
+          kubectl rollout status deployment/copy-engine -n copy-engine --timeout=120s
+          kubectl rollout status deployment/broker-adapters -n copy-engine --timeout=120s
+          kubectl rollout status deployment/mt5-bridge-gateway -n copy-engine --timeout=120s
+          kubectl rollout status deployment/core-app -n core-app --timeout=180s
+
+  verify-drain-hook:
+    needs: [deploy-staging]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Static assertion - terminationGracePeriodSeconds is set
+        run: |
+          for dep in copy-engine broker-adapters; do
+            GRACE=$(kubectl get deployment "$dep" -n copy-engine -o jsonpath='{.spec.template.spec.terminationGracePeriodSeconds}')
+            [ "$GRACE" = "30" ] || { echo "::error::$dep: terminationGracePeriodSeconds not set as expected (got '$GRACE')"; exit 1; }
+          done
+      - name: Behavioral assertion - drain log actually fires (copy-engine)
+        run: |
+          POD=$(kubectl get pod -n copy-engine -l app=copy-engine -o jsonpath='{.items[0].metadata.name}')
+          kubectl delete pod "$POD" -n copy-engine --wait=false
+          sleep 5
+          kubectl logs "$POD" -n copy-engine 2>&1 | grep -q "draining copy-engine" \
+            || { echo "::error::copy-engine preStop/drain log did not fire"; exit 1; }
+      - name: Behavioral assertion - drain log actually fires (broker-adapters)
+        run: |
+          POD=$(kubectl get pod -n copy-engine -l app=broker-adapters -o jsonpath='{.items[0].metadata.name}')
+          kubectl delete pod "$POD" -n copy-engine --wait=false
+          sleep 5
+          kubectl logs "$POD" -n copy-engine 2>&1 | grep -q "draining broker-adapters" \
+            || { echo "::error::broker-adapters drain log did not fire"; exit 1; }
+      - name: Wait for replacement pods to be healthy again
+        run: |
+          kubectl rollout status deployment/copy-engine -n copy-engine --timeout=60s
+          kubectl rollout status deployment/broker-adapters -n copy-engine --timeout=60s
+
+  e2e-staging:
+    needs: [verify-drain-hook]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Smoke check core-app and copy-engine
+        run: |
+          kubectl port-forward -n copy-engine svc/copy-engine 18090:8090 &
+          kubectl port-forward -n core-app svc/core-app 18080:8080 &
+          sleep 3
+          curl --fail --retry 5 --retry-delay 2 http://localhost:18090/healthz
+          curl --fail --retry 5 --retry-delay 2 http://localhost:18080/hello
+      - name: Teardown staging kind cluster
+        if: always()
+        run: kind delete cluster --name nectrix-staging
+
+  db-migration-production:
+    needs: [e2e-staging]
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "::notice::No migration tool/schema exists yet (TICKET-004)."
+          echo "Placeholder for the expand-phase migration against production Postgres."
+
+  deploy-production:
+    needs: [db-migration-production]
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Pull the just-scanned images
+        run: |
+          for app in core-app copy-engine broker-adapters mt5-bridge-gateway; do
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/$app:${{ github.sha }}
+          done
+      - uses: helm/kind-action@v1.10.0
+        with:
+          cluster_name: nectrix-production
+      - name: Load images into kind (no registry pull needed inside the cluster)
+        run: |
+          for app in core-app copy-engine broker-adapters mt5-bridge-gateway; do
+            kind load docker-image "${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/$app:${{ github.sha }}" --name nectrix-production
+          done
+      - name: Install kustomize
+        run: |
+          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash -s -- 5.7.1 /tmp/kustomize-bin
+          echo "/tmp/kustomize-bin" >> "$GITHUB_PATH"
+      - name: Patch image tags into the production overlay
+        working-directory: deploy/overlays/production
+        run: |
+          for app in core-app copy-engine broker-adapters mt5-bridge-gateway; do
+            kustomize edit set image "${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/$app:${{ github.sha }}"
+          done
+      - run: kubectl apply -k deploy/overlays/production
+      - name: Wait for rollouts
+        run: |
+          kubectl rollout status deployment/copy-engine -n copy-engine --timeout=120s
+          kubectl rollout status deployment/broker-adapters -n copy-engine --timeout=120s
+          kubectl rollout status deployment/mt5-bridge-gateway -n copy-engine --timeout=120s
+          kubectl rollout status deployment/core-app -n core-app --timeout=180s
+      - name: Smoke check
+        run: |
+          kubectl port-forward -n core-app svc/core-app 18080:8080 &
+          sleep 3
+          curl --fail --retry 5 --retry-delay 2 http://localhost:18080/hello
+      - name: Teardown production kind cluster
+        if: always()
+        run: kind delete cluster --name nectrix-production
