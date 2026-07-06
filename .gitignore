@@ -1,0 +1,25 @@
+# Environment
+.env
+
+# Java / Gradle
+.gradle/
+build/
+*.class
+
+# Go
+bin/
+
+# Node
+node_modules/
+.next/
+dist/
+.turbo/
+
+# IDE
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.iml
+
+# OS
+.DS_Store
