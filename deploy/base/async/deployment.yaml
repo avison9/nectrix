@@ -1,0 +1,27 @@
+# Placeholder workload — real background job workers (settlement, fee reports,
+# analytics, PDF export — docs/16-deployment-architecture.md §16.1) are later
+# tickets. No Service/Ingress: workers pull from the event bus, nothing calls
+# them directly.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: async-worker
+  namespace: async
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: async-worker }
+  template:
+    metadata:
+      labels: { app: async-worker }
+    spec:
+      containers:
+        - name: async-worker
+          image: busybox:1.37
+          command: ["sh", "-c", "while true; do echo async-worker placeholder alive; sleep 30; done"]
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+          resources:
+            requests: { cpu: 50m, memory: 32Mi }
+            limits: { cpu: 100m, memory: 64Mi }

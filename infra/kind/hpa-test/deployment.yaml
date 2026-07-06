@@ -1,0 +1,45 @@
+# Standalone placeholder purely for proving HPA+metrics-server wiring end to
+# end, locally — deliberately NOT deploy/base/core-app (its image tag,
+# REPLACED_BY_CI, is only ever resolved by CI's `kustomize edit set image`, and
+# isn't pullable in an isolated local kind cluster). Same shape as
+# deploy/base/core-app/hpa.yaml (minReplicas 3, maxReplicas 20, CPU target
+# 70%) — see infra/kind/README.md. Burns CPU in-process (a `yes` loop) instead
+# of needing a separate load-generator pod hitting an HTTP endpoint.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hpa-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: hpa-demo }
+  template:
+    metadata:
+      labels: { app: hpa-demo }
+    spec:
+      containers:
+        - name: hpa-demo
+          image: busybox:1.37
+          command: ["sh", "-c", "yes > /dev/null"]
+          resources:
+            requests: { cpu: 100m }
+            limits: { cpu: 200m }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: hpa-demo
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: hpa-demo
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

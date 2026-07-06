@@ -37,7 +37,7 @@ Full rationale for each choice: `../nectrix_plan/docs/13-technology-stack.md`.
 
 ## Roadmap
 
-- **Phase 0 — Foundation** *(current)*: repo scaffolding ✅, CI/CD ✅, K8s/Terraform, DB schema/migrations, auth/RBAC, message bus, Redis caching, a stub broker adapter, observability, secrets/envelope encryption, and an empty Admin Portal shell. Nothing user-facing yet.
+- **Phase 0 — Foundation** *(current)*: repo scaffolding ✅, CI/CD ✅, K8s/Terraform ✅, DB schema/migrations, auth/RBAC, message bus, Redis caching, a stub broker adapter, observability, secrets/envelope encryption, and an empty Admin Portal shell. Nothing user-facing yet.
 - **Phase 1 — MVP**: real cTrader/MT5 adapters, the full copy engine (sizing, risk guard, partial-close/SL-TP sync, drawdown protection, reconciliation), invitation-based onboarding, broker IB links, both fee-collection methods, a basic leaderboard, the web dashboard, and Admin Portal MVP features.
 - **Phase 2 — V2**: native mobile apps, multi-master portfolios/follow-requests, reverse-copy, reviews, demo-preview copy, partner/IB program dashboard, dispute tooling, feature flags, exportable statements, fraud queue, table partitioning.
 - **Phase 3 — Enterprise**: MT5 Manager API broker partnerships, multi-region/active-active DR, white-label, negotiated take-rates, full KYC/AML, and additive AI features (strategy analysis, portfolio optimization, anomaly detection).
@@ -102,11 +102,17 @@ packages/
 ├── domain-model/      TypeScript mirror of the normalized types, for frontend DX
 └── api-client/        stub — populated once real HTTP APIs exist
 
-deploy/                Kustomize manifests for the 4 backend deployables
-├── base/               namespaces + per-app Deployment/Service/kustomization
+deploy/                Kustomize manifests for everything that runs in-cluster
+├── base/               namespaces + per-app Deployment/Service/HPA/NetworkPolicy
+├── components/         cloud-aws, cloud-gcp, local-minio — opt-in per overlay
 └── overlays/
     ├── staging/        image tags patched in by CI at deploy time
-    └── production/     same shape, gated behind manual approval
+    ├── production/     same shape, gated behind manual approval
+    └── local/          + MinIO, for local kind testing only
+
+infra/
+├── terraform/          real cloud infra (EKS/GKE, managed Postgres/Redis, VPC, S3/GCS, WAF) — aws/ + gcp/, plan-only for now
+└── kind/                local kind test harnesses proving NetworkPolicy + HPA work (make kind-netpol-test, kind-hpa-test)
 
 .github/workflows/
 ├── _build-test.yml     reusable lint/build/test jobs, shared by both workflows below
@@ -128,6 +134,12 @@ make proto-gen        # regenerate Go code from packages/event-contracts/proto
 make ts-install       # npm install across the TS workspace
 make ts-build         # turbo run build (web, admin-portal, domain-model, api-client)
 make ts-lint          # turbo run lint, including the boundaries rule
+make tf-fmt           # terraform fmt -check, both clouds
+make tf-validate      # terraform init -backend=false + validate, both clouds
+make tf-lint          # tflint, both clouds
+make tf-checkov       # static analysis, both clouds
+make kind-netpol-test # real kind+Calico hands-on proof of the staging/production network policy
+make kind-hpa-test    # real kind+metrics-server hands-on proof of HPA wiring
 ```
 
 ## CI/CD pipeline
@@ -150,6 +162,32 @@ main:  build-test → integration-test (ephemeral Postgres/Redis/Kafka via docke
 Notes:
 - **No persistent cluster yet** (that's TICKET-003) — staging/production "deploys" are ephemeral `kind` clusters created and torn down within a single CI job, using `kubectl apply -k` against `deploy/overlays/{staging,production}`. Once a real cluster exists, a real GitOps controller (ArgoCD/Flux) reconciling it continuously is the natural next step.
 - **Connection-draining** (`copy-engine`, `broker-adapters`): handled by an in-process `SIGTERM` handler in each app (see `main.go`), not a Kubernetes `preStop` hook — the distroless runtime images have no shell to exec into, and (discovered the hard way) `kubectl logs` doesn't reliably capture an exec hook's output anyway.
-- **Registry**: `ghcr.io/avison9/nectrix/<app>:<commit-sha>`, packages default to private on first push.
+- **Registry**: `ghcr.io/avison9/nectrix/<app>:<commit-sha>`, packages default to private on first push. Fine for CI's ephemeral `kind` cluster (images are injected directly, never pulled over the network), but a real EKS/GKE cluster needs a cloud-native registry to pull from — `build-scan-push` also has gated (currently no-op) push steps to ECR/Artifact Registry, ready to activate once real infra exists (see `infra/terraform/README.md`'s "Container registry" section).
 - **Branch protection** on `main` requires all `pr-checks.yml` job names as status checks (configured via the GitHub API, not committed YAML — a skipped job counts as passing).
 - **Production approval**: the `production` GitHub Environment requires a review from `avison9` before `deploy-production` proceeds — configured via the GitHub API/UI, not code.
+
+## Infrastructure (Terraform + real Kubernetes)
+
+TICKET-003 is done. `infra/terraform/{aws,gcp}/` writes the real, persistent infrastructure a real environment needs — managed Kubernetes (EKS/GKE), managed Postgres (RDS Multi-AZ / Cloud SQL regional HA), managed Redis (ElastiCache / Memorystore), VPC/networking, object storage (S3/GCS), a container registry (ECR/Artifact Registry, with federated-identity CI push access — see "Container registry" in `infra/terraform/README.md`), and WAF (WAFv2 / Cloud Armor) — for **both** AWS and GCP, in separate directories, so either can be picked later.
+
+**No real `terraform apply` has been run against either cloud** — that's a deliberate, explicit decision (see `infra/terraform/README.md`): no real account, no real cost. Verification is fully offline instead:
+
+```
+make tf-fmt        # terraform fmt -check, both clouds
+make tf-validate   # terraform init -backend=false + validate, both clouds — no credentials
+make tf-lint       # tflint, both clouds (deep_check stays off — no cloud API calls)
+make tf-checkov    # static analysis (checkov), both clouds — 129 passed / 0 failed
+```
+
+Where an acceptance criterion is genuinely testable without a real cloud account, it's proven hands-on instead of just declared:
+
+```
+make kind-netpol-test   # real kind + Calico cluster: staging blocked from a mock live-broker endpoint, production allowed
+make kind-hpa-test      # real kind + metrics-server cluster: HPA reports live CPU utilization, not <unknown>
+```
+
+Notes:
+- **Object storage is a deliberate deviation from `docs/13-technology-stack.md` §13.2's "MinIO now" MVP guidance**: real environments get a real S3/GCS bucket from Terraform, not self-hosted MinIO. MinIO stays exactly where it already was — docker-compose for local dev, and `deploy/components/local-minio` (opt-in, `deploy/overlays/local` only) for local `kind` testing.
+- **Environments = Terraform workspaces** (`dev`/`staging`/`production`), one root module per cloud. Each `envs/<env>.tfvars` also sets `environment`, checked against the selected workspace via a `check` block — applying the wrong `.tfvars` against the wrong workspace fails loudly instead of silently.
+- **Terraform owns cloud resources; Kustomize (`deploy/`) owns everything in-cluster** — namespaces, NetworkPolicy, HPA, the (AWS-only) cluster-autoscaler controller, Ingress objects. Cloud-specific Ingress annotations are Kustomize *components* (`deploy/components/cloud-{aws,gcp}`), not duplicated overlays.
+- Terraform, `tflint`, `checkov`, and `kind` are **host-level** tools for this ticket, same precedent as `kubectl`/standalone `kustomize` in `deploy/README.md`.

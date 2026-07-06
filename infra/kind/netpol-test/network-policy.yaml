@@ -1,0 +1,19 @@
+# The policy under test: only pods in a namespace labeled env=production may
+# reach live-broker-mock. Any NetworkPolicy selecting pods (podSelector: {}
+# here = all pods in this namespace) flips that namespace's matched pods to
+# default-deny for the policyTypes listed, so this single rule both implicitly
+# denies staging and explicitly allows production.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-only-production
+  namespace: live-broker-sim
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              env: production

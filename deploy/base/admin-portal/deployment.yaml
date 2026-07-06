@@ -1,0 +1,37 @@
+# Placeholder workload — the real Admin Portal (docs/13-technology-stack.md
+# §13.3: a genuinely separate Next.js deployable) is a later ticket. This just
+# proves the namespace/Ingress wiring end-to-end (TICKET-003 scope:
+# "empty/placeholder deployments acceptable at this stage").
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: admin-portal
+  namespace: admin-portal
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: admin-portal }
+  template:
+    metadata:
+      labels: { app: admin-portal }
+    spec:
+      containers:
+        - name: admin-portal
+          image: nginxinc/nginx-unprivileged:1.27-alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 101
+          readinessProbe:
+            httpGet: { path: /, port: 8080 }
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /, port: 8080 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: 200m, memory: 128Mi }

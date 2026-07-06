@@ -1,0 +1,10 @@
+# Layers a live-broker egress allowance on top of deploy/base/copy-engine's
+# demo-only default — the only difference between staging and production's
+# copy-engine network posture (docs/16-deployment-architecture.md §16.2).
+# Placeholder CIDR (RFC 5737), same caveat as the base policy.
+- op: add
+  path: /spec/egress/-
+  value:
+    to:
+      - ipBlock:
+          cidr: 198.51.100.0/24

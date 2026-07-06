@@ -1,0 +1,26 @@
+# GKE's BackendConfig CRD is how Cloud Armor attaches to a GCE-Ingress-managed
+# LB (there's no Terraform-side "association" resource on GCP the way AWS's
+# wafv2_web_acl_association works — see
+# infra/terraform/gcp/modules/glb-cloud-armor). Requires the BackendConfig CRD
+# to already exist on the cluster (ships with GKE by default) — not something
+# `kubectl kustomize`'s offline render validates, only a real cluster does.
+# One per Service namespace (BackendConfig is itself namespaced).
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: nectrix-backend-config
+  namespace: gateway
+spec:
+  securityPolicy:
+    # Placeholder — set to infra/terraform/gcp/modules/glb-cloud-armor's
+    # `policy_name` output once a real GCP project exists.
+    name: REPLACE_WITH_CLOUD_ARMOR_POLICY_NAME
+---
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: nectrix-backend-config
+  namespace: admin-portal
+spec:
+  securityPolicy:
+    name: REPLACE_WITH_CLOUD_ARMOR_POLICY_NAME
