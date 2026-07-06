@@ -58,6 +58,11 @@ jobs:
       contents: read
       packages: write
     strategy:
+      # fail-fast (the default) cancels sibling matrix legs the instant one
+      # leg fails, which was masking the real per-app error behind a generic
+      # "operation was canceled" on every leg. Disabled so each app's
+      # build/scan runs to real completion independently.
+      fail-fast: false
       matrix:
         app:
           - { name: core-app, dockerfile: apps/core-app/Dockerfile }
