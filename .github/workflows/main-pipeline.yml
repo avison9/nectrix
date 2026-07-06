@@ -177,7 +177,7 @@ jobs:
           kubectl delete pod "$POD" -n copy-engine --wait=false
           sleep 20
           kill "$LOGPID" 2>/dev/null || true
-          if ! grep -q "draining copy-engine" /tmp/copy-engine-drain.log; then
+          if ! grep -q "copy-engine draining" /tmp/copy-engine-drain.log; then
             echo "::error::copy-engine drain log did not fire within 20s"
             cat /tmp/copy-engine-drain.log || true
             exit 1
@@ -191,7 +191,7 @@ jobs:
           kubectl delete pod "$POD" -n copy-engine --wait=false
           sleep 20
           kill "$LOGPID" 2>/dev/null || true
-          if ! grep -q "draining broker-adapters" /tmp/broker-adapters-drain.log; then
+          if ! grep -q "broker-adapters draining" /tmp/broker-adapters-drain.log; then
             echo "::error::broker-adapters drain log did not fire within 20s"
             cat /tmp/broker-adapters-drain.log || true
             exit 1
