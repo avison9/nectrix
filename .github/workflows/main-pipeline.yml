@@ -165,7 +165,13 @@ jobs:
           POD=$(kubectl get pod -n copy-engine -l app=copy-engine -o jsonpath='{.items[0].metadata.name}')
           kubectl delete pod "$POD" -n copy-engine --wait=false
           FOUND=false
-          for _ in $(seq 1 10); do
+          # The app's own SIGTERM handler logs "draining" immediately but
+          # then sleeps ~10s before shutting down (see main.go's drainSleep +
+          # shutdownWait) — the pod object disappears from the API server
+          # shortly after that, around the same 10-15s mark. A 10x1s budget
+          # raced against that window and lost intermittently; 25x1s gives
+          # real margin beyond the app's own ~15s exit timeline.
+          for _ in $(seq 1 25); do
             if kubectl logs "$POD" -n copy-engine 2>/dev/null | grep -q "draining copy-engine"; then
               FOUND=true
               break
@@ -173,7 +179,7 @@ jobs:
             sleep 1
           done
           if [ "$FOUND" != "true" ]; then
-            echo "::error::copy-engine drain log did not fire within 10s"
+            echo "::error::copy-engine drain log did not fire within 25s"
             kubectl logs "$POD" -n copy-engine 2>&1 || true
             exit 1
           fi
@@ -182,7 +188,13 @@ jobs:
           POD=$(kubectl get pod -n copy-engine -l app=broker-adapters -o jsonpath='{.items[0].metadata.name}')
           kubectl delete pod "$POD" -n copy-engine --wait=false
           FOUND=false
-          for _ in $(seq 1 10); do
+          # The app's own SIGTERM handler logs "draining" immediately but
+          # then sleeps ~10s before shutting down (see main.go's drainSleep +
+          # shutdownWait) — the pod object disappears from the API server
+          # shortly after that, around the same 10-15s mark. A 10x1s budget
+          # raced against that window and lost intermittently; 25x1s gives
+          # real margin beyond the app's own ~15s exit timeline.
+          for _ in $(seq 1 25); do
             if kubectl logs "$POD" -n copy-engine 2>/dev/null | grep -q "draining broker-adapters"; then
               FOUND=true
               break
@@ -190,7 +202,7 @@ jobs:
             sleep 1
           done
           if [ "$FOUND" != "true" ]; then
-            echo "::error::broker-adapters drain log did not fire within 10s"
+            echo "::error::broker-adapters drain log did not fire within 25s"
             kubectl logs "$POD" -n copy-engine 2>&1 || true
             exit 1
           fi
