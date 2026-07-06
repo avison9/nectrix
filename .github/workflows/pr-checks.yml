@@ -1,0 +1,53 @@
+name: PR Checks
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: pr-checks-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      core-app: ${{ steps.filter.outputs.core-app }}
+      go-apps: ${{ steps.filter.outputs.go-apps }}
+      ts-apps: ${{ steps.filter.outputs.ts-apps }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            core-app:
+              - 'apps/core-app/**'
+              - 'packages/event-contracts/proto/**'
+              - 'packages/event-contracts/java/**'
+            go-apps:
+              - 'apps/copy-engine/**'
+              - 'apps/broker-adapters/**'
+              - 'apps/mt5-bridge-gateway/**'
+              - 'packages/go-domain/**'
+              - 'packages/event-contracts/go/**'
+              - 'packages/event-contracts/proto/**'
+              - 'go.work'
+              - 'go.work.sum'
+            ts-apps:
+              - 'apps/web/**'
+              - 'apps/admin-portal/**'
+              - 'packages/domain-model/**'
+              - 'packages/api-client/**'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'turbo.json'
+              - 'eslint.config.mjs'
+
+  build-test:
+    needs: changes
+    uses: ./.github/workflows/_build-test.yml
+    with:
+      run-core-app: ${{ needs.changes.outputs.core-app == 'true' }}
+      run-go-apps: ${{ needs.changes.outputs.go-apps == 'true' }}
+      run-ts-apps: ${{ needs.changes.outputs.ts-apps == 'true' }}

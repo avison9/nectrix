@@ -1,7 +1,7 @@
 .PHONY: up down restart logs ps clean \
 	devcontainer-up devcontainer-build \
 	core-app-build core-app-test \
-	go-build go-lint proto-gen \
+	go-build go-test go-lint proto-gen \
 	ts-install ts-build ts-lint
 
 COMPOSE = docker compose -f docker-compose.yml -f .devcontainer/docker-compose.yml
@@ -42,6 +42,9 @@ go-build: ## Build all Go modules (go-domain, event-contracts/go, and the three 
 	# source tree (a bare `go build ./...` on a package main writes one named
 	# after the directory, right there, which then gets accidentally committed).
 	$(DC_EXEC) bash -c "cd /workspace && for d in packages/go-domain packages/event-contracts/go apps/copy-engine apps/broker-adapters apps/mt5-bridge-gateway; do (cd \$$d && go build -o /dev/null ./...); done"
+
+go-test: ## Test all Go modules (excludes //go:build integration-tagged tests)
+	$(DC_EXEC) bash -c "cd /workspace && for d in packages/go-domain packages/event-contracts/go apps/copy-engine apps/broker-adapters apps/mt5-bridge-gateway; do (cd \$$d && go test ./...); done"
 
 go-lint: ## Lint all Go modules with golangci-lint
 	$(DC_EXEC) bash -c "cd /workspace && for d in packages/go-domain packages/event-contracts/go apps/copy-engine apps/broker-adapters apps/mt5-bridge-gateway; do (cd \$$d && golangci-lint run ./...); done"

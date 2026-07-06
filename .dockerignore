@@ -1,0 +1,12 @@
+.git
+node_modules
+**/node_modules
+**/build
+**/.next
+**/.gradle
+**/.turbo
+**/dist
+.devcontainer
+.vscode
+.idea
+*.md

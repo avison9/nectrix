@@ -27,5 +27,19 @@ application {
 }
 
 tasks.test {
-    useJUnitPlatform()
+    // Integration-tagged tests need ephemeral infra (docker-compose.yml) running —
+    // excluded here so a plain `./gradlew build` never needs Postgres/Redis/Kafka up.
+    useJUnitPlatform {
+        excludeTags("integration")
+    }
+}
+
+tasks.register<Test>("integrationTest") {
+    description = "Runs @Tag(\"integration\") tests against ephemeral infra (see docker-compose.yml)."
+    group = "verification"
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    useJUnitPlatform {
+        includeTags("integration")
+    }
 }

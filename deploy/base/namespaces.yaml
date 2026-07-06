@@ -1,0 +1,33 @@
+# Namespace layout per nectrix_plan/docs/16-deployment-architecture.md §16.1/16.2.
+# Only core-app and copy-engine have workloads in this ticket (TICKET-002) —
+# the rest are declared now so the namespace layout matches the intended
+# architecture from day one, ready for later tickets to populate.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gateway
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: admin-portal
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: core-app
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: copy-engine
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: async
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: platform
