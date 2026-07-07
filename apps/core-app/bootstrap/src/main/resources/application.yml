@@ -4,6 +4,12 @@ server:
 spring:
   application:
     name: core-app
+  # docs/14-api-specification.md's endpoints are all snake_case JSON
+  # (email, totp_code, refresh_token, expires_in, ...) — applied globally so
+  # every controller's request/response records can use plain camelCase
+  # Java field names without per-field @JsonProperty annotations.
+  jackson:
+    property-naming-strategy: SNAKE_CASE
   datasource:
     url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DB:nectrix}
     username: nectrix_app
@@ -15,3 +21,33 @@ spring:
   # this is belt-and-braces, documenting the intent explicitly.
   liquibase:
     enabled: false
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+
+# TICKET-005 (Auth & Identity Service)
+nectrix:
+  auth:
+    jwt:
+      secret: ${JWT_SIGNING_SECRET}
+    two-factor:
+      # TEMPORARY stub AES-GCM key — TICKET-011's real KMS-backed envelope
+      # encryption replaces this wholesale, see TwoFactorSecretCipher.
+      encryption-key: ${TWO_FACTOR_SECRET_ENCRYPTION_KEY}
+      issuer: Nectrix
+    rate-limit:
+      # No numeric threshold specified in the design docs — OWASP-aligned default.
+      max-attempts: 5
+      window-seconds: 900
+    oauth:
+      google:
+        client-id: ${GOOGLE_OAUTH_CLIENT_ID:}
+        client-secret: ${GOOGLE_OAUTH_CLIENT_SECRET:}
+        redirect-uri: http://localhost:8080/api/v1/auth/oauth/google/callback
+      apple:
+        # Implemented but NOT end-to-end tested against Apple's real servers —
+        # documented gap, see apps/core-app/README.md.
+        client-id: ${APPLE_OAUTH_CLIENT_ID:}
+        client-secret: ${APPLE_OAUTH_CLIENT_SECRET:}
+        redirect-uri: http://localhost:8080/api/v1/auth/oauth/apple/callback
