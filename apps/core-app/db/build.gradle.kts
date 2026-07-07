@@ -31,9 +31,14 @@ dependencies {
     liquibaseRuntime("info.picocli:picocli:4.7.7") // required by Liquibase 4.4+
 }
 
-val appRolePassword: String =
-    System.getenv("POSTGRES_APP_PASSWORD")
-        ?: throw GradleException("POSTGRES_APP_PASSWORD env var is not set (see .env.example)")
+// NOT eagerly validated here — Gradle configures every subproject's build
+// script on *any* invocation (e.g. `./gradlew build` from apps/core-app,
+// which never touches a :db:* task), so throwing here would fail builds that
+// have nothing to do with this subproject at all. Empty-string fallback at
+// configuration time; the real check happens in the doFirst block below,
+// scoped to this subproject's own tasks only, so it only fires when a :db:*
+// task is actually requested.
+val appRolePassword: String = System.getenv("POSTGRES_APP_PASSWORD") ?: ""
 
 liquibase {
     activities.register("main") {
@@ -57,4 +62,16 @@ liquibase {
     }
 
     runList = "main"
+}
+
+// Scoped to the "Liquibase" task group specifically — the plugin's own base
+// lifecycle tasks (assemble, build, check), which do nothing meaningful in
+// this project but still get pulled in by the root `./gradlew build`, don't
+// need a real password and must stay unaffected by this check.
+tasks.matching { it.group == "Liquibase" }.configureEach {
+    doFirst {
+        if (appRolePassword.isBlank()) {
+            throw GradleException("POSTGRES_APP_PASSWORD env var is not set (see .env.example)")
+        }
+    }
 }
