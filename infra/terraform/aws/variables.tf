@@ -78,6 +78,21 @@ variable "redis_num_cache_clusters" {
   default = 2
 }
 
+variable "kafka_version" {
+  type    = string
+  default = "3.8.0"
+}
+
+variable "kafka_broker_instance_type" {
+  type    = string
+  default = "kafka.t3.small"
+}
+
+variable "kafka_number_of_broker_nodes" {
+  type    = number
+  default = 3
+}
+
 variable "s3_bucket_name" {
   description = "Globally-unique S3 bucket name for this environment's object storage"
   type        = string

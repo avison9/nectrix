@@ -45,4 +45,26 @@ class RoundTripTest {
     // Fields absent from the fixture must decode as "not present", not zero-as-present.
     assertFalse(evt.hasClosedVolumeLots());
   }
+
+  /**
+   * TICKET-007 AC3 — same cross-language fixture-parsing proof as {@link #parsesSharedFixture()},
+   * for one of the new topic message types (not just NormalizedTradeEvent), confirming the new
+   * proto schemas generate correctly in Java too.
+   */
+  @Test
+  void parsesSharedBrokerConnectionEventFixture() throws Exception {
+    String json =
+        Files.readString(Path.of("../testdata/sample_broker_connection_event.json"));
+
+    BrokerConnectionEvent.Builder builder = BrokerConnectionEvent.newBuilder();
+    JsonFormat.parser().merge(json, builder);
+    BrokerConnectionEvent event = builder.build();
+
+    assertEquals("evt_01HXAMPLE0000000000000002", event.getEnvelope().getEventId());
+    assertEquals("v1", event.getEnvelope().getSchemaVersion());
+    assertEquals("bacc_master_0001", event.getBrokerAccountId());
+    assertEquals(BrokerConnectionEventType.BROKER_CONNECTION_EVENT_TYPE_DEGRADED, event.getEventType());
+    assertTrue(event.hasDetail());
+    assertEquals("3 consecutive heartbeat timeouts", event.getDetail());
+  }
 }

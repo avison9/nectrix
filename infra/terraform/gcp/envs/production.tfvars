@@ -18,4 +18,7 @@ cloudsql_disk_size_gb = 200
 redis_memory_size_gb = 8
 redis_tier           = "STANDARD_HA"
 
+kafka_vcpu_count   = 12
+kafka_memory_bytes = 12884901888 # 12 GiB
+
 gcs_bucket_name = "nectrix-production-objects"

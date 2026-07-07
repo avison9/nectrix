@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package nectrix.events.v1;
+
+import "nectrix/events/v1/envelope.proto";
+
+option go_package = "github.com/avison9/nectrix/event-contracts/go/gen/nectrix/events/v1;eventsv1";
+option java_package = "com.nectrix.events.v1";
+option java_multiple_files = true;
+
+// Topic: copy-relationships (docs/15-event-driven-architecture.md §15.3).
+// Partition key: copy_relationship_id.
+
+enum CopyRelationshipEventType {
+  COPY_RELATIONSHIP_EVENT_TYPE_UNSPECIFIED = 0;
+  COPY_RELATIONSHIP_EVENT_TYPE_STARTED = 1;
+  COPY_RELATIONSHIP_EVENT_TYPE_PAUSED = 2;
+  COPY_RELATIONSHIP_EVENT_TYPE_RESUMED = 3;
+  COPY_RELATIONSHIP_EVENT_TYPE_STOPPED = 4;
+}
+
+message CopyRelationshipEvent {
+  EventEnvelope envelope = 1;
+  string copy_relationship_id = 2; // partition key
+  CopyRelationshipEventType event_type = 3;
+  string master_broker_account_id = 4;
+  string follower_broker_account_id = 5;
+}

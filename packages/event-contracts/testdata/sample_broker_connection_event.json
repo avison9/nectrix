@@ -1,0 +1,10 @@
+{
+  "envelope": {
+    "eventId": "evt_01HXAMPLE0000000000000002",
+    "occurredAt": "2026-07-06T12:00:00Z",
+    "schemaVersion": "v1"
+  },
+  "brokerAccountId": "bacc_master_0001",
+  "eventType": "BROKER_CONNECTION_EVENT_TYPE_DEGRADED",
+  "detail": "3 consecutive heartbeat timeouts"
+}

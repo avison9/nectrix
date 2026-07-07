@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package nectrix.events.v1;
+
+import "nectrix/events/v1/envelope.proto";
+import "nectrix/events/v1/trade_event.proto";
+
+option go_package = "github.com/avison9/nectrix/event-contracts/go/gen/nectrix/events/v1;eventsv1";
+option java_package = "com.nectrix.events.v1";
+option java_multiple_files = true;
+
+// Topic: copied-trades (docs/15-event-driven-architecture.md §15.3).
+// Partition key: copy_relationship_id.
+
+enum CopiedTradeEventType {
+  COPIED_TRADE_EVENT_TYPE_UNSPECIFIED = 0;
+  COPIED_TRADE_EVENT_TYPE_OPENED = 1;
+  COPIED_TRADE_EVENT_TYPE_MODIFIED = 2;
+  COPIED_TRADE_EVENT_TYPE_PARTIALLY_CLOSED = 3;
+  COPIED_TRADE_EVENT_TYPE_CLOSED = 4;
+  COPIED_TRADE_EVENT_TYPE_FAILED = 5;
+}
+
+message CopiedTradeEvent {
+  EventEnvelope envelope = 1;
+  string copy_relationship_id = 2; // partition key
+  CopiedTradeEventType event_type = 3;
+  string broker_position_id = 4;
+  NormalizedSymbol symbol = 5;
+  optional double volume_lots = 6;
+  optional string reject_reason = 7; // set only for FAILED, e.g. "UNMAPPED_SYMBOL"
+}

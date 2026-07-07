@@ -65,3 +65,35 @@ func TestRoundTrip(t *testing.T) {
 		t.Errorf("ClosedVolumeLots should be absent (nil), got present with value %v", *evt.ClosedVolumeLots)
 	}
 }
+
+// TestRoundTripBrokerConnectionEvent is TICKET-007 AC3's cross-language fixture-parsing proof for
+// one of the new topic message types (not just NormalizedTradeEvent) — confirms the new proto
+// schemas generate correctly in Go too. See RoundTripTest#parsesSharedBrokerConnectionEventFixture
+// in packages/event-contracts/java for the Java side of the same proof.
+func TestRoundTripBrokerConnectionEvent(t *testing.T) {
+	raw, err := os.ReadFile("../testdata/sample_broker_connection_event.json")
+	if err != nil {
+		t.Fatalf("reading fixture: %v", err)
+	}
+
+	var event eventsv1.BrokerConnectionEvent
+	if err := protojson.Unmarshal(raw, &event); err != nil {
+		t.Fatalf("unmarshaling fixture: %v", err)
+	}
+
+	if got, want := event.GetEnvelope().GetEventId(), "evt_01HXAMPLE0000000000000002"; got != want {
+		t.Errorf("Envelope.EventId = %q, want %q", got, want)
+	}
+	if got, want := event.GetEnvelope().GetSchemaVersion(), "v1"; got != want {
+		t.Errorf("Envelope.SchemaVersion = %q, want %q", got, want)
+	}
+	if got, want := event.GetBrokerAccountId(), "bacc_master_0001"; got != want {
+		t.Errorf("BrokerAccountId = %q, want %q", got, want)
+	}
+	if got, want := event.GetEventType(), eventsv1.BrokerConnectionEventType_BROKER_CONNECTION_EVENT_TYPE_DEGRADED; got != want {
+		t.Errorf("EventType = %v, want %v", got, want)
+	}
+	if event.Detail == nil || *event.Detail != "3 consecutive heartbeat timeouts" {
+		t.Errorf("Detail = %v, want present with value %q", event.Detail, "3 consecutive heartbeat timeouts")
+	}
+}

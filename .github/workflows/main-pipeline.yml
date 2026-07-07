@@ -38,6 +38,8 @@ jobs:
       - uses: actions/checkout@v7.0.0
       - name: Start ephemeral infra (Postgres, Redis, Kafka)
         run: docker compose -f docker-compose.yml up -d --wait postgres redis kafka
+      - name: Create Kafka topic catalog (TICKET-007)
+        run: ./infra/kafka/create-topics.sh
       - uses: actions/setup-java@v5.4.0
         with:
           distribution: temurin
@@ -49,16 +51,21 @@ jobs:
       - name: core-app infra connectivity + schema/audit-log + auth (TICKET-005) integration tests
         working-directory: apps/core-app
         run: ./gradlew integrationTest
+      - name: event-contracts/java Kafka producer/consumer + DLQ integration tests (TICKET-007)
+        working-directory: packages/event-contracts/java
+        run: ./gradlew integrationTest
       - uses: actions/setup-go@v6.5.0
         with:
           go-version: "1.26.4"
-          # These modules have no go.sum (no external deps beyond stdlib and
-          # local go.work-linked packages), so there's nothing to key a
-          # dependency cache on.
+          # copy-engine/broker-adapters/mt5-bridge-gateway have no go.sum (no
+          # external deps beyond stdlib and local go.work-linked packages);
+          # event-contracts/go does have real external deps (TICKET-007) but
+          # is a small, single additional module — not worth a separate cache
+          # key for this loop.
           cache: false
-      - name: Go services infra connectivity smoke test
+      - name: Go services infra connectivity smoke test + event-contracts Kafka producer/consumer + DLQ tests (TICKET-007)
         run: |
-          for d in apps/copy-engine apps/broker-adapters apps/mt5-bridge-gateway; do
+          for d in apps/copy-engine apps/broker-adapters apps/mt5-bridge-gateway packages/event-contracts/go; do
             (cd "$d" && go test -tags=integration ./...)
           done
       - name: Tear down infra

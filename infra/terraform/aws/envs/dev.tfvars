@@ -18,4 +18,10 @@ rds_backup_retention_days = 1
 redis_node_type          = "cache.t3.micro"
 redis_num_cache_clusters = 1
 
+# number_of_broker_nodes must be a multiple of az_count (one client_subnet
+# per AZ) — dev's az_count=2 above means this can't stay at the module's
+# default of 3.
+kafka_broker_instance_type   = "kafka.t3.small"
+kafka_number_of_broker_nodes = 2
+
 s3_bucket_name = "nectrix-dev-objects"
