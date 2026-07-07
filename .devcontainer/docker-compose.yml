@@ -6,6 +6,18 @@ services:
     volumes:
       - .:/workspace:cached
     command: sleep infinity
+    environment:
+      # POSTGRES_HOST/PORT are hardcoded to the compose-network values here —
+      # NOT ${POSTGRES_PORT} from .env, which is only the *host* port mapping
+      # (postgres/docker-compose.yml) and irrelevant from inside this network,
+      # where the service is always reachable as `postgres:5432`. Used by
+      # apps/core-app/db (Liquibase) and bootstrap's application.yml.
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: ${POSTGRES_USER:-nectrix}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your .env file}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?Set POSTGRES_APP_PASSWORD in your .env file}
+      POSTGRES_DB: ${POSTGRES_DB:-nectrix}
     ports:
       - "8080:8080"   # core-app
       - "8090:8090"   # copy-engine

@@ -4,3 +4,14 @@ server:
 spring:
   application:
     name: core-app
+  datasource:
+    url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DB:nectrix}
+    username: nectrix_app
+    password: ${POSTGRES_APP_PASSWORD}
+  # Migrations are never run by the app itself — always an explicit, separate
+  # step (the sibling `db` Gradle subproject, run as the nectrix superuser,
+  # not this restricted nectrix_app role). liquibase-core isn't even on this
+  # module's classpath, so LiquibaseAutoConfiguration can't activate anyway —
+  # this is belt-and-braces, documenting the intent explicitly.
+  liquibase:
+    enabled: false

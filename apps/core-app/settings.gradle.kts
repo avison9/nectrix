@@ -7,6 +7,7 @@ includeBuild("../../packages/event-contracts/java")
 
 include(
     "bootstrap",
+    "db",
     "archunit-fixtures",
     "modules:auth",
     "modules:invitations",

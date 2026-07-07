@@ -22,6 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       POSTGRES_PASSWORD: ci-throwaway-password
+      POSTGRES_APP_PASSWORD: ci-throwaway-app-password
       MINIO_ROOT_PASSWORD: ci-throwaway-password
     steps:
       - uses: actions/checkout@v7.0.0
@@ -32,7 +33,10 @@ jobs:
           distribution: temurin
           java-version: "21"
           cache: gradle
-      - name: core-app infra connectivity smoke test
+      - name: Run database migrations (TICKET-004)
+        working-directory: apps/core-app
+        run: ./gradlew :db:update
+      - name: core-app infra connectivity + schema constraint/audit-log tests
         working-directory: apps/core-app
         run: ./gradlew integrationTest
       - uses: actions/setup-go@v6.5.0
@@ -50,6 +54,26 @@ jobs:
       - name: Tear down infra
         if: always()
         run: docker compose -f docker-compose.yml down -v
+
+  # Single source of truth for "which cloud, if any, is active" — resolves to
+  # a real image-reference prefix deploy-staging/deploy-production actually
+  # pull from. Defaults to GHCR when vars.CLOUD_PROVIDER is unset (today).
+  # Kept as its own job (not duplicated inline) so build-scan-push's mirror
+  # push and both deploy jobs all key off exactly one value, never two
+  # independent checks that could both fire at once.
+  resolve-registry:
+    needs: [integration-test]
+    runs-on: ubuntu-latest
+    outputs:
+      image_prefix: ${{ steps.resolve.outputs.image_prefix }}
+    steps:
+      - id: resolve
+        run: |
+          case "${{ vars.CLOUD_PROVIDER }}" in
+            aws) echo "image_prefix=${{ vars.AWS_ECR_REGISTRY }}/nectrix" >> "$GITHUB_OUTPUT" ;;
+            gcp) echo "image_prefix=${{ vars.GCP_ARTIFACT_REGISTRY_URL }}" >> "$GITHUB_OUTPUT" ;;
+            *) echo "image_prefix=ghcr.io/avison9/nectrix" >> "$GITHUB_OUTPUT" ;;
+          esac
 
   build-scan-push:
     needs: [integration-test]
@@ -98,21 +122,21 @@ jobs:
         run: docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.app.name }}:${{ github.sha }}
 
       # --- Cloud-native registry mirror (infra/terraform/{aws,gcp}/modules/{ecr,artifact-registry}) ---
-      # Gated on repo variables that don't exist yet — no real cloud account
-      # has been applied against (see infra/terraform/README.md), so these
-      # steps are no-ops today and don't affect this pipeline's already-green
-      # status. Set AWS_ECR_PUSH_ROLE_ARN / GCP_WORKLOAD_IDENTITY_PROVIDER +
-      # GCP_CI_PUSH_SERVICE_ACCOUNT (from those modules' outputs) to activate
-      # whichever cloud is chosen.
+      # Mutually exclusive on vars.CLOUD_PROVIDER (set once a cloud is chosen
+      # for real — see infra/terraform/README.md's "Container registry"
+      # section) — not two independent existence checks, so at most one of
+      # these fires per run, never both. Unset today (no real cloud account
+      # exists yet), so both are no-ops and this pipeline's status is
+      # unaffected.
       - name: Configure AWS credentials (OIDC, no long-lived keys)
-        if: vars.AWS_ECR_PUSH_ROLE_ARN != ''
+        if: vars.CLOUD_PROVIDER == 'aws'
         uses: aws-actions/configure-aws-credentials@v6.2.1
         with:
           role-to-assume: ${{ vars.AWS_ECR_PUSH_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
 
       - name: Push to ECR
-        if: vars.AWS_ECR_PUSH_ROLE_ARN != ''
+        if: vars.CLOUD_PROVIDER == 'aws'
         env:
           ECR_REGISTRY: ${{ vars.AWS_ECR_REGISTRY }} # e.g. <account-id>.dkr.ecr.<region>.amazonaws.com — from the ecr module's repository_urls output
         run: |
@@ -121,14 +145,14 @@ jobs:
           docker push "$ECR_REGISTRY/nectrix/${{ matrix.app.name }}:${{ github.sha }}"
 
       - name: Authenticate to GCP (Workload Identity Federation, no service-account key)
-        if: vars.GCP_WORKLOAD_IDENTITY_PROVIDER != ''
+        if: vars.CLOUD_PROVIDER == 'gcp'
         uses: google-github-actions/auth@v3.0.0
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_CI_PUSH_SERVICE_ACCOUNT }}
 
       - name: Push to Artifact Registry
-        if: vars.GCP_WORKLOAD_IDENTITY_PROVIDER != ''
+        if: vars.CLOUD_PROVIDER == 'gcp'
         env:
           AR_REPOSITORY: ${{ vars.GCP_ARTIFACT_REGISTRY_URL }} # e.g. <region>-docker.pkg.dev/<project>/nectrix — from the artifact-registry module's repository_url output
         run: |
@@ -141,10 +165,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: |
-          echo "::notice::No migration tool/schema exists yet (TICKET-004)."
-          echo "This stage is a structural placeholder: expand-phase (add-only)"
-          echo "migrations will run here, against staging Postgres, before the"
-          echo "app deployment step below - per docs/16-deployment-architecture.md §16.3."
+          echo "::notice::The migration framework now exists (TICKET-004, apps/core-app/db, Liquibase)"
+          echo "and is exercised for real in the integration-test job above, against the ephemeral"
+          echo "CI Postgres. This stage is still a placeholder because there is no real, persistent"
+          echo "staging Postgres to run against yet - TICKET-003 deliberately never applied real"
+          echo "cloud infrastructure (see infra/terraform/README.md). Once one exists, this becomes"
+          echo "./gradlew :db:update against the real staging DATABASE_URL, before the app"
+          echo "deployment step below - per docs/16-deployment-architecture.md §16.3."
 
   # deploy-staging, drain-hook verification, and the E2E smoke check are one
   # job, not three: each GitHub Actions job runs on its own fresh runner VM,
@@ -154,19 +181,44 @@ jobs:
   # consolidation fixes (previously split into deploy-staging/verify-drain-hook/
   # e2e-staging, each on a different machine with no shared cluster).
   deploy-staging:
-    needs: [db-migration-staging]
+    needs: [db-migration-staging, resolve-registry]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+      id-token: write # for the AWS/GCP auth steps below — unused (no-op) unless vars.CLOUD_PROVIDER is set
     steps:
       - uses: actions/checkout@v7.0.0
+      # Exactly one of these three auth blocks actually runs, keyed off the
+      # same vars.CLOUD_PROVIDER resolve-registry used to compute image_prefix.
       - uses: docker/login-action@v4.4.0
+        if: vars.CLOUD_PROVIDER != 'aws' && vars.CLOUD_PROVIDER != 'gcp'
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Configure AWS credentials (OIDC, no long-lived keys)
+        if: vars.CLOUD_PROVIDER == 'aws'
+        uses: aws-actions/configure-aws-credentials@v6.2.1
+        with:
+          role-to-assume: ${{ vars.AWS_ECR_PUSH_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+      - name: Log in to ECR
+        if: vars.CLOUD_PROVIDER == 'aws'
+        run: aws ecr get-login-password --region "${{ vars.AWS_REGION || 'us-east-1' }}" | docker login --username AWS --password-stdin "${{ vars.AWS_ECR_REGISTRY }}"
+      - name: Authenticate to GCP (Workload Identity Federation, no service-account key)
+        if: vars.CLOUD_PROVIDER == 'gcp'
+        uses: google-github-actions/auth@v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_CI_PUSH_SERVICE_ACCOUNT }}
+      - name: Log in to Artifact Registry
+        if: vars.CLOUD_PROVIDER == 'gcp'
+        run: gcloud auth configure-docker "$(echo '${{ vars.GCP_ARTIFACT_REGISTRY_URL }}' | cut -d/ -f1)" --quiet
       - name: Pull the just-scanned images
         run: |
           for app in core-app copy-engine broker-adapters mt5-bridge-gateway; do
-            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/$app:${{ github.sha }}
+            docker pull ${{ needs.resolve-registry.outputs.image_prefix }}/$app:${{ github.sha }}
           done
       - uses: helm/kind-action@v1.14.0
         with:
@@ -174,7 +226,7 @@ jobs:
       - name: Load images into kind (no registry pull needed inside the cluster)
         run: |
           for app in core-app copy-engine broker-adapters mt5-bridge-gateway; do
-            kind load docker-image "${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/$app:${{ github.sha }}" --name nectrix-staging
+            kind load docker-image "${{ needs.resolve-registry.outputs.image_prefix }}/$app:${{ github.sha }}" --name nectrix-staging
           done
       - name: Install kustomize
         run: |
@@ -182,10 +234,14 @@ jobs:
           curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash -s -- 5.7.1 /tmp/kustomize-bin
           echo "/tmp/kustomize-bin" >> "$GITHUB_PATH"
       - name: Patch image tags into the staging overlay
+        # Explicit oldName=newName:tag form (not the single-arg shorthand) —
+        # required whenever the resolved registry differs from the
+        # ghcr.io/avison9/nectrix hardcoded in deploy/base/*/deployment.yaml,
+        # which is the case once vars.CLOUD_PROVIDER is aws or gcp.
         working-directory: deploy/overlays/staging
         run: |
           for app in core-app copy-engine broker-adapters mt5-bridge-gateway; do
-            kustomize edit set image "${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/$app:${{ github.sha }}"
+            kustomize edit set image "ghcr.io/avison9/nectrix/$app=${{ needs.resolve-registry.outputs.image_prefix }}/$app:${{ github.sha }}"
           done
       - run: kubectl apply -k deploy/overlays/staging
       - name: Wait for rollouts
@@ -256,25 +312,52 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: |
-          echo "::notice::No migration tool/schema exists yet (TICKET-004)."
-          echo "Placeholder for the expand-phase migration against production Postgres."
+          echo "::notice::The migration framework now exists (TICKET-004, apps/core-app/db, Liquibase),"
+          echo "but there is no real, persistent production Postgres yet - TICKET-003 deliberately"
+          echo "never applied real cloud infrastructure. Once one exists, this becomes"
+          echo "./gradlew :db:update against the real production DATABASE_URL."
 
   deploy-production:
-    needs: [db-migration-production]
+    needs: [db-migration-production, resolve-registry]
     runs-on: ubuntu-latest
     environment:
       name: production
+    permissions:
+      contents: read
+      packages: read
+      id-token: write # for the AWS/GCP auth steps below — unused (no-op) unless vars.CLOUD_PROVIDER is set
     steps:
       - uses: actions/checkout@v7.0.0
+      # Exactly one of these three auth blocks actually runs, keyed off the
+      # same vars.CLOUD_PROVIDER resolve-registry used to compute image_prefix.
       - uses: docker/login-action@v4.4.0
+        if: vars.CLOUD_PROVIDER != 'aws' && vars.CLOUD_PROVIDER != 'gcp'
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Configure AWS credentials (OIDC, no long-lived keys)
+        if: vars.CLOUD_PROVIDER == 'aws'
+        uses: aws-actions/configure-aws-credentials@v6.2.1
+        with:
+          role-to-assume: ${{ vars.AWS_ECR_PUSH_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+      - name: Log in to ECR
+        if: vars.CLOUD_PROVIDER == 'aws'
+        run: aws ecr get-login-password --region "${{ vars.AWS_REGION || 'us-east-1' }}" | docker login --username AWS --password-stdin "${{ vars.AWS_ECR_REGISTRY }}"
+      - name: Authenticate to GCP (Workload Identity Federation, no service-account key)
+        if: vars.CLOUD_PROVIDER == 'gcp'
+        uses: google-github-actions/auth@v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_CI_PUSH_SERVICE_ACCOUNT }}
+      - name: Log in to Artifact Registry
+        if: vars.CLOUD_PROVIDER == 'gcp'
+        run: gcloud auth configure-docker "$(echo '${{ vars.GCP_ARTIFACT_REGISTRY_URL }}' | cut -d/ -f1)" --quiet
       - name: Pull the just-scanned images
         run: |
           for app in core-app copy-engine broker-adapters mt5-bridge-gateway; do
-            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/$app:${{ github.sha }}
+            docker pull ${{ needs.resolve-registry.outputs.image_prefix }}/$app:${{ github.sha }}
           done
       - uses: helm/kind-action@v1.14.0
         with:
@@ -282,7 +365,7 @@ jobs:
       - name: Load images into kind (no registry pull needed inside the cluster)
         run: |
           for app in core-app copy-engine broker-adapters mt5-bridge-gateway; do
-            kind load docker-image "${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/$app:${{ github.sha }}" --name nectrix-production
+            kind load docker-image "${{ needs.resolve-registry.outputs.image_prefix }}/$app:${{ github.sha }}" --name nectrix-production
           done
       - name: Install kustomize
         run: |
@@ -290,10 +373,11 @@ jobs:
           curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash -s -- 5.7.1 /tmp/kustomize-bin
           echo "/tmp/kustomize-bin" >> "$GITHUB_PATH"
       - name: Patch image tags into the production overlay
+        # Explicit oldName=newName:tag form — see deploy-staging's identical note.
         working-directory: deploy/overlays/production
         run: |
           for app in core-app copy-engine broker-adapters mt5-bridge-gateway; do
-            kustomize edit set image "${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/$app:${{ github.sha }}"
+            kustomize edit set image "ghcr.io/avison9/nectrix/$app=${{ needs.resolve-registry.outputs.image_prefix }}/$app:${{ github.sha }}"
           done
       - run: kubectl apply -k deploy/overlays/production
       - name: Wait for rollouts
