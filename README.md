@@ -208,3 +208,11 @@ Two Postgres roles, required by the audit-log restriction below:
 - **`nectrix_app`** (created/granted by migration) — what `bootstrap`'s Spring datasource actually connects as. Full CRUD everywhere except `audit_log`, which is INSERT+SELECT only — `nectrix_plan/docs/17-security-architecture.md` §17.6, so even a compromised app credential can't rewrite audit history. Verified hands-on: a real integration test attempts `UPDATE`/`DELETE` against `audit_log` as `nectrix_app` and confirms both are rejected with a permission error.
 
 Requires `POSTGRES_APP_PASSWORD` in your `.env` (see `.env.example`) — same no-default pattern as `POSTGRES_PASSWORD`. See `apps/core-app/README.md` for more detail.
+
+## Auth & Identity
+
+TICKET-005 is done. `apps/core-app/modules/auth` implements login, session/refresh-token rotation with reuse detection, TOTP 2FA, and Google/Apple OAuth login — the shared primitives later admin-provisioning/accept-invite tickets call into. There is no public self-registration route anywhere (`POST /api/v1/auth/register` 404s by design, not a stub). Access tokens are HS256 JWTs (~15 min); refresh tokens are opaque and rotate on every use, with reuse of an already-rotated token revoking every session for that user. Rate limiting (Redis, 5 attempts/15 min default) guards `/login` and `/2fa/verify`.
+
+Google's OAuth code path is real; Apple's is implemented but not yet tested against Apple's real servers (two documented gaps — see `apps/core-app/README.md`'s Auth section). 2FA secret encryption is a temporary local AES-GCM stub, to be replaced by TICKET-011's real KMS-backed envelope encryption before Phase 1 broker linking.
+
+Requires `JWT_SIGNING_SECRET` and `TWO_FACTOR_SECRET_ENCRYPTION_KEY` in your `.env` (see `.env.example`) — same no-default pattern as `POSTGRES_APP_PASSWORD`. See `apps/core-app/README.md` for the full endpoint list and setup instructions.

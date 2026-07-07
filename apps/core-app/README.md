@@ -46,6 +46,43 @@ docker build -f apps/core-app/Dockerfile -t core-app .
 
 CI builds, Trivy-scans (`CRITICAL,HIGH` gated), and pushes this to `ghcr.io/avison9/nectrix/core-app:<commit-sha>` on every merge to `main` — see the root README's CI/CD section. Deployed via `deploy/base/core-app/` (Kustomize), in its own `core-app` namespace.
 
+## Auth & Identity (`modules/auth`, TICKET-005)
+
+Login, session/refresh-token management, TOTP 2FA, and Google/Apple OAuth login. There is **no
+public self-registration anywhere** — `POST /api/v1/auth/register` is not a mapped route at all (it
+404s), by design (`docs/05-domain-model.md` §5.0). Every account is created internally via
+`auth.api.UserProvisioningApi#createUser`, called by admin-provisioning/accept-invite tickets, never
+by this module's own HTTP layer.
+
+```
+POST /api/v1/auth/login                      {email, password, totp_code?} -> {access_token, refresh_token, expires_in}
+POST /api/v1/auth/oauth/{provider}/callback  {code} -> {access_token, refresh_token, expires_in}   (provider ∈ {google, apple})
+POST /api/v1/auth/refresh                    {refresh_token} -> {access_token, refresh_token, expires_in}
+POST /api/v1/auth/logout                     (authenticated; revokes the current session only)
+POST /api/v1/auth/2fa/enable                 (authenticated) -> {secret, qr_code_uri}
+POST /api/v1/auth/2fa/verify                 (authenticated) {totp_code} -> 204, flips two_factor_enabled=true
+```
+
+Access tokens are HS256 JWTs (~15 min TTL, `JWT_SIGNING_SECRET`). Refresh tokens are opaque, rotate
+on every `/refresh` call, and use claim-and-rotate reuse detection: presenting an already-rotated
+refresh token revokes **every** session for that user, not just the one presented (see
+`AuthService#refresh`'s Javadoc for the exact race-safety mechanics). Rate limiting (Redis
+INCR+EXPIRE, default 5 attempts / 15 min) applies to `/login` and `/2fa/verify`.
+
+**OAuth status**: Google's code path is real (not a stub) and intended to get a live end-to-end test
+once a real client exists, but that manual round-trip hasn't been run yet — set
+`GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` in `.env` from a Google Cloud OAuth 2.0
+web-app client (redirect URI `http://localhost:8080/api/v1/auth/oauth/google/callback`) to exercise
+it. Apple's code path is implemented (same
+generic `OidcIdTokenVerifier` machinery) but **not tested against Apple's real servers** — see
+`AppleOAuthProvider`'s Javadoc for two known gaps that need resolving before it's activated for
+real: Apple's `client_secret` must be a periodically-regenerated ES256 JWT (not a static string),
+and Apple only includes the user's email on their *first* authorization, never on repeat logins.
+
+2FA secret encryption uses a temporary local AES-GCM stub (`TWO_FACTOR_SECRET_ENCRYPTION_KEY`,
+`StubAesGcmTwoFactorSecretCipher`) — must be replaced by TICKET-011's real KMS-backed envelope
+encryption before any production credential flows through it (i.e. before Phase 1 broker linking).
+
 ## Commands
 
 Run from the repo root (see root `README.md` for the devcontainer setup):
@@ -55,4 +92,7 @@ make core-app-build   # ./gradlew build
 make core-app-test    # ./gradlew test — includes the ArchUnit boundary checks
 ```
 
-`bootstrap` exposes `GET /hello` on port 8080 once running (`./gradlew :bootstrap:bootRun`).
+`bootstrap` exposes `GET /hello` on port 8080 once running (`./gradlew :bootstrap:bootRun`). Auth
+integration tests (`./gradlew :bootstrap:integrationTest`) need Postgres + Redis running (see root
+`docker-compose.yml`) and `JWT_SIGNING_SECRET`/`TWO_FACTOR_SECRET_ENCRYPTION_KEY` set — same
+no-default pattern as `POSTGRES_APP_PASSWORD` (see `.env.example`).

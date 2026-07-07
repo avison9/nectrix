@@ -24,6 +24,16 @@ jobs:
       POSTGRES_PASSWORD: ci-throwaway-password
       POSTGRES_APP_PASSWORD: ci-throwaway-app-password
       MINIO_ROOT_PASSWORD: ci-throwaway-password
+      # TICKET-005 — no default in application.yml (deliberately, so a forgotten
+      # secret fails loudly in real environments), so CI needs its own throwaway
+      # values. GOOGLE_OAUTH_*/APPLE_OAUTH_* are left unset — application.yml
+      # defaults those to empty strings, and no test here exercises real OAuth.
+      # Both must be valid base64 decoding to a specific byte length (JwtService
+      # requires >=32 bytes; StubAesGcmTwoFactorSecretCipher requires exactly
+      # 16/24/32 for AES-128/192/256) — these are freshly generated throwaway
+      # values via `openssl rand -base64 N`, not secrets reused anywhere real.
+      JWT_SIGNING_SECRET: "n/ErCuickD7JyKdFhuOeH2QWJjQp6ZBxGxUosC6Mtr3kP6idy8j1sMYV0lKL0wAPeMuFQ4iwsF2uxq9lIk6MYQ=="
+      TWO_FACTOR_SECRET_ENCRYPTION_KEY: "1B/UzzovRJnn9QW1nWpWqGqZpL2y/gXi3P74UjNRVSY="
     steps:
       - uses: actions/checkout@v7.0.0
       - name: Start ephemeral infra (Postgres, Redis, Kafka)
@@ -36,7 +46,7 @@ jobs:
       - name: Run database migrations (TICKET-004)
         working-directory: apps/core-app
         run: ./gradlew :db:update
-      - name: core-app infra connectivity + schema constraint/audit-log tests
+      - name: core-app infra connectivity + schema/audit-log + auth (TICKET-005) integration tests
         working-directory: apps/core-app
         run: ./gradlew integrationTest
       - uses: actions/setup-go@v6.5.0

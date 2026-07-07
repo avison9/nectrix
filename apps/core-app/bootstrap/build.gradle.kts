@@ -28,6 +28,9 @@ dependencies {
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("com.tngtech.archunit:archunit-junit5:1.4.2")
     testImplementation(project(":archunit-fixtures"))
+    // Test-only — computes real TOTP codes against a known secret the same way
+    // TwoFactorService's CodeVerifier does, for TICKET-005's AuthIntegrationTest.
+    testImplementation("dev.samstevens.totp:totp:1.7.1")
 }
 
 application {

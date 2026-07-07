@@ -18,6 +18,24 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your .env file}
       POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?Set POSTGRES_APP_PASSWORD in your .env file}
       POSTGRES_DB: ${POSTGRES_DB:-nectrix}
+      # Same in-network-vs-host-mapping reasoning as POSTGRES_HOST/PORT above.
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      # Kafka's internal PLAINTEXT listener (docker-compose.yml's
+      # KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092), NOT the 9092
+      # EXTERNAL listener — that one is advertised as localhost:9092, which
+      # only resolves correctly for a client connecting from the host.
+      KAFKA_HOST: kafka
+      KAFKA_PORT: "29092"
+      # --- Auth (TICKET-005) ---
+      JWT_SIGNING_SECRET: ${JWT_SIGNING_SECRET:?Set JWT_SIGNING_SECRET in your .env file}
+      TWO_FACTOR_SECRET_ENCRYPTION_KEY: ${TWO_FACTOR_SECRET_ENCRYPTION_KEY:?Set TWO_FACTOR_SECRET_ENCRYPTION_KEY in your .env file}
+      # OAuth vars are allowed to be blank (Google/Apple login just won't work
+      # until real credentials are set) — not required to boot the app.
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
+      APPLE_OAUTH_CLIENT_ID: ${APPLE_OAUTH_CLIENT_ID:-}
+      APPLE_OAUTH_CLIENT_SECRET: ${APPLE_OAUTH_CLIENT_SECRET:-}
     ports:
       - "8080:8080"   # core-app
       - "8090:8090"   # copy-engine
