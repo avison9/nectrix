@@ -7,6 +7,12 @@ plugins {
 
 dependencies {
     implementation("org.springframework.boot:spring-boot-starter-web")
+    implementation("org.springframework.boot:spring-boot-starter-jdbc")
+    // Driver only — no liquibase-core here at all (see db/build.gradle.kts's
+    // top comment). The app connects as the restricted `nectrix_app` role;
+    // migrations are always run separately, by the db subproject, as the
+    // superuser.
+    runtimeOnly("org.postgresql:postgresql:42.7.7")
     implementation("com.nectrix:event-contracts")
 
     implementation(project(":modules:auth"))

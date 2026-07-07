@@ -22,6 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       POSTGRES_PASSWORD: ci-throwaway-password
+      POSTGRES_APP_PASSWORD: ci-throwaway-app-password
       MINIO_ROOT_PASSWORD: ci-throwaway-password
     steps:
       - uses: actions/checkout@v7.0.0
@@ -32,7 +33,10 @@ jobs:
           distribution: temurin
           java-version: "21"
           cache: gradle
-      - name: core-app infra connectivity smoke test
+      - name: Run database migrations (TICKET-004)
+        working-directory: apps/core-app
+        run: ./gradlew :db:update
+      - name: core-app infra connectivity + schema constraint/audit-log tests
         working-directory: apps/core-app
         run: ./gradlew integrationTest
       - uses: actions/setup-go@v6.5.0
@@ -161,10 +165,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: |
-          echo "::notice::No migration tool/schema exists yet (TICKET-004)."
-          echo "This stage is a structural placeholder: expand-phase (add-only)"
-          echo "migrations will run here, against staging Postgres, before the"
-          echo "app deployment step below - per docs/16-deployment-architecture.md §16.3."
+          echo "::notice::The migration framework now exists (TICKET-004, apps/core-app/db, Liquibase)"
+          echo "and is exercised for real in the integration-test job above, against the ephemeral"
+          echo "CI Postgres. This stage is still a placeholder because there is no real, persistent"
+          echo "staging Postgres to run against yet - TICKET-003 deliberately never applied real"
+          echo "cloud infrastructure (see infra/terraform/README.md). Once one exists, this becomes"
+          echo "./gradlew :db:update against the real staging DATABASE_URL, before the app"
+          echo "deployment step below - per docs/16-deployment-architecture.md §16.3."
 
   # deploy-staging, drain-hook verification, and the E2E smoke check are one
   # job, not three: each GitHub Actions job runs on its own fresh runner VM,
@@ -305,8 +312,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: |
-          echo "::notice::No migration tool/schema exists yet (TICKET-004)."
-          echo "Placeholder for the expand-phase migration against production Postgres."
+          echo "::notice::The migration framework now exists (TICKET-004, apps/core-app/db, Liquibase),"
+          echo "but there is no real, persistent production Postgres yet - TICKET-003 deliberately"
+          echo "never applied real cloud infrastructure. Once one exists, this becomes"
+          echo "./gradlew :db:update against the real production DATABASE_URL."
 
   deploy-production:
     needs: [db-migration-production, resolve-registry]

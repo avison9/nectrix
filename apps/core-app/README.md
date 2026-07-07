@@ -4,16 +4,37 @@ The Core App — a Java 21 + Spring Boot modular monolith covering Auth, Onboard
 
 ## Layout
 
-- `bootstrap/` — the Spring Boot entrypoint (`CoreAppApplication`), wiring all 7 modules together. Also owns the ArchUnit module-boundary tests.
+- `bootstrap/` — the Spring Boot entrypoint (`CoreAppApplication`), wiring all 7 modules together. Also owns the ArchUnit module-boundary tests and the schema/audit-log integration tests (`src/test/java/.../infra/`). Connects to Postgres as the restricted `nectrix_app` role only — never runs migrations itself.
 - `modules/{auth,invitations,social,billing,admin,analytics,notifications}/` — one bounded context per module, each with `api/` (published surface), `domain/`, and `repository/` packages.
 - `archunit-fixtures/` — a deliberately-violating fixture module (outside `com.nectrix.coreapp`) that `ModuleBoundaryRuleSelfTest` checks against, proving the ArchUnit rule actually fires rather than trusting an unverified assertion.
+- `db/` — Liquibase migrations for the full schema (see "Database & migrations" below). Deliberately a separate Gradle subproject from `bootstrap`, so `liquibase-core` never ends up on the running app's classpath.
 
 ## Design references
 
 - `nectrix_plan/docs/04-architecture-overview.md` — module boundary rules, bounded contexts.
 - `nectrix_plan/docs/05-domain-model.md` — the domain model each module implements.
+- `nectrix_plan/docs/06-database-schema.md` — the full schema `db/` implements.
 - `nectrix_plan/docs/13-technology-stack.md` §13.1 — why Java/Spring Boot.
+- `nectrix_plan/docs/17-security-architecture.md` §17.6 — why `audit_log` has no UPDATE/DELETE grant for the app role.
 - `nectrix_plan/phases/phase-0-foundation/tickets/TICKET-001-repo-scaffolding.md` — the ticket this scaffolding satisfies.
+- `nectrix_plan/phases/phase-0-foundation/tickets/TICKET-004-database-schema-migrations.md` — the ticket that added `db/` and the datasource wiring.
+
+## Database & migrations
+
+Full schema from `docs/06-database-schema.md` (31 tables), applied via **Liquibase** SQL-formatted changelogs in `db/src/main/resources/db/changelog/changes/` — chosen over Flyway specifically because Liquibase Community supports real per-changeset rollback for free (Flyway's `undo` is a paid Teams feature).
+
+Two Postgres roles:
+- **`nectrix`** (the existing superuser) — runs all migrations. Never used by the running app.
+- **`nectrix_app`** (created by migration `001`, granted by `013`) — what `bootstrap`'s own `spring.datasource.*` connects as. Full CRUD everywhere except `audit_log`, which is INSERT+SELECT only (no UPDATE/DELETE) — `docs/17-security-architecture.md` §17.6.
+
+```
+make db-migrate       # apply all pending changesets (schema + reference data)
+make db-migrate-down  # real rollback of every changeset (not clean+reapply)
+make db-seed-dev      # additionally apply dev-only synthetic data (context=dev — never staging/production)
+make db-status        # list pending changesets
+```
+
+Requires `POSTGRES_APP_PASSWORD` set in your `.env` (see root `.env.example`) — same no-default pattern as `POSTGRES_PASSWORD`.
 
 ## Container image
 

@@ -37,7 +37,7 @@ Full rationale for each choice: `../nectrix_plan/docs/13-technology-stack.md`.
 
 ## Roadmap
 
-- **Phase 0 — Foundation** *(current)*: repo scaffolding ✅, CI/CD ✅, K8s/Terraform ✅, DB schema/migrations, auth/RBAC, message bus, Redis caching, a stub broker adapter, observability, secrets/envelope encryption, and an empty Admin Portal shell. Nothing user-facing yet.
+- **Phase 0 — Foundation** *(current)*: repo scaffolding ✅, CI/CD ✅, K8s/Terraform ✅, DB schema/migrations ✅, auth/RBAC, message bus, Redis caching, a stub broker adapter, observability, secrets/envelope encryption, and an empty Admin Portal shell. Nothing user-facing yet.
 - **Phase 1 — MVP**: real cTrader/MT5 adapters, the full copy engine (sizing, risk guard, partial-close/SL-TP sync, drawdown protection, reconciliation), invitation-based onboarding, broker IB links, both fee-collection methods, a basic leaderboard, the web dashboard, and Admin Portal MVP features.
 - **Phase 2 — V2**: native mobile apps, multi-master portfolios/follow-requests, reverse-copy, reviews, demo-preview copy, partner/IB program dashboard, dispute tooling, feature flags, exportable statements, fraud queue, table partitioning.
 - **Phase 3 — Enterprise**: MT5 Manager API broker partnerships, multi-region/active-active DR, white-label, negotiated take-rates, full KYC/AML, and additive AI features (strategy analysis, portfolio optimization, anomaly detection).
@@ -191,3 +191,20 @@ Notes:
 - **Environments = Terraform workspaces** (`dev`/`staging`/`production`), one root module per cloud. Each `envs/<env>.tfvars` also sets `environment`, checked against the selected workspace via a `check` block — applying the wrong `.tfvars` against the wrong workspace fails loudly instead of silently.
 - **Terraform owns cloud resources; Kustomize (`deploy/`) owns everything in-cluster** — namespaces, NetworkPolicy, HPA, the (AWS-only) cluster-autoscaler controller, Ingress objects. Cloud-specific Ingress annotations are Kustomize *components* (`deploy/components/cloud-{aws,gcp}`), not duplicated overlays.
 - Terraform, `tflint`, `checkov`, and `kind` are **host-level** tools for this ticket, same precedent as `kubectl`/standalone `kustomize` in `deploy/README.md`.
+
+## Database & migrations
+
+TICKET-004 is done. The full schema from `nectrix_plan/docs/06-database-schema.md` (31 tables) is implemented via **Liquibase** — chosen over Flyway specifically because Liquibase Community supports real per-changeset rollback for free (Flyway's `undo` is a paid Teams feature). Changesets live in `apps/core-app/db/`, a Gradle subproject deliberately separate from `apps/core-app/bootstrap` (the running app), so `liquibase-core` never ends up on the app's own classpath.
+
+```
+make db-migrate       # apply all pending changesets (schema + reference data)
+make db-migrate-down  # real rollback of every changeset — proven repeatable: up → down → up
+make db-seed-dev      # additionally apply dev-only synthetic users/broker-accounts/master-profile (never staging/production)
+make db-status        # list pending changesets
+```
+
+Two Postgres roles, required by the audit-log restriction below:
+- **`nectrix`** (the existing superuser) — runs all migrations. Never used by the running app.
+- **`nectrix_app`** (created/granted by migration) — what `bootstrap`'s Spring datasource actually connects as. Full CRUD everywhere except `audit_log`, which is INSERT+SELECT only — `nectrix_plan/docs/17-security-architecture.md` §17.6, so even a compromised app credential can't rewrite audit history. Verified hands-on: a real integration test attempts `UPDATE`/`DELETE` against `audit_log` as `nectrix_app` and confirms both are rejected with a permission error.
+
+Requires `POSTGRES_APP_PASSWORD` in your `.env` (see `.env.example`) — same no-default pattern as `POSTGRES_PASSWORD`. See `apps/core-app/README.md` for more detail.

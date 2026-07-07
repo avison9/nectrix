@@ -4,7 +4,14 @@
 	go-build go-test go-lint proto-gen \
 	ts-install ts-build ts-lint \
 	tf-fmt tf-validate tf-lint tf-checkov \
-	kind-netpol-test kind-hpa-test
+	kind-netpol-test kind-hpa-test \
+	db-migrate db-migrate-down db-seed-dev db-status
+
+# Count of the core (non-dev-context) changesets — update when adding new
+# ones. Used for a full rollback (db-migrate-down). If dev seed data
+# (db-seed-dev) has also been applied, roll that back first — this count
+# only unwinds the 40 core changesets, not the additional dev-context ones.
+DB_CHANGESET_COUNT = 40
 
 TF_DIRS = infra/terraform/aws infra/terraform/gcp
 
@@ -89,3 +96,18 @@ kind-netpol-test: ## Real kind+Calico run proving the staging/production network
 
 kind-hpa-test: ## Real kind+metrics-server run proving HPA wiring (AC4)
 	./infra/kind/hpa-test/run.sh
+
+# --- apps/core-app/db: Liquibase migrations (TICKET-004) — always run as the
+# nectrix superuser, never by the running app (see apps/core-app/db/README.md).
+
+db-migrate: ## Run all pending Liquibase changesets (schema + reference-data)
+	$(DC_EXEC) bash -c "cd /workspace/apps/core-app && ./gradlew :db:update"
+
+db-migrate-down: ## Roll back every changeset (real Liquibase rollback, not clean+reapply)
+	$(DC_EXEC) bash -c "cd /workspace/apps/core-app && ./gradlew :db:rollbackCount -PliquibaseCount=$(DB_CHANGESET_COUNT)"
+
+db-seed-dev: ## Apply dev-only seed data on top (context=dev — never staging/production)
+	$(DC_EXEC) bash -c "cd /workspace/apps/core-app && ./gradlew :db:update -PliquibaseContexts=dev"
+
+db-status: ## List pending Liquibase changesets
+	$(DC_EXEC) bash -c "cd /workspace/apps/core-app && ./gradlew :db:status"

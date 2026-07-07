@@ -1,0 +1,10 @@
+# includeAll sorts alphabetically — numeric filename prefixes (001, 002, ...)
+# control real execution/rollback order. See db/README.md for the ordering
+# rules that matter (nectrix_app role created early, granted late). Changeset
+# files live in ./changes/ (not this same directory) so includeAll never has
+# to reason about excluding this master file from its own scan.
+databaseChangeLog:
+  - includeAll:
+      path: changes/
+      relativeToChangelogFile: true
+      errorIfMissingOrEmpty: true
