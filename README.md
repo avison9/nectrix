@@ -216,3 +216,11 @@ TICKET-005 is done. `apps/core-app/modules/auth` implements login, session/refre
 Google's OAuth code path is real; Apple's is implemented but not yet tested against Apple's real servers (two documented gaps — see `apps/core-app/README.md`'s Auth section). 2FA secret encryption is a temporary local AES-GCM stub, to be replaced by TICKET-011's real KMS-backed envelope encryption before Phase 1 broker linking.
 
 Requires `JWT_SIGNING_SECRET` and `TWO_FACTOR_SECRET_ENCRYPTION_KEY` in your `.env` (see `.env.example`) — same no-default pattern as `POSTGRES_APP_PASSWORD`. See `apps/core-app/README.md` for the full endpoint list and setup instructions.
+
+## RBAC
+
+TICKET-006 is done. Two independent enforcement layers per `nectrix_plan/docs/17-security-architecture.md` §17.3: coarse role checks (`@PreAuthorize("hasRole(...)")`) at the route level, and fine-grained object-ownership checks (`@PostAuthorize` + a shared `SecurityPermissions` bean referenced by SpEL bean name, not a compile-time import) at the service level — the IDOR-prevention layer, demonstrated against `BrokerAccount` and reusable for any future per-user-owned resource. Demo admin endpoints (impersonation — issues a JWT tagged with the acting admin's ID; a ledger-adjustment stub distinguishing `ADMIN` from `SUPPORT`) each write one audited `audit_log` row. Role management is a `make role-grant`/`role-revoke`/`role-list` CLI at this phase — a full admin-portal UI is TICKET-012.
+
+Fixed one real, previously-undetected bug along the way: Spring MVC's bare `@PathVariable UUID id` (no explicit name) silently fails at request time unless the class file retains real parameter names — `apps/core-app/build.gradle.kts` now sets javac's `-parameters` flag for every subproject, not just the ones this ticket touched (TICKET-005's own `oauthCallback` route had the same latent bug, just never exercised by a test until now).
+
+See `apps/core-app/README.md` for the full endpoint list and the ownership-check pattern to reuse.

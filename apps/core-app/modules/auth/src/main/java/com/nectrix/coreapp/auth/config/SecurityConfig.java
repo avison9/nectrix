@@ -74,6 +74,20 @@ public class SecurityConfig {
                     .authenticated()
                     .requestMatchers(HttpMethod.POST, "/api/v1/auth/2fa/verify")
                     .authenticated()
+                    // TICKET-006 — role/ownership enforcement itself is method-security
+                    // (@PreAuthorize/@PostAuthorize on the controller/service), but these still
+                    // need to be listed here as .authenticated() so a request with no bearer
+                    // token at all gets a clean 401 rather than falling through to
+                    // anyRequest().permitAll() below (where an anonymous "authentication" would
+                    // only be caught by the method-security check, yielding a less correct 403).
+                    .requestMatchers(HttpMethod.GET, "/api/v1/broker-accounts/*")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.POST, "/api/v1/admin/impersonate/*")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.POST, "/api/v1/admin/ledger-adjustments")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.GET, "/api/v1/admin/broker-accounts/*")
+                    .authenticated()
                     // -- add new protected/public auth-adjacent routes here (future tickets:
                     // accept-invite, by-token) — anyRequest() below is intentionally permitAll,
                     // not authenticated(), so genuinely unmapped paths 404 instead of 401; see

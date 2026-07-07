@@ -8,6 +8,10 @@ plugins {
 dependencies {
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("org.springframework.boot:spring-boot-starter-jdbc")
+    // TICKET-006 — GlobalSecurityExceptionHandler compiles directly against
+    // AccessDeniedException; just the core annotations/types, not the full
+    // security starter (auth module owns the actual SecurityFilterChain).
+    implementation("org.springframework.security:spring-security-core")
     // Driver only — no liquibase-core here at all (see db/build.gradle.kts's
     // top comment). The app connects as the restricted `nectrix_app` role;
     // migrations are always run separately, by the db subproject, as the

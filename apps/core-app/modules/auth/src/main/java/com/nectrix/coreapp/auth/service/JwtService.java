@@ -48,13 +48,38 @@ public class JwtService {
    * DB round trip.
    */
   public String issueAccessToken(UUID userId, String email, List<String> roles) {
-    Instant now = Instant.now();
-    JWTClaimsSet claims =
+    return sign(
         new JWTClaimsSet.Builder()
             .subject(userId.toString())
             .issuer(ISSUER)
             .claim("email", email)
-            .claim("roles", roles)
+            .claim("roles", roles));
+  }
+
+  /**
+   * TICKET-006 — an admin/support-initiated impersonation session: a normal access token for {@code
+   * targetUserId} (same claims, same 15-min TTL as a real login — an impersonation session
+   * shouldn't outlive one), plus an {@code impersonated_by} claim naming the acting admin/support
+   * user. Downstream consumers (audit logging, future authorization checks) can always tell an
+   * impersonated request apart from a genuine self-service one by checking for this claim's
+   * presence — see docs/12-analytics-notifications-admin.md §12.3's "every action taken while
+   * impersonating is tagged... with both the admin's and the impersonated user's IDs".
+   */
+  public String issueImpersonationToken(
+      UUID targetUserId, String targetEmail, List<String> targetRoles, UUID actingAdminId) {
+    return sign(
+        new JWTClaimsSet.Builder()
+            .subject(targetUserId.toString())
+            .issuer(ISSUER)
+            .claim("email", targetEmail)
+            .claim("roles", targetRoles)
+            .claim("impersonated_by", actingAdminId.toString()));
+  }
+
+  private String sign(JWTClaimsSet.Builder claimsBuilder) {
+    Instant now = Instant.now();
+    JWTClaimsSet claims =
+        claimsBuilder
             .issueTime(Date.from(now))
             .expirationTime(Date.from(now.plus(ACCESS_TOKEN_TTL_SECONDS, ChronoUnit.SECONDS)))
             .jwtID(UUID.randomUUID().toString())
