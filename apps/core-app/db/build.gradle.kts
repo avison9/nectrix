@@ -27,7 +27,10 @@ repositories {
 
 dependencies {
     liquibaseRuntime("org.liquibase:liquibase-core:4.31.1")
-    liquibaseRuntime("org.postgresql:postgresql:42.7.7")
+    // 42.7.7 has a real, fixed HIGH-severity CVE (CVE-2026-42198, client-side
+    // DoS) — caught by CI's Trivy gate on the core-app image, fixed by
+    // bumping to 42.7.11+ (kept in sync with bootstrap/build.gradle.kts).
+    liquibaseRuntime("org.postgresql:postgresql:42.7.11")
     liquibaseRuntime("info.picocli:picocli:4.7.7") // required by Liquibase 4.4+
 }
 

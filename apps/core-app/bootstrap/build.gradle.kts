@@ -12,7 +12,9 @@ dependencies {
     // top comment). The app connects as the restricted `nectrix_app` role;
     // migrations are always run separately, by the db subproject, as the
     // superuser.
-    runtimeOnly("org.postgresql:postgresql:42.7.7")
+    // 42.7.7 has a real, fixed HIGH-severity CVE (CVE-2026-42198, client-side
+    // DoS) — caught by CI's Trivy gate, fixed by bumping to 42.7.11+.
+    runtimeOnly("org.postgresql:postgresql:42.7.11")
     implementation("com.nectrix:event-contracts")
 
     implementation(project(":modules:auth"))
