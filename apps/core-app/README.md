@@ -83,6 +83,45 @@ and Apple only includes the user's email on their *first* authorization, never o
 `StubAesGcmTwoFactorSecretCipher`) — must be replaced by TICKET-011's real KMS-backed envelope
 encryption before any production credential flows through it (i.e. before Phase 1 broker linking).
 
+## RBAC (TICKET-006)
+
+Roles are additive, not exclusive (`user_roles` join table): `FOLLOWER`, `MASTER`, `PARTNER`,
+`ADMIN`, `SUPPORT`. Two independent enforcement layers, per `docs/17-security-architecture.md`
+§17.3:
+
+- **Coarse, route-level** — plain `@PreAuthorize("hasRole(...)")`/`hasAnyRole(...)` on controller
+  methods, using the `ROLE_*` authorities `auth.config.SecurityConfig`'s `JwtAuthenticationConverter`
+  already derives from the access token's `roles` claim. No custom annotation.
+- **Fine, object-level (IDOR prevention)** — `@PostAuthorize` on a service method, referencing
+  `auth.security.SecurityPermissions` (bean name `perms`) by SpEL:
+  `@PostAuthorize("@perms.isOwnerOrStaff(authentication, returnObject.userId())")`. This is a
+  *runtime* bean-name lookup, not a compile-time import, so it works across module boundaries
+  without violating `ModuleBoundaryArchTest`. See `invitations.service.BrokerAccountService` for the
+  reference implementation — reuse this exact pattern for any future per-user-owned resource
+  (`CopyRelationship`, `Invitation`, `BrokerIBLink`, `BrokerFeeReport`, ...). Reads only — a future
+  write endpoint needs an explicit imperative guard instead (see that class's Javadoc for why).
+
+Demo endpoints (real role/ownership enforcement, but not real features — `BrokerAccount` linking and
+`performance_fee_ledger` logic are Phase 1):
+
+```
+GET  /api/v1/broker-accounts/{id}          (authenticated; owner or ADMIN/SUPPORT only — 403/404 otherwise)
+POST /api/v1/admin/impersonate/{userId}    (ADMIN/SUPPORT) -> {access_token, expires_in}, JWT tagged impersonated_by=<acting admin/support id>
+POST /api/v1/admin/ledger-adjustments      (ADMIN only — SUPPORT gets 403) {target_type, target_id, amount, reason} -> 204
+GET  /api/v1/admin/broker-accounts/{id}    (ADMIN/SUPPORT — bypasses ownership) -> same shape as the Follower-facing route
+```
+
+Every admin/support action above writes one `audit_log` row (`docs/17-security-architecture.md`
+§17.6 — write-only at the app-DB-role level).
+
+Role management is a CLI at this phase (a full admin-portal UI is TICKET-012):
+
+```
+make role-grant EMAIL=foo@example.com ROLE=ADMIN
+make role-revoke EMAIL=foo@example.com ROLE=ADMIN
+make role-list EMAIL=foo@example.com
+```
+
 ## Commands
 
 Run from the repo root (see root `README.md` for the devcontainer setup):

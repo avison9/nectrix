@@ -5,7 +5,8 @@
 	ts-install ts-build ts-lint \
 	tf-fmt tf-validate tf-lint tf-checkov \
 	kind-netpol-test kind-hpa-test \
-	db-migrate db-migrate-down db-seed-dev db-status
+	db-migrate db-migrate-down db-seed-dev db-status \
+	role-grant role-revoke role-list
 
 # Count of the core (non-dev-context) changesets — update when adding new
 # ones. Used for a full rollback (db-migrate-down). If dev seed data
@@ -111,3 +112,26 @@ db-seed-dev: ## Apply dev-only seed data on top (context=dev — never staging/p
 
 db-status: ## List pending Liquibase changesets
 	$(DC_EXEC) bash -c "cd /workspace/apps/core-app && ./gradlew :db:status"
+
+# --- TICKET-006: role management CLI (AC4 — "visible/manageable via an
+# internal admin utility, can be a CLI script at this phase"). Plain psql
+# against roles/user_roles, connecting as the same nectrix_app role the
+# running app itself uses (least privilege — no new grants needed, and
+# consistent with db-migrate's "always use the credentials the real
+# consumer would use" spirit, just for the app role instead of the
+# superuser). No new Java code: a full admin-portal role-management UI is
+# TICKET-012's job, not this ticket's.
+
+role-grant: ## Grant a role: make role-grant EMAIL=foo@example.com ROLE=ADMIN
+	@test -n "$(EMAIL)" || { echo "EMAIL is required, e.g. make role-grant EMAIL=foo@example.com ROLE=ADMIN"; exit 1; }
+	@test -n "$(ROLE)" || { echo "ROLE is required, e.g. make role-grant EMAIL=foo@example.com ROLE=ADMIN"; exit 1; }
+	$(DC_EXEC) bash -c "psql \"postgresql://nectrix_app:\$$POSTGRES_APP_PASSWORD@\$$POSTGRES_HOST:\$$POSTGRES_PORT/\$$POSTGRES_DB\" -v ON_ERROR_STOP=1 -c \"INSERT INTO user_roles (user_id, role_id) SELECT u.id, r.id FROM users u, roles r WHERE u.email = '$(EMAIL)' AND r.name = '$(ROLE)' ON CONFLICT (user_id, role_id) DO NOTHING;\""
+
+role-revoke: ## Revoke a role: make role-revoke EMAIL=foo@example.com ROLE=ADMIN
+	@test -n "$(EMAIL)" || { echo "EMAIL is required, e.g. make role-revoke EMAIL=foo@example.com ROLE=ADMIN"; exit 1; }
+	@test -n "$(ROLE)" || { echo "ROLE is required, e.g. make role-revoke EMAIL=foo@example.com ROLE=ADMIN"; exit 1; }
+	$(DC_EXEC) bash -c "psql \"postgresql://nectrix_app:\$$POSTGRES_APP_PASSWORD@\$$POSTGRES_HOST:\$$POSTGRES_PORT/\$$POSTGRES_DB\" -v ON_ERROR_STOP=1 -c \"DELETE FROM user_roles USING users u, roles r WHERE user_roles.user_id = u.id AND user_roles.role_id = r.id AND u.email = '$(EMAIL)' AND r.name = '$(ROLE)';\""
+
+role-list: ## List roles for a user: make role-list EMAIL=foo@example.com
+	@test -n "$(EMAIL)" || { echo "EMAIL is required, e.g. make role-list EMAIL=foo@example.com"; exit 1; }
+	$(DC_EXEC) bash -c "psql \"postgresql://nectrix_app:\$$POSTGRES_APP_PASSWORD@\$$POSTGRES_HOST:\$$POSTGRES_PORT/\$$POSTGRES_DB\" -v ON_ERROR_STOP=1 -c \"SELECT r.name FROM roles r JOIN user_roles ur ON ur.role_id = r.id JOIN users u ON u.id = ur.user_id WHERE u.email = '$(EMAIL)';\""
