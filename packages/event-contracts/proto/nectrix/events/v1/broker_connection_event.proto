@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package nectrix.events.v1;
+
+import "nectrix/events/v1/envelope.proto";
+
+option go_package = "github.com/avison9/nectrix/event-contracts/go/gen/nectrix/events/v1;eventsv1";
+option java_package = "com.nectrix.events.v1";
+option java_multiple_files = true;
+
+// Topic: broker-connection (docs/15-event-driven-architecture.md §15.3).
+// Partition key: broker_account_id.
+
+enum BrokerConnectionEventType {
+  BROKER_CONNECTION_EVENT_TYPE_UNSPECIFIED = 0;
+  BROKER_CONNECTION_EVENT_TYPE_ESTABLISHED = 1;
+  BROKER_CONNECTION_EVENT_TYPE_DEGRADED = 2;
+  BROKER_CONNECTION_EVENT_TYPE_LOST = 3;
+  BROKER_CONNECTION_EVENT_TYPE_REAUTH_REQUIRED = 4;
+}
+
+message BrokerConnectionEvent {
+  EventEnvelope envelope = 1;
+  string broker_account_id = 2; // partition key
+  BrokerConnectionEventType event_type = 3;
+  optional string detail = 4; // free-text reason, e.g. degradation cause
+}

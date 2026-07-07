@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+package nectrix.events.v1;
+
+import "nectrix/events/v1/envelope.proto";
+
+option go_package = "github.com/avison9/nectrix/event-contracts/go/gen/nectrix/events/v1;eventsv1";
+option java_package = "com.nectrix.events.v1";
+option java_multiple_files = true;
+
+// Topic: follow-requests — added by TICKET-007 per the invitation-only
+// onboarding model (docs/05-domain-model.md §5.6); not in the §15.3 table.
+// Partition key: follow_request_id (same not-specified-in-docs, decided-by-
+// analogy reasoning as invitation_event.proto).
+
+enum FollowRequestEventType {
+  FOLLOW_REQUEST_EVENT_TYPE_UNSPECIFIED = 0;
+  FOLLOW_REQUEST_EVENT_TYPE_CREATED = 1;
+  FOLLOW_REQUEST_EVENT_TYPE_APPROVED = 2;
+  FOLLOW_REQUEST_EVENT_TYPE_REJECTED = 3;
+}
+
+message FollowRequestEvent {
+  EventEnvelope envelope = 1;
+  string follow_request_id = 2; // partition key
+  FollowRequestEventType event_type = 3;
+  string follower_user_id = 4;
+  string master_user_id = 5;
+}

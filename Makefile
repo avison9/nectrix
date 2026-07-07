@@ -6,7 +6,8 @@
 	tf-fmt tf-validate tf-lint tf-checkov \
 	kind-netpol-test kind-hpa-test \
 	db-migrate db-migrate-down db-seed-dev db-status \
-	role-grant role-revoke role-list
+	role-grant role-revoke role-list \
+	kafka-topics
 
 # Count of the core (non-dev-context) changesets — update when adding new
 # ones. Used for a full rollback (db-migrate-down). If dev seed data
@@ -61,8 +62,8 @@ go-test: ## Test all Go modules (excludes //go:build integration-tagged tests)
 go-lint: ## Lint all Go modules with golangci-lint
 	$(DC_EXEC) bash -c "cd /workspace && for d in packages/go-domain packages/event-contracts/go apps/copy-engine apps/broker-adapters apps/mt5-bridge-gateway; do (cd \$$d && golangci-lint run ./...); done"
 
-proto-gen: ## Regenerate Go code from packages/event-contracts/proto
-	$(DC_EXEC) bash -c "cd /workspace && protoc --proto_path=packages/event-contracts/proto --go_out=packages/event-contracts/go/gen --go_opt=paths=source_relative packages/event-contracts/proto/nectrix/events/v1/trade_event.proto"
+proto-gen: ## Regenerate Go code from packages/event-contracts/proto (all .proto files, not just one)
+	$(DC_EXEC) bash -c "cd /workspace && protoc --proto_path=packages/event-contracts/proto --go_out=packages/event-contracts/go/gen --go_opt=paths=source_relative packages/event-contracts/proto/nectrix/events/v1/*.proto"
 
 ts-install: ## Install TS workspace dependencies (apps/web, apps/admin-portal, packages/*)
 	$(DC_EXEC) bash -c "cd /workspace && npm install"
@@ -135,3 +136,12 @@ role-revoke: ## Revoke a role: make role-revoke EMAIL=foo@example.com ROLE=ADMIN
 role-list: ## List roles for a user: make role-list EMAIL=foo@example.com
 	@test -n "$(EMAIL)" || { echo "EMAIL is required, e.g. make role-list EMAIL=foo@example.com"; exit 1; }
 	$(DC_EXEC) bash -c "psql \"postgresql://nectrix_app:\$$POSTGRES_APP_PASSWORD@\$$POSTGRES_HOST:\$$POSTGRES_PORT/\$$POSTGRES_DB\" -v ON_ERROR_STOP=1 -c \"SELECT r.name FROM roles r JOIN user_roles ur ON ur.role_id = r.id JOIN users u ON u.id = ur.user_id WHERE u.email = '$(EMAIL)';\""
+
+# --- TICKET-007: explicit Kafka topic catalog (see infra/kafka/create-topics.sh
+# for the full topic list/partitioning rationale). Plain `docker compose exec`
+# against the kafka service itself, not $(DC_EXEC)/the devcontainer — same
+# precedent as the `up`/`down`/`ps` targets above, since this needs to reach
+# the broker container directly, not run tooling from inside the devcontainer.
+
+kafka-topics: ## Create the full topic catalog (idempotent) against the local/CI broker
+	./infra/kafka/create-topics.sh

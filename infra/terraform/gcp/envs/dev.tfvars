@@ -18,4 +18,7 @@ cloudsql_disk_size_gb = 20
 redis_memory_size_gb = 1
 redis_tier           = "BASIC"
 
+kafka_vcpu_count   = 3
+kafka_memory_bytes = 3221225472 # 3 GiB — Managed Kafka's minimum ratio
+
 gcs_bucket_name = "nectrix-dev-objects"

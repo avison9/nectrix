@@ -60,6 +60,18 @@ module "memorystore_redis" {
   depends_on = [module.networking]
 }
 
+module "kafka" {
+  source = "./modules/kafka"
+
+  name_prefix          = local.name_prefix
+  region               = var.region
+  subnetwork_self_link = module.networking.subnetwork_self_link
+  vcpu_count           = var.kafka_vcpu_count
+  memory_bytes         = var.kafka_memory_bytes
+
+  depends_on = [module.networking]
+}
+
 module "gcs_storage" {
   source = "./modules/gcs-storage"
 

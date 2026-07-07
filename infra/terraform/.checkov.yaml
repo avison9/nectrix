@@ -24,6 +24,7 @@ skip-check:
   - CKV_GCP_29 # GCS bucket uses Google-managed encryption, not a CMK
   - CKV_GCP_35 # Cloud SQL uses Google-managed encryption, not a CMK
   - CKV_GCP_84 # Artifact Registry uses Google-managed encryption, not a CSEK
+  - CKV_AWS_158 # TICKET-007: MSK broker-logs CloudWatch Log Group uses the default AWS-owned key, not a CMK — same deferral as the items above
 
   # Deliberate dev-convenience trade-offs, documented inline in the affected
   # module's main.tf with a "tighten before real apply" comment — narrowing

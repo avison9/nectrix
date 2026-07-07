@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package nectrix.events.v1;
+
+import "nectrix/events/v1/envelope.proto";
+
+option go_package = "github.com/avison9/nectrix/event-contracts/go/gen/nectrix/events/v1;eventsv1";
+option java_package = "com.nectrix.events.v1";
+option java_multiple_files = true;
+
+// Topic: partner (docs/15-event-driven-architecture.md §15.3).
+// Partition key: partner_id.
+
+enum PartnerEventType {
+  PARTNER_EVENT_TYPE_UNSPECIFIED = 0;
+  PARTNER_EVENT_TYPE_REFERRAL_ATTRIBUTED = 1;
+  PARTNER_EVENT_TYPE_COMMISSION_ACCRUED = 2;
+}
+
+message PartnerEvent {
+  EventEnvelope envelope = 1;
+  string partner_id = 2; // partition key
+  PartnerEventType event_type = 3;
+  optional string referred_user_id = 4; // set for REFERRAL_ATTRIBUTED
+  optional double commission_amount = 5; // set for COMMISSION_ACCRUED
+}

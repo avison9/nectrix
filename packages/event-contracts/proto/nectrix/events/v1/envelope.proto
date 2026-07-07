@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package nectrix.events.v1;
+
+option go_package = "github.com/avison9/nectrix/event-contracts/go/gen/nectrix/events/v1;eventsv1";
+option java_package = "com.nectrix.events.v1";
+option java_multiple_files = true;
+
+// Shared wrapper embedded in every topic event message defined in this
+// package (docs/15-event-driven-architecture.md) — one common shape instead
+// of each topic message hand-rolling its own event_id/timestamp/version
+// fields, though NormalizedTradeEvent (trade_event.proto) predates this and
+// keeps its own equivalent fields rather than being retrofitted.
+message EventEnvelope {
+  string event_id = 1; // unique; the idempotency-key source for consumers
+  string occurred_at = 2; // ISO-8601 — when the source fact happened
+  string schema_version = 3; // e.g. "v1" — bumped on a breaking payload change
+}

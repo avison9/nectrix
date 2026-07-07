@@ -64,6 +64,19 @@ module "elasticache_redis" {
   num_cache_clusters        = var.redis_num_cache_clusters
 }
 
+module "kafka" {
+  source = "./modules/kafka"
+
+  name_prefix               = local.name_prefix
+  vpc_id                    = module.networking.vpc_id
+  vpc_cidr                  = var.vpc_cidr
+  private_subnet_ids        = module.networking.private_subnet_ids
+  allowed_security_group_id = module.eks.cluster_security_group_id
+  kafka_version             = var.kafka_version
+  broker_instance_type      = var.kafka_broker_instance_type
+  number_of_broker_nodes    = var.kafka_number_of_broker_nodes
+}
+
 module "s3_storage" {
   source = "./modules/s3-storage"
 

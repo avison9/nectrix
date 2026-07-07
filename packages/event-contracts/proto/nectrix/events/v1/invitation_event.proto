@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package nectrix.events.v1;
+
+import "nectrix/events/v1/envelope.proto";
+
+option go_package = "github.com/avison9/nectrix/event-contracts/go/gen/nectrix/events/v1;eventsv1";
+option java_package = "com.nectrix.events.v1";
+option java_multiple_files = true;
+
+// Topic: invitations — added by TICKET-007 per the invitation-only
+// onboarding model (docs/05-domain-model.md §5.6); not in the §15.3 table.
+// Partition key: invitation_id (not specified in the docs — decided by
+// analogy to copy-relationships' copyRelationshipId: same per-entity
+// ordering rationale, since an invitation's own lifecycle events must be
+// processed in order by a given consumer).
+
+enum InvitationEventType {
+  INVITATION_EVENT_TYPE_UNSPECIFIED = 0;
+  INVITATION_EVENT_TYPE_CREATED = 1;
+  INVITATION_EVENT_TYPE_ACCEPTED = 2;
+  INVITATION_EVENT_TYPE_EXPIRED = 3;
+  INVITATION_EVENT_TYPE_REVOKED = 4;
+}
+
+message InvitationEvent {
+  EventEnvelope envelope = 1;
+  string invitation_id = 2; // partition key
+  InvitationEventType event_type = 3;
+  string master_user_id = 4;
+  optional string invitee_email = 5; // present pre-acceptance, when known
+}

@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+package nectrix.events.v1;
+
+import "nectrix/events/v1/envelope.proto";
+
+option go_package = "github.com/avison9/nectrix/event-contracts/go/gen/nectrix/events/v1;eventsv1";
+option java_package = "com.nectrix.events.v1";
+option java_multiple_files = true;
+
+// Topic: billing (docs/15-event-driven-architecture.md §15.3).
+// Partition key: user_id.
+
+enum BillingEventType {
+  BILLING_EVENT_TYPE_UNSPECIFIED = 0;
+  BILLING_EVENT_TYPE_FEE_PERIOD_CLOSED = 1;
+  BILLING_EVENT_TYPE_INVOICE_GENERATED = 2;
+  BILLING_EVENT_TYPE_INVOICE_PAID = 3;
+  BILLING_EVENT_TYPE_INVOICE_FAILED = 4;
+}
+
+message BillingEvent {
+  EventEnvelope envelope = 1;
+  string user_id = 2; // partition key
+  BillingEventType event_type = 3;
+  optional string invoice_id = 4;
+  optional double amount = 5;
+  optional string currency = 6;
+}

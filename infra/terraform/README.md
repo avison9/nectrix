@@ -8,8 +8,8 @@ Terraform IaC for a real, persistent managed Kubernetes cluster + managed Postgr
 
 ```
 infra/terraform/
-├── aws/    # EKS, RDS Multi-AZ Postgres, ElastiCache Redis, VPC, S3, ECR, IRSA, GitHub OIDC, WAFv2
-├── gcp/    # GKE, Cloud SQL Postgres (regional HA), Memorystore Redis, VPC, GCS, Artifact Registry, Workload Identity (+ Federation), Cloud Armor
+├── aws/    # EKS, RDS Multi-AZ Postgres, ElastiCache Redis, MSK Kafka, VPC, S3, ECR, IRSA, GitHub OIDC, WAFv2
+├── gcp/    # GKE, Cloud SQL Postgres (regional HA), Memorystore Redis, Managed Service for Apache Kafka, VPC, GCS, Artifact Registry, Workload Identity (+ Federation), Cloud Armor
 └── .checkov.yaml
 ```
 
@@ -43,6 +43,10 @@ Until `CLOUD_PROVIDER` is set, everything behaves exactly as it does today — G
 ## Object storage: MinIO is local-dev-only
 
 A deliberate deviation from `docs/13-technology-stack.md` §13.2's "MinIO now" MVP guidance: **real environments use managed object storage from day one** — `aws/modules/s3-storage` (S3) and `gcp/modules/gcs-storage` (GCS) — not self-hosted MinIO. MinIO stays exactly where it already is: docker-compose for local dev, and `deploy/components/local-minio` for local `kind` testing. It is never part of the `staging`/`production` Kustomize overlays.
+
+## Kafka (TICKET-007)
+
+`aws/modules/kafka` (provisioned MSK, not MSK Serverless — Serverless forces SASL/IAM-only client auth, deferred to TICKET-011 alongside the CMK items below) and `gcp/modules/kafka` (`google_managed_kafka_cluster`, Google's Managed Service for Apache Kafka) — both VPC-private, TLS-in-transit, default cloud-managed at-rest encryption (same CMK deferral as every other engine in `.checkov.yaml`'s skip-list). Neither module manages topics — AWS's MSK has no Terraform-level topic resource at all (topics are created against the real Kafka protocol, same as any cluster), and GCP's `google_managed_kafka_topic` is deliberately unused here to avoid a second, drifting topic-creation mechanism. One mechanism for all environments: `infra/kafka/create-topics.sh` (`make kafka-topics`), pointed at the local/CI broker today and at a real cluster's bootstrap-broker endpoint once one is applied.
 
 ## Environments = Terraform workspaces
 

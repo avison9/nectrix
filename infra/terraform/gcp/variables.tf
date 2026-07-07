@@ -70,6 +70,16 @@ variable "redis_tier" {
   default = "STANDARD_HA"
 }
 
+variable "kafka_vcpu_count" {
+  type    = number
+  default = 3
+}
+
+variable "kafka_memory_bytes" {
+  type    = number
+  default = 3221225472 # 3 GiB
+}
+
 variable "gcs_bucket_name" {
   description = "Globally-unique GCS bucket name for this environment's object storage"
   type        = string
