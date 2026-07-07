@@ -46,7 +46,11 @@ dependencies {
     // which spring-security-crypto does NOT bundle (optional/provided in its
     // own POM) — without this, ClassNotFoundException at first encode()/
     // matches() call, not at compile time.
-    implementation("org.bouncycastle:bcprov-jdk18on:1.79")
+    // 1.79 has a real, fixed CRITICAL-severity CVE (CVE-2025-14813, GOSTCTR
+    // implementation mishandles >255 blocks) — caught by CI's post-merge
+    // Trivy image scan (Main Pipeline's build-scan-push job), fixed by
+    // bumping to 1.84 (also fixed in 1.80.2/1.81.1, but 1.84 is newest).
+    implementation("org.bouncycastle:bcprov-jdk18on:1.84")
     // TOTP + QR generation — not managed by Boot's BOM, needs an explicit version.
     implementation("dev.samstevens.totp:totp:1.7.1")
 }
