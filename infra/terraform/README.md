@@ -26,7 +26,19 @@ CI (`main-pipeline.yml`) pushes to GHCR today — fine for the ephemeral `kind` 
 - AWS: `aws/modules/github-oidc` — a GitHub Actions OIDC provider + an IAM role trusted only for `repo:avison9/nectrix:ref:refs/heads/main`, scoped to just `ecr:PutImage`/etc. on this project's repositories.
 - GCP: `gcp/modules/artifact-registry`'s Workload Identity Federation pool/provider — same repo+ref restriction, bound to a dedicated `ci-ar-push` service account with `roles/artifactregistry.writer` only.
 
-`main-pipeline.yml`'s `build-scan-push` job has the push steps already written, gated behind repo variables (`AWS_ECR_PUSH_ROLE_ARN`, `GCP_WORKLOAD_IDENTITY_PROVIDER`, etc.) that don't exist yet — so they're no-ops today and don't affect the pipeline's already-green status. Once a cloud is actually applied, set those variables from the relevant module's outputs (`ecr_repository_urls`/`ci_ecr_push_role_arn` or `artifact_registry_url`/`ci_workload_identity_provider`/`ci_artifact_registry_push_sa`), and update the `deploy-staging`/`deploy-production` jobs' `kustomize edit set image` step to target the cloud registry's URL instead of `ghcr.io`.
+**A single `vars.CLOUD_PROVIDER` repo variable (`aws` / `gcp` / unset) is the one switch** — not two independent checks that could both fire. A `resolve-registry` job computes the effective image-reference prefix once per pipeline run (`ghcr.io/avison9/nectrix` when unset, else the matching cloud registry), and both the `build-scan-push` mirror-push steps and the `deploy-staging`/`deploy-production` pull + `kustomize edit set image` steps key off it — so setting `CLOUD_PROVIDER` doesn't just mirror a copy of the image into the cloud registry, it actually changes what gets pulled and deployed everywhere else in the pipeline. Set these repo variables once a cloud is actually applied:
+
+| Variable | Value comes from |
+|---|---|
+| `CLOUD_PROVIDER` | `aws` or `gcp` — the one switch |
+| `AWS_ECR_PUSH_ROLE_ARN` | `aws/modules/github-oidc`'s `ci_ecr_push_role_arn` output |
+| `AWS_ECR_REGISTRY` | Derived from `aws/modules/ecr`'s `repository_urls` output (the part before `/nectrix/<app>`) |
+| `AWS_REGION` | Whichever region that environment's `envs/<env>.tfvars` uses |
+| `GCP_WORKLOAD_IDENTITY_PROVIDER` | `gcp/modules/artifact-registry`'s `workload_identity_provider` output (via root `ci_workload_identity_provider`) |
+| `GCP_CI_PUSH_SERVICE_ACCOUNT` | `gcp/modules/artifact-registry`'s `ci_push_service_account_email` output (via root `ci_artifact_registry_push_sa`) |
+| `GCP_ARTIFACT_REGISTRY_URL` | `gcp/modules/artifact-registry`'s `repository_url` output (via root `artifact_registry_url`) |
+
+Until `CLOUD_PROVIDER` is set, everything behaves exactly as it does today — GHCR only, no change in effective pipeline behavior.
 
 ## Object storage: MinIO is local-dev-only
 
