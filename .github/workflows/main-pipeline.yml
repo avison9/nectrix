@@ -253,6 +253,21 @@ jobs:
           for app in core-app copy-engine broker-adapters mt5-bridge-gateway; do
             kustomize edit set image "ghcr.io/avison9/nectrix/$app=${{ needs.resolve-registry.outputs.image_prefix }}/$app:${{ github.sha }}"
           done
+      # TICKET-005 — core-app's Deployment reads JWT_SIGNING_SECRET/
+      # TWO_FACTOR_SECRET_ENCRYPTION_KEY from this Secret (see
+      # deploy/base/core-app/deployment.yaml); both are read eagerly at
+      # startup regardless of whether auth is ever exercised, so without this
+      # the pod crash-loops and "Wait for rollouts" times out. Namespace is
+      # created idempotently first since `kubectl apply -k` (which normally
+      # creates it) hasn't run yet at this point. Same throwaway values as
+      # the integration-test job's env — not real secrets.
+      - name: Create core-app namespace + throwaway auth secrets
+        run: |
+          kubectl create namespace core-app --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create secret generic core-app-secrets -n core-app \
+            --from-literal=jwt-signing-secret="n/ErCuickD7JyKdFhuOeH2QWJjQp6ZBxGxUosC6Mtr3kP6idy8j1sMYV0lKL0wAPeMuFQ4iwsF2uxq9lIk6MYQ==" \
+            --from-literal=two-factor-secret-encryption-key="1B/UzzovRJnn9QW1nWpWqGqZpL2y/gXi3P74UjNRVSY=" \
+            --dry-run=client -o yaml | kubectl apply -f -
       - run: kubectl apply -k deploy/overlays/staging
       - name: Wait for rollouts
         run: |
@@ -389,6 +404,17 @@ jobs:
           for app in core-app copy-engine broker-adapters mt5-bridge-gateway; do
             kustomize edit set image "ghcr.io/avison9/nectrix/$app=${{ needs.resolve-registry.outputs.image_prefix }}/$app:${{ github.sha }}"
           done
+      # TICKET-005 — see deploy-staging's identical step for why this exists.
+      # Real production secret-management doesn't exist yet (out of scope
+      # here — see infra/terraform/README.md); this ephemeral kind cluster
+      # only proves rollout/health, so throwaway values are fine.
+      - name: Create core-app namespace + throwaway auth secrets
+        run: |
+          kubectl create namespace core-app --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create secret generic core-app-secrets -n core-app \
+            --from-literal=jwt-signing-secret="n/ErCuickD7JyKdFhuOeH2QWJjQp6ZBxGxUosC6Mtr3kP6idy8j1sMYV0lKL0wAPeMuFQ4iwsF2uxq9lIk6MYQ==" \
+            --from-literal=two-factor-secret-encryption-key="1B/UzzovRJnn9QW1nWpWqGqZpL2y/gXi3P74UjNRVSY=" \
+            --dry-run=client -o yaml | kubectl apply -f -
       - run: kubectl apply -k deploy/overlays/production
       - name: Wait for rollouts
         run: |
