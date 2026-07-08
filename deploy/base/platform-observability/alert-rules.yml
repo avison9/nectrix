@@ -1,0 +1,21 @@
+# TICKET-010 AC4 — one real, deliberately-triggerable alert rule.
+#
+# copy_engine_http_requests_total is incremented by
+# apps/copy-engine/internal/httpapi's metrics middleware for every request,
+# labeled by status code. infra/observability/verify.sh's AC4 check POSTs
+# a handful of requests against an existing error path (injecting against a
+# handle with no active StreamTradeEvents subscription, which httpapi already
+# turns into a 500 — see apps/copy-engine/internal/httpapi/httpapi.go) to
+# deliberately cross this threshold, then polls Alertmanager/Prometheus
+# until it fires.
+groups:
+  - name: nectrix-test-alerts
+    rules:
+      - alert: CopyEngineHighErrorRate
+        expr: rate(copy_engine_http_requests_total{status=~"5.."}[1m]) > 0
+        for: 10s
+        labels:
+          severity: warning
+        annotations:
+          summary: "copy-engine is returning 5xx responses"
+          description: "copy_engine_http_requests_total shows a non-zero 5xx rate over the last minute."

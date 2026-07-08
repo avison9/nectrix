@@ -9,11 +9,11 @@ package stubadapter
 import (
 	"context"
 	"fmt"
-	"log"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/avison9/nectrix/copy-engine/internal/observability"
 	domain "github.com/avison9/nectrix/go-domain"
 	"github.com/google/uuid"
 )
@@ -90,7 +90,8 @@ func (c *stubCore) BrokerType() domain.BrokerType { return c.brokerType }
 
 func (c *stubCore) Connect(ctx context.Context, credentials domain.BrokerCredentials) (domain.ConnectionHandle, error) {
 	handle := domain.ConnectionHandle{ID: uuid.NewString(), BrokerType: c.brokerType, AccountID: credentials.AccountID}
-	log.Printf("stubadapter[%s]: connected handle=%s account=%s", c.brokerType, handle.ID, credentials.AccountID)
+	observability.LogWithTrace(ctx, "stubadapter: connected",
+		"broker_type", string(c.brokerType), "handle_id", handle.ID, "account_id", credentials.AccountID)
 	return handle, nil
 }
 
@@ -98,7 +99,7 @@ func (c *stubCore) Disconnect(ctx context.Context, handle domain.ConnectionHandl
 	c.mu.Lock()
 	delete(c.subs, handle.ID)
 	c.mu.Unlock()
-	log.Printf("stubadapter[%s]: disconnected handle=%s", c.brokerType, handle.ID)
+	observability.LogWithTrace(ctx, "stubadapter: disconnected", "broker_type", string(c.brokerType), "handle_id", handle.ID)
 	return nil
 }
 
@@ -147,8 +148,10 @@ func (s *subscription) Close() error {
 func (c *stubCore) PlaceOrder(ctx context.Context, handle domain.ConnectionHandle, order domain.NormalizedOrderRequest) (domain.NormalizedOrderResult, error) {
 	filled := c.fill(fakeMarketPrice, order.Direction)
 	positionID := uuid.NewString()
-	log.Printf("stubadapter[%s]: PlaceOrder handle=%s account=%s symbol=%s direction=%s volume=%.4f -> fake fill @ %.5f (brokerPositionId=%s)",
-		c.brokerType, handle.ID, handle.AccountID, order.Symbol.CanonicalCode, order.Direction, order.VolumeLots, filled, positionID)
+	observability.LogWithTrace(ctx, "stubadapter: PlaceOrder",
+		"broker_type", string(c.brokerType), "handle_id", handle.ID, "account_id", handle.AccountID,
+		"symbol", order.Symbol.CanonicalCode, "direction", string(order.Direction), "volume_lots", order.VolumeLots,
+		"filled_price", filled, "broker_position_id", positionID)
 	return domain.NormalizedOrderResult{
 		Success:           true,
 		BrokerPositionID:  positionID,
@@ -158,12 +161,14 @@ func (c *stubCore) PlaceOrder(ctx context.Context, handle domain.ConnectionHandl
 }
 
 func (c *stubCore) ModifyPosition(ctx context.Context, handle domain.ConnectionHandle, positionID string, changes domain.SLTPChange) (domain.NormalizedOrderResult, error) {
-	log.Printf("stubadapter[%s]: ModifyPosition handle=%s positionId=%s changes=%+v", c.brokerType, handle.ID, positionID, changes)
+	observability.LogWithTrace(ctx, "stubadapter: ModifyPosition",
+		"broker_type", string(c.brokerType), "handle_id", handle.ID, "position_id", positionID)
 	return domain.NormalizedOrderResult{Success: true, BrokerPositionID: positionID, RawBrokerResponse: map[string]any{"stub": true}}, nil
 }
 
 func (c *stubCore) ClosePosition(ctx context.Context, handle domain.ConnectionHandle, positionID string, volume *float64) (domain.NormalizedOrderResult, error) {
-	log.Printf("stubadapter[%s]: ClosePosition handle=%s positionId=%s volume=%v", c.brokerType, handle.ID, positionID, volume)
+	observability.LogWithTrace(ctx, "stubadapter: ClosePosition",
+		"broker_type", string(c.brokerType), "handle_id", handle.ID, "position_id", positionID)
 	return domain.NormalizedOrderResult{Success: true, BrokerPositionID: positionID, RawBrokerResponse: map[string]any{"stub": true}}, nil
 }
 

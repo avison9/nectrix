@@ -7,11 +7,14 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/avison9/nectrix/copy-engine/internal/observability"
 	eventsv1 "github.com/avison9/nectrix/event-contracts/go/gen/nectrix/events/v1"
 	domain "github.com/avison9/nectrix/go-domain"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/segmentio/kafka-go"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -25,25 +28,12 @@ type relationship struct {
 // refinement docs/08 §8.2 point 3 describes; this direct query is real,
 // not a hardcoded fake, and is honest about the ACTIVE-only fan-out.
 func (p *Pipeline) processSignalForAllRelationships(ctx context.Context, masterAccountID uuid.UUID, signalID uuid.UUID, event domain.NormalizedTradeEvent) error {
-	rows, err := p.pool.Query(ctx, `
-		SELECT id, follower_broker_account_id
-		FROM copy_relationships
-		WHERE master_broker_account_id = $1 AND status = 'ACTIVE'`, masterAccountID)
+	ctx, span := observability.Tracer().Start(ctx, "pipeline.relationship_match")
+	relationships, err := p.matchRelationships(ctx, masterAccountID)
+	span.SetAttributes(attribute.Int("nectrix.matched_relationships", len(relationships)))
+	finishSpan(span, err)
 	if err != nil {
-		return fmt.Errorf("query copy_relationships: %w", err)
-	}
-	defer rows.Close()
-
-	var relationships []relationship
-	for rows.Next() {
-		var r relationship
-		if err := rows.Scan(&r.id, &r.followerBrokerAccountID); err != nil {
-			return fmt.Errorf("scan copy_relationships row: %w", err)
-		}
-		relationships = append(relationships, r)
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterate copy_relationships rows: %w", err)
+		return err
 	}
 
 	for _, r := range relationships {
@@ -54,12 +44,50 @@ func (p *Pipeline) processSignalForAllRelationships(ctx context.Context, masterA
 	return nil
 }
 
+// matchRelationships is the Relationship Matcher (Appendix A.2) -- "stub"
+// only in that it skips the Redis-cache-with-invalidation refinement
+// docs/08 §8.2 point 3 describes; this direct query is real, not a
+// hardcoded fake, and is honest about the ACTIVE-only fan-out.
+func (p *Pipeline) matchRelationships(ctx context.Context, masterAccountID uuid.UUID) ([]relationship, error) {
+	rows, err := p.pool.Query(ctx, `
+		SELECT id, follower_broker_account_id
+		FROM copy_relationships
+		WHERE master_broker_account_id = $1 AND status = 'ACTIVE'`, masterAccountID)
+	if err != nil {
+		return nil, fmt.Errorf("query copy_relationships: %w", err)
+	}
+	defer rows.Close()
+
+	var relationships []relationship
+	for rows.Next() {
+		var r relationship
+		if err := rows.Scan(&r.id, &r.followerBrokerAccountID); err != nil {
+			return nil, fmt.Errorf("scan copy_relationships row: %w", err)
+		}
+		relationships = append(relationships, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate copy_relationships rows: %w", err)
+	}
+	return relationships, nil
+}
+
 // dispatchOrder is the Order Dispatcher (Appendix A.3's handleOpen,
 // stubbed): no money-management/risk-guard formulas (Phase 1) -- volume is
 // a straight 1:1 copy of the master's VolumeLots. Calls the follower's
 // BrokerAdapter.PlaceOrder, persists one copied_trades row, and publishes
 // CopiedTradeEvent(OPENED) to the copied-trades Kafka topic.
 func (p *Pipeline) dispatchOrder(ctx context.Context, rel relationship, signalID uuid.UUID, event domain.NormalizedTradeEvent) error {
+	ctx, span := observability.Tracer().Start(ctx, "pipeline.dispatch_order", trace.WithAttributes(
+		attribute.String("nectrix.copy_relationship_id", rel.id.String()),
+	))
+	var err error
+	defer func() { finishSpan(span, err) }()
+	err = p.doDispatchOrder(ctx, rel, signalID, event)
+	return err
+}
+
+func (p *Pipeline) doDispatchOrder(ctx context.Context, rel relationship, signalID uuid.UUID, event domain.NormalizedTradeEvent) error {
 	if rel.followerBrokerAccountID.String() != p.followerHandle.AccountID {
 		return fmt.Errorf(
 			"no connected BrokerAdapter handle for follower account %s (relationship %s) -- "+
@@ -125,6 +153,13 @@ func (p *Pipeline) dispatchOrder(ctx context.Context, rel relationship, signalID
 }
 
 func (p *Pipeline) publishCopiedTradeOpened(ctx context.Context, relationshipID uuid.UUID, result domain.NormalizedOrderResult, event domain.NormalizedTradeEvent) error {
+	_, span := observability.Tracer().Start(ctx, "pipeline.publish")
+	err := p.doPublishCopiedTradeOpened(ctx, relationshipID, result, event)
+	finishSpan(span, err)
+	return err
+}
+
+func (p *Pipeline) doPublishCopiedTradeOpened(ctx context.Context, relationshipID uuid.UUID, result domain.NormalizedOrderResult, event domain.NormalizedTradeEvent) error {
 	msg := &eventsv1.CopiedTradeEvent{
 		Envelope: &eventsv1.EventEnvelope{
 			EventId:       uuid.NewString(),

@@ -1,0 +1,18 @@
+# TICKET-010 — routes every alert to the local webhook-catcher
+# (infra/observability/webhook-catcher), a stand-in for a real Slack/email
+# notification channel: no real Slack webhook URL or SMTP credentials exist
+# in this project (same "never fake real creds" precedent as TICKET-005's
+# untested-against-real-servers Apple OAuth gap). Swap this receiver's `url`
+# for a real Slack incoming-webhook or an `email_configs` block once real
+# credentials exist — nothing else in this config needs to change.
+route:
+  receiver: webhook-catcher
+  group_wait: 5s
+  group_interval: 10s
+  repeat_interval: 1m
+
+receivers:
+  - name: webhook-catcher
+    webhook_configs:
+      - url: http://webhook-catcher:9099/alert
+        send_resolved: true

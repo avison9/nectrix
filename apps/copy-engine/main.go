@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/avison9/nectrix/copy-engine/internal/httpapi"
+	"github.com/avison9/nectrix/copy-engine/internal/observability"
 	"github.com/avison9/nectrix/copy-engine/internal/pipeline"
 	"github.com/avison9/nectrix/copy-engine/internal/stubadapter"
 	domain "github.com/avison9/nectrix/go-domain"
@@ -38,6 +39,20 @@ const (
 
 func main() {
 	ctx := context.Background()
+
+	// TICKET-010 — otlpEndpoint being unreachable never blocks startup (the
+	// SDK just logs export failures); docker-compose.yml points this at
+	// Tempo, matching apps/core-app's OTEL_EXPORTER_OTLP_ENDPOINT default.
+	otlpEndpoint := envOr("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
+	shutdownTracing, err := observability.Init(ctx, envOr("OTEL_SERVICE_NAME", serviceName), otlpEndpoint)
+	if err != nil {
+		log.Fatalf("%s: observability init: %v", serviceName, err)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = shutdownTracing(shutdownCtx)
+	}()
 
 	pool, err := pgxpool.New(ctx, postgresDSN())
 	if err != nil {

@@ -26,6 +26,18 @@ spring:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
 
+# TICKET-010 — /actuator/prometheus is the only endpoint besides the default
+# health that's exposed; actuator's full endpoint set (env, beans, heapdump,
+# ...) is not something to expose by default even in this Phase-0 stub.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: prometheus,health
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
 # TICKET-005 (Auth & Identity Service)
 nectrix:
   auth:
