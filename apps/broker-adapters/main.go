@@ -27,8 +27,10 @@ type healthResponse struct {
 
 func main() {
 	// Referencing go-domain proves the shared-package wiring resolves via
-	// go.work; real BrokerAdapter implementations land in TICKET-009+.
-	var _ domain.NormalizedTradeEvent
+	// go.work; real BrokerAdapter implementations (cTrader/MT5) land in
+	// Phase 1 — the interface itself (TICKET-009) already lives in
+	// go-domain, imported by both this app and copy-engine.
+	var _ domain.BrokerAdapter
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {

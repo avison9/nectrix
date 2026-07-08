@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -10,52 +10,80 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/avison9/nectrix/copy-engine/internal/httpapi"
+	"github.com/avison9/nectrix/copy-engine/internal/pipeline"
+	"github.com/avison9/nectrix/copy-engine/internal/stubadapter"
 	domain "github.com/avison9/nectrix/go-domain"
 	redisclient "github.com/avison9/nectrix/redis-client/go"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/segmentio/kafka-go"
 )
 
 const (
-	serviceName  = "copy-engine"
-	addr         = ":8090"
-	drainSleep   = 10 * time.Second
-	shutdownWait = 5 * time.Second
+	serviceName       = "copy-engine"
+	addr              = ":8090"
+	drainSleep        = 10 * time.Second
+	shutdownWait      = 5 * time.Second
+	dedupTTL          = 5 * time.Minute
+	copiedTradesTopic = "copied-trades"
+
+	// Defaults match apps/core-app/db's 014-seed-dev-data.sql (context:dev,
+	// `make db-seed-dev`) so local manual QA works out of the box: curl the
+	// test-inject endpoint after seeding and it resolves against a real,
+	// FK-satisfying copy_relationships row. Override via env for any other
+	// environment/fixture.
+	defaultMasterBrokerAccountID   = "00000000-0000-0000-0000-000000000010"
+	defaultFollowerBrokerAccountID = "00000000-0000-0000-0000-000000000011"
 )
 
-type healthResponse struct {
-	Service string `json:"service"`
-	Status  string `json:"status"`
-}
-
 func main() {
-	// Referencing go-domain proves the shared-package wiring resolves via
-	// go.work; real pipeline usage begins once TICKET-009 lands.
-	var _ domain.NormalizedTradeEvent
+	ctx := context.Background()
 
-	// TICKET-008 — proves the shared Redis client is genuinely reachable from
-	// copy-engine (not just an unused library dependency), one real call at
-	// startup; real dedup/rate-limit usage begins once TICKET-009 gives this
-	// service actual pipeline logic to guard. Non-fatal: Redis being briefly
-	// unavailable at startup shouldn't block this stub's health-check server
-	// from coming up.
+	pool, err := pgxpool.New(ctx, postgresDSN())
+	if err != nil {
+		log.Fatalf("%s: postgres pool: %v", serviceName, err)
+	}
+	defer pool.Close()
+
 	redisClient, err := redisclient.New(redisclient.ConfigFromEnv())
 	if err != nil {
-		log.Printf("%s: redis client config error: %v", serviceName, err)
-	} else {
-		deduper := redisclient.NewDeduper(redisClient, time.Minute)
-		seen, err := deduper.SeenBefore(context.Background(), serviceName+":startup-check")
-		if err != nil {
-			log.Printf("%s: redis reachability check failed: %v", serviceName, err)
-		} else {
-			log.Printf("%s: redis reachable (startup dedup check, seenBefore=%v)", serviceName, seen)
-		}
+		log.Fatalf("%s: redis client config: %v", serviceName, err)
+	}
+	deduper := redisclient.NewDeduper(redisClient, dedupTTL)
+
+	kafkaWriter := &kafka.Writer{
+		Addr:     kafka.TCP(envOr("KAFKA_HOST", "localhost") + ":" + envOr("KAFKA_PORT", "9092")),
+		Topic:    copiedTradesTopic,
+		Balancer: &kafka.Hash{},
+	}
+	defer func() { _ = kafkaWriter.Close() }()
+
+	adapter := stubadapter.New()
+
+	masterHandle, err := adapter.Connect(ctx, domain.BrokerCredentials{
+		BrokerType: adapter.BrokerType(),
+		AccountID:  envOr("STUB_MASTER_BROKER_ACCOUNT_ID", defaultMasterBrokerAccountID),
+	})
+	if err != nil {
+		log.Fatalf("%s: connect master handle: %v", serviceName, err)
+	}
+	followerHandle, err := adapter.Connect(ctx, domain.BrokerCredentials{
+		BrokerType: adapter.BrokerType(),
+		AccountID:  envOr("STUB_FOLLOWER_BROKER_ACCOUNT_ID", defaultFollowerBrokerAccountID),
+	})
+	if err != nil {
+		log.Fatalf("%s: connect follower handle: %v", serviceName, err)
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(healthResponse{Service: serviceName, Status: "ok"})
-	})
+	pl := pipeline.New(pool, deduper, adapter, followerHandle, kafkaWriter)
 
+	sub, err := adapter.StreamTradeEvents(ctx, masterHandle, pl.HandleEvent)
+	if err != nil {
+		log.Fatalf("%s: stream trade events: %v", serviceName, err)
+	}
+	defer func() { _ = sub.Close() }()
+
+	mux := httpapi.NewMux(serviceName, adapter, masterHandle)
 	server := &http.Server{Addr: addr, Handler: mux}
 
 	go func() {
@@ -76,10 +104,30 @@ func main() {
 	log.Printf("%s draining: finishing in-flight signal processing, handing off shard ownership (stub)", serviceName)
 	time.Sleep(drainSleep)
 
-	ctx, cancel := context.WithTimeout(context.Background(), shutdownWait)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownWait)
 	defer cancel()
-	if err := server.Shutdown(ctx); err != nil {
+	if err := server.Shutdown(shutdownCtx); err != nil {
 		log.Printf("%s: shutdown error: %v", serviceName, err)
 	}
 	log.Printf("%s: drained, exiting", serviceName)
+}
+
+// postgresDSN mirrors apps/core-app's Spring datasource convention exactly
+// (POSTGRES_HOST/POSTGRES_PORT/POSTGRES_DB, fixed nectrix_app username,
+// POSTGRES_APP_PASSWORD with no default) — this is the first Go service to
+// talk to Postgres, so there's no prior Go-side precedent to follow, only
+// the Java one.
+func postgresDSN() string {
+	host := envOr("POSTGRES_HOST", "localhost")
+	port := envOr("POSTGRES_PORT", "5432")
+	db := envOr("POSTGRES_DB", "nectrix")
+	password := os.Getenv("POSTGRES_APP_PASSWORD")
+	return fmt.Sprintf("host=%s port=%s dbname=%s user=nectrix_app password=%s sslmode=disable", host, port, db, password)
+}
+
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }
