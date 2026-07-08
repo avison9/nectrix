@@ -8,6 +8,15 @@ plugins {
 dependencies {
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("org.springframework.boot:spring-boot-starter-jdbc")
+    // TICKET-010 — /actuator/prometheus scrape endpoint (Micrometer's
+    // http.server.requests timer -> Prometheus histogram), zero custom
+    // metric code needed for request latency/error-rate dashboard panels.
+    implementation("org.springframework.boot:spring-boot-starter-actuator")
+    implementation("io.micrometer:micrometer-registry-prometheus")
+    // Structured JSON logging with field masking (allow-listed sensitive
+    // fields, see logback-spring.xml) — not managed by Spring Boot's BOM,
+    // version pinned explicitly.
+    implementation("net.logstash.logback:logstash-logback-encoder:8.0")
     // TICKET-006 — GlobalSecurityExceptionHandler compiles directly against
     // AccessDeniedException; just the core annotations/types, not the full
     // security starter (auth module owns the actual SecurityFilterChain).

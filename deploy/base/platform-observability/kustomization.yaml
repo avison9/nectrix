@@ -1,0 +1,41 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - prometheus.yaml
+  - alertmanager.yaml
+  - tempo.yaml
+  - loki.yaml
+  - grafana.yaml
+
+# *.yml files here are copies of infra/observability's docker-compose configs
+# (kustomize's default load restrictor forbids configMapGenerator `files:`
+# from reaching outside this directory — confirmed by actually running
+# `kubectl kustomize deploy/base`, which is deploy/README.md's own documented
+# validate command; a `--load-restrictor` flag would fix it but that changes
+# the command everyone already runs). If you change one, change both — this
+# directory is offline-validated only (no real cluster to apply it to yet,
+# same "written but never applied" precedent as infra/terraform), so nothing
+# here catches drift automatically the way a real deploy would.
+configMapGenerator:
+  - name: prometheus-config
+    files:
+      - prometheus.yml
+      - alert-rules.yml
+  - name: alertmanager-config
+    files:
+      - alertmanager.yml
+  - name: tempo-config
+    files:
+      - tempo.yml
+  - name: loki-config
+    files:
+      - loki-config.yml
+  - name: grafana-datasources
+    files:
+      - datasources.yml
+  - name: grafana-dashboards-provider
+    files:
+      - dashboards.yml
+  - name: grafana-dashboard-nectrix-overview
+    files:
+      - nectrix-overview.json

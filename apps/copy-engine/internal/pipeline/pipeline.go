@@ -14,12 +14,27 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/avison9/nectrix/copy-engine/internal/observability"
 	domain "github.com/avison9/nectrix/go-domain"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/segmentio/kafka-go"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
+
+// finishSpan records err (if any) on span before ending it — every pipeline
+// stage's span uses this so a failed stage is visually distinct in Tempo,
+// not just a silently-ended span.
+func finishSpan(span trace.Span, err error) {
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	}
+	span.End()
+}
 
 // Pipeline holds everything HandleEvent needs. followerHandle is a single,
 // pre-connected BrokerAdapter handle for the one follower account this
@@ -42,41 +57,88 @@ func New(pool *pgxpool.Pool, deduper domain.Deduper, adapter domain.BrokerAdapte
 // HandleEvent is the onEvent callback registered via
 // domain.BrokerAdapter.StreamTradeEvents -- the Go shape of Appendix A.1's
 // onBrokerAdapterEvent.
+//
+// TICKET-010 AC2: the root span here (and every child span nested under it
+// across dedup/relationship-match/dispatch/publish) shares whatever trace
+// was already active on ctx -- when called via httpapi's inject endpoint,
+// that's the otelhttp-created HTTP-request span, so the whole pipeline run
+// is one single trace, from ingestion through to the published
+// CopiedTradeEvent, exactly what AC2 asks for.
 func (p *Pipeline) HandleEvent(ctx context.Context, event domain.NormalizedTradeEvent) error {
-	if err := normalize(event); err != nil {
+	ctx, rootSpan := observability.Tracer().Start(ctx, "pipeline.handle_event", trace.WithAttributes(
+		attribute.String("nectrix.event_id", event.EventID),
+		attribute.String("nectrix.master_broker_account_id", event.MasterBrokerAccountID),
+		attribute.String("nectrix.broker_position_id", event.Position.BrokerPositionID),
+		attribute.String("nectrix.event_type", string(event.EventType)),
+	))
+	var err error
+	defer func() { finishSpan(rootSpan, err) }()
+
+	if err = p.normalizeStage(ctx, event); err != nil {
 		return fmt.Errorf("pipeline: normalize: %w", err)
 	}
 
-	masterAccountID, err := uuid.Parse(event.MasterBrokerAccountID)
+	var masterAccountID uuid.UUID
+	masterAccountID, err = uuid.Parse(event.MasterBrokerAccountID)
 	if err != nil {
 		return fmt.Errorf("pipeline: invalid masterBrokerAccountId %q: %w", event.MasterBrokerAccountID, err)
 	}
 
-	// Dedup Filter (docs/08-copy-trading-engine.md §8.2 point 2 / Appendix
-	// A.1): fast path via Redis, durable guard via trade_signals' unique
-	// constraint -- Redis is a fast-path optimization, Postgres is the
-	// durable guard (docs/15-event-driven-architecture.md §15.5).
-	dedupeKey := buildDedupeKey(event)
-	seen, err := p.deduper.SeenBefore(ctx, dedupeKey)
+	var signalID uuid.UUID
+	var proceed bool
+	signalID, proceed, err = p.dedupStage(ctx, masterAccountID, event)
 	if err != nil {
-		return fmt.Errorf("pipeline: dedup check: %w", err)
+		return fmt.Errorf("pipeline: dedup: %w", err)
 	}
-	if seen {
-		return nil // fast-path drop, already seen recently
+	if !proceed {
+		return nil
 	}
 
-	signalID, inserted, err := p.insertTradeSignal(ctx, masterAccountID, event)
+	err = p.processSignalForAllRelationships(ctx, masterAccountID, signalID, event)
+	return err
+}
+
+func (p *Pipeline) normalizeStage(ctx context.Context, event domain.NormalizedTradeEvent) error {
+	_, span := observability.Tracer().Start(ctx, "pipeline.normalize")
+	err := normalize(event)
+	finishSpan(span, err)
+	return err
+}
+
+// dedupStage is the Dedup Filter (docs/08-copy-trading-engine.md §8.2 point
+// 2 / Appendix A.1): fast path via Redis, durable guard via trade_signals'
+// unique constraint -- Redis is a fast-path optimization, Postgres is the
+// durable guard (docs/15-event-driven-architecture.md §15.5). Returns
+// proceed=false (not an error) whenever the event was already
+// processed -- either dedup layer catching it is a normal, expected outcome.
+func (p *Pipeline) dedupStage(ctx context.Context, masterAccountID uuid.UUID, event domain.NormalizedTradeEvent) (uuid.UUID, bool, error) {
+	ctx, span := observability.Tracer().Start(ctx, "pipeline.dedup")
+	var err error
+	defer func() { finishSpan(span, err) }()
+
+	dedupeKey := buildDedupeKey(event)
+	var seen bool
+	seen, err = p.deduper.SeenBefore(ctx, dedupeKey)
 	if err != nil {
-		return fmt.Errorf("pipeline: insert trade_signals: %w", err)
+		return uuid.Nil, false, err
+	}
+	if seen {
+		return uuid.Nil, false, nil // fast-path drop, already seen recently
+	}
+
+	var signalID uuid.UUID
+	var inserted bool
+	signalID, inserted, err = p.insertTradeSignal(ctx, masterAccountID, event)
+	if err != nil {
+		return uuid.Nil, false, err
 	}
 	if !inserted {
 		// Unique-constraint violation: durable dedupe caught a redelivery
 		// Redis's fast path missed (e.g. a Redis flush/restart) -- exactly
 		// what makes AC3 true regardless of Redis's own race behavior.
-		return nil
+		return uuid.Nil, false, nil
 	}
-
-	return p.processSignalForAllRelationships(ctx, masterAccountID, signalID, event)
+	return signalID, true, nil
 }
 
 func normalize(event domain.NormalizedTradeEvent) error {

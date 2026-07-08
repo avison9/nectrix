@@ -9,3 +9,4 @@ resources:
   - gateway
   - admin-portal
   - async
+  - platform-observability

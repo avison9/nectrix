@@ -7,7 +7,8 @@
 	kind-netpol-test kind-hpa-test \
 	db-migrate db-migrate-down db-seed-dev db-status \
 	role-grant role-revoke role-list \
-	kafka-topics
+	kafka-topics \
+	observability-verify
 
 # Count of the core (non-dev-context) changesets — update when adding new
 # ones. Used for a full rollback (db-migrate-down). If dev seed data
@@ -20,7 +21,7 @@ TF_DIRS = infra/terraform/aws infra/terraform/gcp
 COMPOSE = docker compose -f docker-compose.yml -f .devcontainer/docker-compose.yml
 DC_EXEC = $(COMPOSE) exec devcontainer
 
-up: ## Start infra services (Postgres, Redis, Kafka, Kafka UI, MinIO)
+up: ## Start infra services (Postgres, Redis, Kafka, Kafka UI, MinIO, observability stack)
 	docker compose up -d
 	docker compose ps
 
@@ -145,3 +146,6 @@ role-list: ## List roles for a user: make role-list EMAIL=foo@example.com
 
 kafka-topics: ## Create the full topic catalog (idempotent) against the local/CI broker
 	./infra/kafka/create-topics.sh
+
+observability-verify: ## Real, hands-on proof of TICKET-010's AC1-4 against the docker-compose observability stack
+	./infra/observability/verify.sh

@@ -1,0 +1,28 @@
+# TICKET-010 — local/CI Prometheus config (docker-compose.yml).
+#
+# scrape_interval/evaluation_interval are deliberately 5s, not a realistic
+# production value (typically 15-60s) — this is tuned for fast local/CI
+# iteration so infra/observability/verify.sh's AC4 check (deliberately
+# trigger an alert, then poll until it fires) doesn't need to wait minutes.
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+rule_files:
+  - /etc/prometheus/alert-rules.yml
+
+scrape_configs:
+  - job_name: core-app
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["core-app:8080"]
+
+  - job_name: copy-engine
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["copy-engine:8090"]

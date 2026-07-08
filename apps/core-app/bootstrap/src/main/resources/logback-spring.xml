@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  TICKET-010 — structured JSON logging (docs/18-scaling-observability-dr.md
+  §18.2: "all logs structured (JSON), correlated with trace IDs; broker
+  credentials and any PII are redacted at the logging-library level").
+
+  trace_id/span_id correlation comes from the OpenTelemetry Java agent's
+  logback-mdc instrumentation (enabled by default), which injects them into
+  MDC — LogstashEncoder includes MDC entries in its JSON output automatically,
+  no extra config needed here.
+-->
+<configuration>
+  <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+      <jsonGeneratorDecorator class="net.logstash.logback.mask.MaskingJsonGeneratorDecorator">
+        <!-- Allow-listed sensitive field names (docs/17-security-architecture.md
+             §17 — "no plaintext logging" for broker credentials), masked
+             regardless of call-site discipline. Values matched via
+             StructuredArguments (net.logstash.logback.argument.StructuredArguments)
+             or MDC keys with these names. -->
+        <path>password</path>
+        <path>secret</path>
+        <path>token</path>
+        <path>credential</path>
+        <path>credentials</path>
+        <path>ciphertext</path>
+        <path>apiToken</path>
+        <path>client_secret</path>
+      </jsonGeneratorDecorator>
+    </encoder>
+  </appender>
+
+  <root level="INFO">
+    <appender-ref ref="CONSOLE" />
+  </root>
+</configuration>

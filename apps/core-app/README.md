@@ -122,6 +122,12 @@ make role-revoke EMAIL=foo@example.com ROLE=ADMIN
 make role-list EMAIL=foo@example.com
 ```
 
+## Observability (TICKET-010)
+
+The OpenTelemetry Java auto-instrumentation agent (`apps/core-app/Dockerfile` fetches a pinned release jar at build time, attached via `-javaagent`) auto-instruments Spring MVC/JDBC — zero code changes for tracing. `spring-boot-starter-actuator` + `micrometer-registry-prometheus` expose `/actuator/prometheus` (real `http.server.requests` histogram, no custom metric code needed). `logback-spring.xml` switches console logging to structured JSON (`net.logstash.logback:logstash-logback-encoder`) with a `MaskingJsonGeneratorDecorator` masking allow-listed sensitive field names (`password`, `secret`, `token`, `credential`, `credentials`, `ciphertext`, `apiToken`, `client_secret`) — see `HelloController`'s deliberately-logged fake `secret` field for a live example. `trace_id`/`span_id` land in every log line automatically via the agent's Logback MDC instrumentation, no extra wiring.
+
+`OTEL_EXPORTER_OTLP_ENDPOINT`/`OTEL_SERVICE_NAME` (defaults: `http://localhost:4318`/`core-app`) are read by the agent directly — docker-compose.yml points this at the local Tempo instance. See root `README.md`'s Observability section and `infra/observability/verify.sh` for hands-on AC verification.
+
 ## Commands
 
 Run from the repo root (see root `README.md` for the devcontainer setup):

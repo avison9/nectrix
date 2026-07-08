@@ -1,0 +1,29 @@
+# TICKET-010 — ships container stdout logs into Loki for local dev/CI
+# (docker-compose.yml). Uses Docker service discovery against the host's
+# Docker socket (read-only) rather than a fixed container list, so it picks
+# up core-app/copy-engine containers however they're started (docker-compose,
+# `docker run`, infra/observability/verify.sh) without per-container config.
+#
+# Real-cluster equivalent (out of scope here, same "offline-validated only"
+# boundary as the rest of deploy/base/platform-observability) would be a
+# Promtail/Grafana Alloy DaemonSet reading each node's container log files.
+server:
+  http_listen_port: 9080
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+    relabel_configs:
+      - source_labels: ["__meta_docker_container_name"]
+        regex: "/(.*)"
+        target_label: "container"
+      - source_labels: ["__meta_docker_container_log_stream"]
+        target_label: "stream"

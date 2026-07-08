@@ -25,6 +25,13 @@ spec:
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8090
+          env:
+            # TICKET-010 — read by internal/observability.Init in main.go.
+            # Inert today: nothing currently applies this namespace for real
+            # (see deploy/base/platform-observability), same "written but
+            # never applied" precedent as infra/terraform.
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://tempo.platform.svc.cluster.local:4318
           securityContext:
             runAsNonRoot: true
             runAsUser: 65532

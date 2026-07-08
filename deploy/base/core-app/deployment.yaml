@@ -35,6 +35,12 @@ spec:
             - name: TWO_FACTOR_SECRET_ENCRYPTION_KEY
               valueFrom:
                 secretKeyRef: { name: core-app-secrets, key: two-factor-secret-encryption-key }
+            # TICKET-010 — read by the OTel javaagent (apps/core-app/Dockerfile).
+            # Inert today: nothing currently applies this namespace for real
+            # (see deploy/base/platform-observability), same "written but
+            # never applied" precedent as infra/terraform.
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://tempo.platform.svc.cluster.local:4318
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000

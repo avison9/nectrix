@@ -15,7 +15,8 @@ base/
 ├── mt5-bridge-gateway/             Deployment + Service (namespace: copy-engine)
 ├── gateway/                        placeholder Deployment + Service + Ingress (namespace: gateway)
 ├── admin-portal/                   placeholder Deployment + Service + Ingress (namespace: admin-portal)
-└── async/                          placeholder worker Deployment, no Service/Ingress (namespace: async)
+├── async/                          placeholder worker Deployment, no Service/Ingress (namespace: async)
+└── platform-observability/         Prometheus/Grafana/Loki/Tempo/Alertmanager Deployment+Service+ConfigMap (namespace: platform, TICKET-010) — offline-`kubectl kustomize`-validated only, same "written but never applied" boundary as infra/terraform (no persistent cluster exists to apply it to yet)
 
 components/
 ├── cloud-aws/          cluster-autoscaler controller + ALB Ingress annotations — opt in via a staging/production overlay's `components:`
@@ -51,3 +52,4 @@ To actually deploy locally, you need `kind` and standalone `kustomize` (not the 
 - `nectrix_plan/docs/16-deployment-architecture.md` §16.1, §16.2, §16.3 — namespace layout, network policy, and deploy pipeline this implements.
 - `nectrix_plan/phases/phase-0-foundation/tickets/TICKET-002-cicd-pipeline.md` — the ticket that created this directory.
 - `nectrix_plan/phases/phase-0-foundation/tickets/TICKET-003-infra-k8s-terraform.md` — the ticket that added `components/`, HPA, NetworkPolicy, and the real cloud infra in `infra/terraform/`. A real GitOps controller (ArgoCD/Flux) reconciling a real persistent cluster is a natural next step once one exists.
+- `nectrix_plan/phases/phase-0-foundation/tickets/TICKET-010-observability-stack.md` — the ticket that added `platform-observability/`. See root `README.md`'s Observability section — the real, hands-on-verified surface is `docker-compose.yml`/`infra/observability/`, not this directory.

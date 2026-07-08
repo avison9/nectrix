@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/avison9/nectrix/copy-engine/internal/observability"
 	domain "github.com/avison9/nectrix/go-domain"
 	"github.com/google/uuid"
 )
@@ -46,6 +47,9 @@ func (c *stubCore) InjectEvent(ctx context.Context, handle domain.ConnectionHand
 	if !ok {
 		return fmt.Errorf("stubadapter: no active StreamTradeEvents subscription for handle %s", handle.ID)
 	}
+	// TICKET-010 — the baseline Grafana dashboard's "stub pipeline
+	// synthetic-event throughput" panel reads this.
+	observability.StubEventsInjectedTotal.Inc()
 	return onEvent(ctx, buildEvent(handle, params))
 }
 
