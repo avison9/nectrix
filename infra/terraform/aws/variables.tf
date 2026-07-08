@@ -73,9 +73,14 @@ variable "redis_node_type" {
   type = string
 }
 
-variable "redis_num_cache_clusters" {
+variable "redis_num_node_groups" {
   type    = number
   default = 2
+}
+
+variable "redis_replicas_per_node_group" {
+  type    = number
+  default = 1
 }
 
 variable "kafka_version" {

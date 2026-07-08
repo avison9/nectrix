@@ -1,6 +1,7 @@
 package com.nectrix.events.consumer;
 
 import com.google.protobuf.InvalidProtocolBufferException;
+import com.nectrix.redisclient.Deduplicator;
 import com.google.protobuf.Message;
 import com.google.protobuf.Parser;
 import java.nio.charset.StandardCharsets;

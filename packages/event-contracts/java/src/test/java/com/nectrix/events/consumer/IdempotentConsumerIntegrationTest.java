@@ -22,10 +22,13 @@ import org.apache.kafka.common.serialization.ByteArrayDeserializer;
 import org.apache.kafka.common.serialization.ByteArraySerializer;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
+import com.nectrix.redisclient.RedisClientConfig;
+import com.nectrix.redisclient.RedisClientFactory;
+import com.nectrix.redisclient.RedisDeduplicator;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
-import redis.clients.jedis.JedisPool;
+import redis.clients.jedis.UnifiedJedis;
 
 /**
  * TICKET-007 real, hands-on verification against a live Kafka broker (docker-compose.yml) and
@@ -47,8 +50,6 @@ class IdempotentConsumerIntegrationTest {
 
   private static final String BOOTSTRAP_SERVERS =
       envOr("KAFKA_HOST", "localhost") + ":" + envOr("KAFKA_PORT", "9092");
-  private static final String REDIS_HOST = envOr("REDIS_HOST", "localhost");
-  private static final int REDIS_PORT = Integer.parseInt(envOr("REDIS_PORT", "6379"));
 
   private final List<String> topicsToDelete = new java.util.concurrent.CopyOnWriteArrayList<>();
 
@@ -133,7 +134,7 @@ class IdempotentConsumerIntegrationTest {
     }
 
     AtomicInteger handlerInvocations = new AtomicInteger(0);
-    try (var jedisPool = new JedisPool(REDIS_HOST, REDIS_PORT)) {
+    try (UnifiedJedis jedis = RedisClientFactory.create(RedisClientConfig.fromEnv())) {
       IdempotentConsumer.Config<BrokerConnectionEvent> config =
           new IdempotentConsumer.Config<BrokerConnectionEvent>()
               .topic(topic)
@@ -147,7 +148,7 @@ class IdempotentConsumerIntegrationTest {
                     handlerInvocations.incrementAndGet();
                     throw new RuntimeException("always fails, for AC2's DLQ test");
                   })
-              .deduplicator(new RedisDeduplicator(jedisPool, Duration.ofMinutes(5)))
+              .deduplicator(new RedisDeduplicator(jedis, Duration.ofMinutes(5)))
               .retryPolicy(RetryPolicy.exponential(maxAttempts, Duration.ofMillis(10), Duration.ofMillis(50)))
               .consumerProps(consumerProps(groupId))
               .dlqProducerProps(producerProps());
@@ -184,7 +185,7 @@ class IdempotentConsumerIntegrationTest {
   private void runConsumerUntil(
       String topic, String groupId, String filterKey, List<Integer> observed, int recordsToConsume)
       throws Exception {
-    try (var jedisPool = new JedisPool(REDIS_HOST, REDIS_PORT)) {
+    try (UnifiedJedis jedis = RedisClientFactory.create(RedisClientConfig.fromEnv())) {
       AtomicInteger consumedCount = new AtomicInteger(0);
       IdempotentConsumer.Config<BrokerConnectionEvent> config =
           new IdempotentConsumer.Config<BrokerConnectionEvent>()
@@ -198,7 +199,7 @@ class IdempotentConsumerIntegrationTest {
                     }
                     consumedCount.incrementAndGet();
                   })
-              .deduplicator(new RedisDeduplicator(jedisPool, Duration.ofMinutes(5)))
+              .deduplicator(new RedisDeduplicator(jedis, Duration.ofMinutes(5)))
               .consumerProps(consumerProps(groupId))
               .dlqProducerProps(producerProps());
 

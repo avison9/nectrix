@@ -4,6 +4,7 @@ go 1.26
 
 require (
 	github.com/avison9/nectrix/go-domain v0.0.0
+	github.com/avison9/nectrix/redis-client/go v0.0.0
 	github.com/google/uuid v1.6.0
 	github.com/redis/go-redis/v9 v9.21.0
 	github.com/segmentio/kafka-go v0.4.51
@@ -22,3 +23,5 @@ require (
 // this line documents the dependency for readers/tools that don't evaluate
 // go.work, but the actual resolution never hits the network/module cache.
 replace github.com/avison9/nectrix/go-domain => ../../go-domain
+
+replace github.com/avison9/nectrix/redis-client/go => ../../redis-client/go

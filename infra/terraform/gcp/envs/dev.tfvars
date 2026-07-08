@@ -15,8 +15,10 @@ node_initial_count  = 1
 cloudsql_tier         = "db-custom-2-7680"
 cloudsql_disk_size_gb = 20
 
-redis_memory_size_gb = 1
-redis_tier           = "BASIC"
+redis_psc_subnet_cidr   = "10.117.0.0/24" # outside vpc_cidr/pods_cidr/services_cidr above
+redis_shard_count       = 2               # smallest real cluster-mode shard count
+redis_replica_count     = 0               # cheapest — no HA in dev
+redis_cluster_node_type = "REDIS_SHARED_CORE_NANO"
 
 kafka_vcpu_count   = 3
 kafka_memory_bytes = 3221225472 # 3 GiB — Managed Kafka's minimum ratio

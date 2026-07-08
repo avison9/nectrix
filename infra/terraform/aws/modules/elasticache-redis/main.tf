@@ -36,6 +36,16 @@ resource "aws_security_group" "this" {
   }
 }
 
+# TICKET-008 — real Redis Cluster (sharded) mode, not TICKET-003's original
+# single-shard, replica-only HA ("cluster mode disabled" in AWS's own
+# terminology). num_node_groups (shard count) + replicas_per_node_group are
+# mutually exclusive with num_cache_clusters — presence of num_node_groups is
+# itself what enables cluster mode in current provider versions, no separate
+# boolean. Flipping an already-applied replication group from
+# num_cache_clusters to num_node_groups is a structural (force-new) change,
+# not an online resize — irrelevant here (nothing has ever been applied) but
+# a real operational note for whoever eventually runs this against a live
+# environment.
 resource "aws_elasticache_replication_group" "this" {
   replication_group_id = "${var.name_prefix}-redis"
   description          = "Nectrix ${var.name_prefix} Redis — idempotency keys, relationship-matching cache, rate limiting, live position cache"
@@ -44,9 +54,11 @@ resource "aws_elasticache_replication_group" "this" {
   engine_version = var.engine_version
   node_type      = var.node_type
 
-  num_cache_clusters         = var.num_cache_clusters
-  automatic_failover_enabled = var.num_cache_clusters >= 2
-  multi_az_enabled           = var.num_cache_clusters >= 2
+  num_node_groups         = var.num_node_groups
+  replicas_per_node_group = var.replicas_per_node_group
+  # No HA to fail over to if a shard has zero replicas.
+  automatic_failover_enabled = var.replicas_per_node_group >= 1
+  multi_az_enabled           = var.replicas_per_node_group >= 1
 
   subnet_group_name  = aws_elasticache_subnet_group.this.name
   security_group_ids = [aws_security_group.this.id]
@@ -55,7 +67,19 @@ resource "aws_elasticache_replication_group" "this" {
   transit_encryption_enabled = true
   auth_token                 = random_password.auth_token.result
 
+  log_delivery_configuration {
+    destination      = aws_cloudwatch_log_group.slow_log.name
+    destination_type = "cloudwatch-logs"
+    log_format       = "json"
+    log_type         = "slow-log"
+  }
+
   tags = {
     Name = "${var.name_prefix}-redis"
   }
+}
+
+resource "aws_cloudwatch_log_group" "slow_log" {
+  name              = "/nectrix/${var.name_prefix}/redis/slow-log"
+  retention_in_days = 365
 }

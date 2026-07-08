@@ -34,8 +34,10 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-security")
     // Validates our own HS256-signed access tokens on incoming requests.
     implementation("org.springframework.boot:spring-boot-starter-oauth2-resource-server")
-    // Rate limiting (Redis INCR+EXPIRE) — see auth.service.RateLimiterService.
-    implementation("org.springframework.boot:spring-boot-starter-data-redis")
+    // TICKET-008 — shared Redis client library (token-bucket rate limiting via
+    // auth.service.RateLimiterService, which now delegates here instead of its
+    // own TICKET-005-era Spring StringRedisTemplate INCR+EXPIRE counter).
+    implementation("com.nectrix:redis-client")
     // No version pinned — already a transitive dependency of
     // oauth2-resource-server, so the BOM above picks a version guaranteed
     // compatible with the rest of the Security/JOSE stack. Used directly (not

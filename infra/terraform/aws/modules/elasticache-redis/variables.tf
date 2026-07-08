@@ -24,10 +24,16 @@ variable "node_type" {
   type = string
 }
 
-variable "num_cache_clusters" {
-  description = "Number of nodes in the replication group (>=2 enables automatic failover)"
+variable "num_node_groups" {
+  description = "Shard count (TICKET-008 real Redis Cluster mode)"
   type        = number
   default     = 2
+}
+
+variable "replicas_per_node_group" {
+  description = "Replica count per shard (>=1 enables automatic failover for that shard)"
+  type        = number
+  default     = 1
 }
 
 variable "engine_version" {

@@ -48,6 +48,14 @@ A deliberate deviation from `docs/13-technology-stack.md` §13.2's "MinIO now" M
 
 `aws/modules/kafka` (provisioned MSK, not MSK Serverless — Serverless forces SASL/IAM-only client auth, deferred to TICKET-011 alongside the CMK items below) and `gcp/modules/kafka` (`google_managed_kafka_cluster`, Google's Managed Service for Apache Kafka) — both VPC-private, TLS-in-transit, default cloud-managed at-rest encryption (same CMK deferral as every other engine in `.checkov.yaml`'s skip-list). Neither module manages topics — AWS's MSK has no Terraform-level topic resource at all (topics are created against the real Kafka protocol, same as any cluster), and GCP's `google_managed_kafka_topic` is deliberately unused here to avoid a second, drifting topic-creation mechanism. One mechanism for all environments: `infra/kafka/create-topics.sh` (`make kafka-topics`), pointed at the local/CI broker today and at a real cluster's bootstrap-broker endpoint once one is applied.
 
+## Redis Cluster (TICKET-008)
+
+`aws/modules/elasticache-redis` and `gcp/modules/memorystore-redis-cluster` both now provision real Redis **Cluster** (sharded) mode, not the single-shard, replica-only HA that both clouds had pre-TICKET-008 (AWS's own terminology for the old shape: "cluster mode disabled"). AWS: `num_node_groups` (shard count) + `replicas_per_node_group`, mutually exclusive with the old `num_cache_clusters` param — cluster mode is implied by the presence of `num_node_groups`, no separate boolean flag exists in the current provider version. `outputs.tf` exposes `configuration_endpoint_address` (the cluster-aware discovery endpoint clients need) rather than `primary_endpoint_address`, which goes unpopulated once cluster mode is on.
+
+GCP required a genuinely different resource, not a flag on the existing one: `google_redis_instance` (used by the old `memorystore-redis` module, now deleted) has no cluster-mode option at all, so `gcp/modules/memorystore-redis-cluster` uses `google_redis_cluster` instead. That resource also uses a materially different networking model — **Private Service Connect (PSC)**, not the Private Service Access (VPC peering, via `modules/networking`'s `google_service_networking_connection`) style every other GCP module in this repo uses — requiring its own dedicated `google_compute_subnetwork` (`purpose = "PRIVATE_SERVICE_CONNECT"`) and a `google_network_connectivity_service_connection_policy` resource (`service_class = "gcp-memorystore-redis"`), not just a reference to the existing VPC-peering setup.
+
+Both languages' shared client library (`packages/redis-client/{java,go}`) picks standalone-vs-cluster behavior via an explicit `REDIS_MODE` env var, not auto-detection — see `packages/redis-client/README.md`.
+
 ## Environments = Terraform workspaces
 
 ```

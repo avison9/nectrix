@@ -31,8 +31,8 @@ output "postgres_master_password" {
   sensitive = true
 }
 
-output "redis_primary_endpoint" {
-  value = module.elasticache_redis.primary_endpoint
+output "redis_configuration_endpoint" {
+  value = module.elasticache_redis.configuration_endpoint
 }
 
 output "s3_bucket_name" {

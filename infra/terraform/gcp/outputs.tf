@@ -27,8 +27,8 @@ output "postgres_db_password" {
   sensitive = true
 }
 
-output "redis_host" {
-  value = module.memorystore_redis.host
+output "redis_discovery_endpoints" {
+  value = module.memorystore_redis_cluster.discovery_endpoints
 }
 
 output "gcs_bucket_name" {

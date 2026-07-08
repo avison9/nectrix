@@ -48,14 +48,22 @@ module "cloudsql_postgres" {
   depends_on = [module.networking]
 }
 
-module "memorystore_redis" {
-  source = "./modules/memorystore-redis"
+# TICKET-008 — replaces the original google_redis_instance-based module
+# (TICKET-003) with real Redis Cluster (sharded) mode. google_redis_instance
+# had no cluster-mode option at all; this is a genuinely different resource,
+# not an in-place argument change (unlike the AWS side, where
+# num_node_groups/replicas_per_node_group extend the same
+# aws_elasticache_replication_group resource already in use).
+module "memorystore_redis_cluster" {
+  source = "./modules/memorystore-redis-cluster"
 
-  name_prefix    = local.name_prefix
-  region         = var.region
-  network_id     = module.networking.network_id
-  memory_size_gb = var.redis_memory_size_gb
-  tier           = var.redis_tier
+  name_prefix     = local.name_prefix
+  region          = var.region
+  network_id      = module.networking.network_id
+  psc_subnet_cidr = var.redis_psc_subnet_cidr
+  shard_count     = var.redis_shard_count
+  replica_count   = var.redis_replica_count
+  node_type       = var.redis_cluster_node_type
 
   depends_on = [module.networking]
 }
