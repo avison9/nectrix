@@ -9,4 +9,12 @@ resources:
   - gateway
   - admin-portal
   - async
-  - platform-observability
+# platform-observability is deliberately NOT listed here — every overlay
+# (staging/production/local) references this file wholesale via
+# `resources: [../../base]`, so anything added here is applied to the real
+# CI kind cluster too. That broke deploy-staging for real (confirmed:
+# 5 extra pods on top of the 4 apps starved core-app's own startup CPU on
+# the shared runner, and the OTel javaagent's real startup overhead pushed
+# it past the liveness probe's kill threshold under that contention).
+# platform-observability keeps its own valid kustomization.yaml — validate
+# it standalone: `kubectl kustomize deploy/base/platform-observability`.
