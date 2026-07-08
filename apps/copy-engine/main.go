@@ -11,6 +11,7 @@ import (
 	"time"
 
 	domain "github.com/avison9/nectrix/go-domain"
+	redisclient "github.com/avison9/nectrix/redis-client/go"
 )
 
 const (
@@ -29,6 +30,25 @@ func main() {
 	// Referencing go-domain proves the shared-package wiring resolves via
 	// go.work; real pipeline usage begins once TICKET-009 lands.
 	var _ domain.NormalizedTradeEvent
+
+	// TICKET-008 — proves the shared Redis client is genuinely reachable from
+	// copy-engine (not just an unused library dependency), one real call at
+	// startup; real dedup/rate-limit usage begins once TICKET-009 gives this
+	// service actual pipeline logic to guard. Non-fatal: Redis being briefly
+	// unavailable at startup shouldn't block this stub's health-check server
+	// from coming up.
+	redisClient, err := redisclient.New(redisclient.ConfigFromEnv())
+	if err != nil {
+		log.Printf("%s: redis client config error: %v", serviceName, err)
+	} else {
+		deduper := redisclient.NewDeduper(redisClient, time.Minute)
+		seen, err := deduper.SeenBefore(context.Background(), serviceName+":startup-check")
+		if err != nil {
+			log.Printf("%s: redis reachability check failed: %v", serviceName, err)
+		} else {
+			log.Printf("%s: redis reachable (startup dedup check, seenBefore=%v)", serviceName, seen)
+		}
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {

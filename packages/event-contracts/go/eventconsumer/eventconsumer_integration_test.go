@@ -17,7 +17,6 @@ package eventconsumer_test
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"strconv"
 	"sync"
@@ -27,6 +26,7 @@ import (
 
 	"github.com/avison9/nectrix/event-contracts/go/eventconsumer"
 	eventsv1 "github.com/avison9/nectrix/event-contracts/go/gen/nectrix/events/v1"
+	redisclient "github.com/avison9/nectrix/redis-client/go"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"github.com/segmentio/kafka-go"
@@ -176,7 +176,7 @@ func runConsumerUntil(
 
 	redisClient := redis.NewClient(&redis.Options{Addr: redisAddr})
 	defer redisClient.Close()
-	deduper := newTestDeduper(redisClient)
+	deduper := redisclient.NewDeduper(redisClient, 5*time.Minute)
 
 	var consumedCount atomic.Int32
 	reader := newReader(topic, groupID)
@@ -242,7 +242,7 @@ func TestAC2_HandlerFailingEveryAttempt_LandsOnDLQAfterConfiguredRetries_NotInfi
 
 	redisClient := redis.NewClient(&redis.Options{Addr: redisAddr})
 	defer redisClient.Close()
-	deduper := newTestDeduper(redisClient)
+	deduper := redisclient.NewDeduper(redisClient, 5*time.Minute)
 
 	var handlerInvocations atomic.Int32
 	reader := newReader(topic, groupID)
@@ -359,21 +359,3 @@ func mustPublish(t *testing.T, ctx context.Context, writer *kafka.Writer, key st
 	}
 }
 
-// testDeduper is a minimal go-redis-backed domain.Deduper, matching redisdeduper's
-// implementation (not reused directly from that package here, to keep this test's Kafka-vs-Redis
-// concerns visibly separate; both share the same SETNX-based semantics).
-type testDeduper struct {
-	client *redis.Client
-}
-
-func newTestDeduper(client *redis.Client) *testDeduper {
-	return &testDeduper{client: client}
-}
-
-func (d *testDeduper) SeenBefore(ctx context.Context, key string) (bool, error) {
-	set, err := d.client.SetNX(ctx, "test:dedup:"+key, "1", 5*time.Minute).Result()
-	if err != nil {
-		return false, fmt.Errorf("dedup check: %w", err)
-	}
-	return !set, nil
-}

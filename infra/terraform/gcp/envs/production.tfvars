@@ -15,8 +15,10 @@ node_initial_count  = 3
 cloudsql_tier         = "db-custom-8-30720"
 cloudsql_disk_size_gb = 200
 
-redis_memory_size_gb = 8
-redis_tier           = "STANDARD_HA"
+redis_psc_subnet_cidr   = "10.137.0.0/24" # outside vpc_cidr/pods_cidr/services_cidr above
+redis_shard_count       = 3
+redis_replica_count     = 1
+redis_cluster_node_type = "REDIS_STANDARD_SMALL"
 
 kafka_vcpu_count   = 12
 kafka_memory_bytes = 12884901888 # 12 GiB

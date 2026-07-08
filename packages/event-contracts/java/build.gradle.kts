@@ -30,11 +30,11 @@ dependencies {
     // clients are broadly cross-version compatible, but matching the broker
     // avoids any protocol-negotiation surprises.
     api("org.apache.kafka:kafka-clients:3.8.0")
-    // TICKET-007 — self-contained Redis-backed idempotency-dedup default
-    // (RedisDeduplicator), same "built ahead of TICKET-008, flagged for
-    // consolidation" precedent as auth's RateLimiterService. Plain Jedis, not
-    // Spring's StringRedisTemplate — same framework-agnostic reasoning as above.
-    implementation("redis.clients:jedis:5.2.0")
+    // TICKET-008 — the canonical Deduplicator interface + RedisDeduplicator impl
+    // (used by IdempotentConsumer.Config's deduplicator field) now live in
+    // packages/redis-client/java, not here — that generic Redis primitive was
+    // only ever in this package because TICKET-007 was its first consumer.
+    api("com.nectrix:redis-client")
 
     testImplementation(platform("org.junit:junit-bom:6.1.1"))
     testImplementation("org.junit.jupiter:junit-jupiter")

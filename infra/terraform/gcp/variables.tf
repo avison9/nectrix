@@ -60,14 +60,24 @@ variable "cloudsql_disk_size_gb" {
   default = 100
 }
 
-variable "redis_memory_size_gb" {
-  type    = number
-  default = 4
+variable "redis_psc_subnet_cidr" {
+  description = "Dedicated PSC subnet for Redis Cluster — must not overlap vpc_cidr/pods_cidr/services_cidr"
+  type        = string
 }
 
-variable "redis_tier" {
+variable "redis_shard_count" {
+  type    = number
+  default = 3
+}
+
+variable "redis_replica_count" {
+  type    = number
+  default = 1
+}
+
+variable "redis_cluster_node_type" {
   type    = string
-  default = "STANDARD_HA"
+  default = "REDIS_SHARED_CORE_NANO"
 }
 
 variable "kafka_vcpu_count" {

@@ -61,7 +61,8 @@ module "elasticache_redis" {
   private_subnet_ids        = module.networking.private_subnet_ids
   allowed_security_group_id = module.eks.cluster_security_group_id
   node_type                 = var.redis_node_type
-  num_cache_clusters        = var.redis_num_cache_clusters
+  num_node_groups           = var.redis_num_node_groups
+  replicas_per_node_group   = var.redis_replicas_per_node_group
 }
 
 module "kafka" {

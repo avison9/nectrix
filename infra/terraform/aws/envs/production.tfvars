@@ -15,8 +15,9 @@ rds_instance_class        = "db.r6g.large"
 rds_allocated_storage     = 200
 rds_backup_retention_days = 30
 
-redis_node_type          = "cache.r6g.large"
-redis_num_cache_clusters = 3
+redis_node_type               = "cache.r6g.large"
+redis_num_node_groups         = 3 # 3 shards
+redis_replicas_per_node_group = 1 # + 1 replica per shard = real HA + real sharding
 
 kafka_broker_instance_type   = "kafka.m5.large"
 kafka_number_of_broker_nodes = 3 # matches az_count=3 above
