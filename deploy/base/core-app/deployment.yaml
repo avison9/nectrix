@@ -44,14 +44,28 @@ spec:
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
+          # TICKET-010 — the OTel javaagent's class-instrumentation-at-load-time
+          # work makes startup genuinely slower and CPU-hungrier than a bare
+          # Spring Boot app, confirmed by directly reproducing deploy-staging's
+          # real "Wait for rollouts" failure: under a contended 0.25 CPU share
+          # (this Deployment's old cpu *request* of 100m, matching what a busy
+          # shared CI runner would actually schedule) startup took ~55-80s,
+          # well past the old livenessProbe's kill threshold (10s + 10s*3 ≈
+          # 40s) — the pod was being killed and restarted before it ever
+          # finished starting, an infinite loop "rollout status" never sees
+          # converge. A startupProbe (readiness/liveness are not evaluated
+          # until it succeeds once) with a generous budget fixes this without
+          # slowing down failure detection once the app is actually running.
+          startupProbe:
+            httpGet: { path: /hello, port: 8080 }
+            periodSeconds: 5
+            failureThreshold: 30 # 150s startup budget
           readinessProbe:
             httpGet: { path: /hello, port: 8080 }
-            initialDelaySeconds: 5
             periodSeconds: 5
           livenessProbe:
             httpGet: { path: /hello, port: 8080 }
-            initialDelaySeconds: 10
             periodSeconds: 10
           resources:
-            requests: { cpu: 100m, memory: 256Mi }
-            limits: { cpu: 500m, memory: 512Mi }
+            requests: { cpu: 250m, memory: 384Mi }
+            limits: { cpu: 750m, memory: 768Mi }
