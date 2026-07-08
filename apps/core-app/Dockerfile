@@ -22,10 +22,12 @@ RUN ./gradlew :bootstrap:bootJar --no-daemon -x test
 # instruments Spring MVC/JDBC). Pinned version, fetched over HTTPS from the
 # project's own GitHub release assets, same "real external fetch, verified
 # by actually building" discipline as every other pinned external download
-# in this repo (Gradle distribution, Terraform providers, etc).
+# in this repo (Gradle distribution, Terraform providers, etc). 2.26.1, not
+# the original 2.11.0 pin — CI's Trivy gate caught a real CRITICAL CVE
+# (CVE-2026-33701) in 2.11.0, fixed in 2.26.1.
 FROM eclipse-temurin:21-jre-jammy AS otel-agent
 RUN curl -fsSL -o /opentelemetry-javaagent.jar \
-    https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/download/v2.11.0/opentelemetry-javaagent.jar
+    https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/download/v2.26.1/opentelemetry-javaagent.jar
 
 # ---- Runtime stage ----
 FROM eclipse-temurin:21-jre-jammy AS runtime

@@ -17,6 +17,13 @@ dependencies {
     // fields, see logback-spring.xml) — not managed by Spring Boot's BOM,
     // version pinned explicitly.
     implementation("net.logstash.logback:logstash-logback-encoder:8.0")
+    // logstash-logback-encoder 8.0 transitively pulls the legacy
+    // com.fasterxml.jackson.core:jackson-databind (Spring Boot 4.1's own
+    // Jackson is the separately-coordinated tools.jackson.core:jackson-databind
+    // 3.x, so this doesn't just inherit a safe version from there) — CI's
+    // Trivy gate caught two real HIGH CVEs (CVE-2026-54512/54513) on an
+    // unpinned transitive resolution; forced to a version both are fixed in.
+    implementation("com.fasterxml.jackson.core:jackson-databind:2.21.4")
     // TICKET-006 — GlobalSecurityExceptionHandler compiles directly against
     // AccessDeniedException; just the core annotations/types, not the full
     // security starter (auth module owns the actual SecurityFilterChain).
