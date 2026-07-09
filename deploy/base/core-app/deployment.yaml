@@ -18,23 +18,26 @@ spec:
           ports:
             - containerPort: 8080
           env:
-            # TICKET-005 — application.yml has no default for either (deliberately,
-            # same fail-loudly reasoning as POSTGRES_APP_PASSWORD), and both are
-            # read eagerly at bean construction (JwtService, StubAesGcmTwoFactorSecretCipher)
-            # regardless of whether any auth endpoint is ever hit — unlike the
-            # datasource (Hikari connects lazily), a missing/malformed value here
-            # crashes the whole ApplicationContext at startup, not just auth
-            # requests. The `core-app-secrets` Secret is created by CI
-            # (main-pipeline.yml's deploy-staging/deploy-production jobs) with
-            # throwaway values before this manifest is applied — real
-            # environments provide it via their own secret-management, once
-            # that exists (see infra/terraform/README.md).
+            # TICKET-005 — application.yml has no default (deliberately, same
+            # fail-loudly reasoning as POSTGRES_APP_PASSWORD), and it's read
+            # eagerly at bean construction (JwtService) regardless of whether
+            # any auth endpoint is ever hit — unlike the datasource (Hikari
+            # connects lazily), a missing/malformed value here crashes the
+            # whole ApplicationContext at startup, not just auth requests.
+            # The `core-app-secrets` Secret is created by CI (main-pipeline.yml's
+            # deploy-staging/deploy-production jobs) with a throwaway value
+            # before this manifest is applied — real environments provide it
+            # via their own secret-management, once that exists (see
+            # infra/terraform/README.md).
             - name: JWT_SIGNING_SECRET
               valueFrom:
                 secretKeyRef: { name: core-app-secrets, key: jwt-signing-secret }
-            - name: TWO_FACTOR_SECRET_ENCRYPTION_KEY
-              valueFrom:
-                secretKeyRef: { name: core-app-secrets, key: two-factor-secret-encryption-key }
+            # TICKET-011 — apps/core-app/modules/crypto's EnvelopeEncryptionService.
+            # KMS_ENDPOINT_OVERRIDE is deliberately unset here (unlike
+            # docker-compose.yml's LocalStack override) — a real cluster has
+            # no LocalStack, so this resolves to real AWS KMS via the SDK's
+            # normal credential chain (IRSA), same as AWS_REGION defaulting
+            # via application.yml's ${AWS_REGION:us-east-1}.
             # TICKET-010 — read by the OTel javaagent (apps/core-app/Dockerfile).
             # Inert today: nothing currently applies this namespace for real
             # (see deploy/base/platform-observability), same "written but

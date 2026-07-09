@@ -7,16 +7,29 @@ plugins {
     id("io.spring.dependency-management") version "1.1.7"
 }
 
+// TICKET-011 — Gradle's BOM-managed versions don't propagate transitively
+// across subprojects: this module pulls software.amazon.awssdk:kms in
+// transitively via modules:crypto, but needs its own BOM import to resolve
+// it on its own classpath (see bootstrap/build.gradle.kts's comment for the
+// full explanation — same gotcha, same fix, one level down the graph).
 dependencyManagement {
     imports {
         mavenBom("org.springframework.boot:spring-boot-dependencies:4.1.0")
+        mavenBom("software.amazon.awssdk:bom:2.31.68")
     }
 }
 
-// Deliberately no dependencies on other modules — cross-module access must
-// go through this module's ..api.. package (enforced by ModuleBoundaryArchTest
-// in :bootstrap) or through the event bus, never a direct project() dependency.
+// No dependencies on other *bounded-context* modules — cross-module access
+// there must go through that module's ..api.. package (enforced by
+// ModuleBoundaryArchTest in :bootstrap) or the event bus, never a direct
+// project() dependency. modules:crypto is different: a shared-kernel utility
+// (no domain data/business capability of its own, docs/04-architecture-overview.md
+// §4.4's "Shared Kernel" layer), the same relationship admin has with
+// auth/invitations' own ..api.. packages, just for a generic capability
+// instead of a bounded context.
 dependencies {
+    // TICKET-011 — EnvelopeEncryptionService, for TwoFactorService.
+    implementation(project(":modules:crypto"))
     implementation("org.springframework.boot:spring-boot-starter-web") // RestClient, @RestController
     // spring-boot-starter-web pulls jackson-databind in transitively, but only
     // onto the RUNTIME classpath of a consumer that declares it as
@@ -55,4 +68,10 @@ dependencies {
     implementation("org.bouncycastle:bcprov-jdk18on:1.84")
     // TOTP + QR generation — not managed by Boot's BOM, needs an explicit version.
     implementation("dev.samstevens.totp:totp:1.7.1")
+    // TICKET-011 AC3 — StructuredArguments.kv tags the 2FA secret for
+    // bootstrap's logback-spring.xml MaskingJsonGeneratorDecorator to redact
+    // (same pattern as HelloController's TICKET-010 precedent). Compile-only
+    // dependency here; the actual masking config/appender lives in bootstrap.
+    // Same version pin as bootstrap/build.gradle.kts.
+    implementation("net.logstash.logback:logstash-logback-encoder:8.0")
 }

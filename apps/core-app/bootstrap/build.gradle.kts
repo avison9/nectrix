@@ -5,6 +5,21 @@ plugins {
     id("io.spring.dependency-management") version "1.1.7"
 }
 
+// TICKET-011 — Gradle's BOM-managed versions don't propagate transitively
+// across subprojects (each consumer resolves its own classpath
+// independently): modules:crypto imports this same BOM for its own
+// software.amazon.awssdk:kms dependency, but bootstrap (which pulls that in
+// transitively via modules:auth -> modules:crypto) needs its own import too,
+// or resolution fails with "Could not find software.amazon.awssdk:kms:."
+// (confirmed by hitting that exact error) — same reason every module here
+// separately imports the Spring Boot BOM rather than relying on inheriting
+// it from bootstrap.
+dependencyManagement {
+    imports {
+        mavenBom("software.amazon.awssdk:bom:2.31.68")
+    }
+}
+
 dependencies {
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("org.springframework.boot:spring-boot-starter-jdbc")

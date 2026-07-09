@@ -29,13 +29,19 @@ services:
       KAFKA_PORT: "29092"
       # --- Auth (TICKET-005) ---
       JWT_SIGNING_SECRET: ${JWT_SIGNING_SECRET:?Set JWT_SIGNING_SECRET in your .env file}
-      TWO_FACTOR_SECRET_ENCRYPTION_KEY: ${TWO_FACTOR_SECRET_ENCRYPTION_KEY:?Set TWO_FACTOR_SECRET_ENCRYPTION_KEY in your .env file}
       # OAuth vars are allowed to be blank (Google/Apple login just won't work
       # until real credentials are set) — not required to boot the app.
       GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
       GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
       APPLE_OAUTH_CLIENT_ID: ${APPLE_OAUTH_CLIENT_ID:-}
       APPLE_OAUTH_CLIENT_SECRET: ${APPLE_OAUTH_CLIENT_SECRET:-}
+      # --- Envelope encryption (TICKET-011) ---
+      # In-network LocalStack endpoint — NOT ${LOCALSTACK_PORT} from .env
+      # (that's only the host port mapping), same in-network-vs-host-mapping
+      # reasoning as POSTGRES_HOST/PORT above. Real AWS KMS in production
+      # never sets KMS_ENDPOINT_OVERRIDE at all.
+      AWS_REGION: us-east-1
+      KMS_ENDPOINT_OVERRIDE: http://localstack:4566
     ports:
       - "8080:8080"   # core-app
       - "8090:8090"   # copy-engine
@@ -51,4 +57,6 @@ services:
       kafka:
         condition: service_healthy
       minio:
+        condition: service_healthy
+      localstack:
         condition: service_healthy

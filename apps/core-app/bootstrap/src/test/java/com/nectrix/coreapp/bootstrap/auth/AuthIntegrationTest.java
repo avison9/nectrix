@@ -6,10 +6,15 @@ import com.nectrix.coreapp.auth.api.UserProvisioningApi;
 import dev.samstevens.totp.code.CodeGenerator;
 import dev.samstevens.totp.code.DefaultCodeGenerator;
 import dev.samstevens.totp.code.HashingAlgorithm;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.io.PrintStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.Map;
@@ -36,6 +41,39 @@ import tools.jackson.databind.ObjectMapper;
 @Tag("integration")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class AuthIntegrationTest {
+
+  // TICKET-011 AC3 — logback's ConsoleAppender resolves System.out once, at
+  // appender-start time (during Spring context creation), so redirecting it
+  // has to happen in a static initializer (runs at class-load, before the
+  // @SpringBootTest extension boots the context) rather than inside a
+  // @BeforeEach/@Test. Tees everything to the real stdout too, so normal
+  // console output/other tests' visibility is unaffected — this just also
+  // mirrors every byte into an in-memory buffer we can inspect.
+  private static final ByteArrayOutputStream LOG_CAPTURE_BUFFER = new ByteArrayOutputStream();
+
+  static {
+    PrintStream original = System.out;
+    OutputStream tee =
+        new OutputStream() {
+          @Override
+          public synchronized void write(int b) {
+            original.write(b);
+            LOG_CAPTURE_BUFFER.write(b);
+          }
+
+          @Override
+          public synchronized void write(byte[] b, int off, int len) throws IOException {
+            original.write(b, off, len);
+            LOG_CAPTURE_BUFFER.write(b, off, len);
+          }
+
+          @Override
+          public void flush() throws IOException {
+            original.flush();
+          }
+        };
+    System.setOut(new PrintStream(tee, true, StandardCharsets.UTF_8));
+  }
 
   @LocalServerPort private int port;
 
@@ -206,6 +244,64 @@ class AuthIntegrationTest {
       }
     }
     assertThat(lastStatus).isEqualTo(429);
+  }
+
+  // TICKET-011 AC3: "No plaintext secret ever appears in application logs."
+  // TwoFactorService.beginEnrollment deliberately logs the real plaintext
+  // secret via StructuredArguments.kv("secret", ...) (mirroring
+  // HelloController's TICKET-010 precedent) specifically so this test can
+  // prove logback-spring.xml's MaskingJsonGeneratorDecorator actually
+  // redacts it on this real code path, not just HelloController's.
+  @Test
+  void ticket011Ac3_twoFactorEnrollment_neverLogsThePlaintextSecret() {
+    String email = "t11ac3-" + UUID.randomUUID() + "@example.com";
+    createTestUser(email, "correct horse battery staple");
+    String accessToken =
+        (String) login(email, "correct horse battery staple").body().get("access_token");
+
+    int startOffset;
+    synchronized (LOG_CAPTURE_BUFFER) {
+      startOffset = LOG_CAPTURE_BUFFER.size();
+    }
+
+    HttpResult enableResponse = post("/2fa/enable", Map.of(), accessToken);
+    assertThat(enableResponse.status()).isEqualTo(200);
+    String secret = (String) enableResponse.body().get("secret");
+    assertThat(secret).isNotBlank();
+
+    String capturedLogs;
+    synchronized (LOG_CAPTURE_BUFFER) {
+      capturedLogs = LOG_CAPTURE_BUFFER.toString(StandardCharsets.UTF_8).substring(startOffset);
+    }
+
+    assertThat(capturedLogs).contains("2fa enrollment started");
+    assertThat(capturedLogs).doesNotContain(secret);
+    assertThat(capturedLogs).contains("\"secret\":\"****\"");
+  }
+
+  // TICKET-011 AC4: "The users.two_factor_secret column, inspected directly,
+  // is not the plaintext value — confirming real encryption at rest, not
+  // just an opaque-looking API response."
+  @Test
+  void ticket011Ac4_twoFactorSecretColumn_storesCiphertextNotPlaintext() {
+    String email = "t11ac4-" + UUID.randomUUID() + "@example.com";
+    UUID userId = createTestUser(email, "correct horse battery staple");
+    String accessToken =
+        (String) login(email, "correct horse battery staple").body().get("access_token");
+
+    HttpResult enableResponse = post("/2fa/enable", Map.of(), accessToken);
+    String secret = (String) enableResponse.body().get("secret");
+
+    String storedCiphertext =
+        jdbcTemplate.queryForObject(
+            "SELECT two_factor_secret FROM users WHERE id = ?", String.class, userId);
+    Short storedKeyVersion =
+        jdbcTemplate.queryForObject(
+            "SELECT two_factor_secret_key_version FROM users WHERE id = ?", Short.class, userId);
+
+    assertThat(storedCiphertext).isNotEqualTo(secret);
+    assertThat(storedCiphertext).doesNotContain(secret);
+    assertThat(storedKeyVersion).isNotNull();
   }
 
   private String generateTotpCode(String secret) {

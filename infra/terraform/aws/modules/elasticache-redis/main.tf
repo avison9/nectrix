@@ -1,5 +1,7 @@
-# AUTH token — same "state-only for now, real secrets manager is TICKET-011"
-# pattern as ../rds-postgres/main.tf's master password.
+# AUTH token — same "state-only for now" pattern as ../rds-postgres/main.tf's
+# master password. TICKET-011 built the secrets-manager module this would
+# move into (../secrets-manager) but didn't wire real generated secrets like
+# this one through it — that migration is still separate future work.
 resource "random_password" "auth_token" {
   length  = 32
   special = false

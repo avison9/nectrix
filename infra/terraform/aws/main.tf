@@ -84,13 +84,27 @@ module "s3_storage" {
   bucket_name = var.s3_bucket_name
 }
 
+module "kms" {
+  source = "./modules/kms"
+
+  name_prefix = local.name_prefix
+}
+
+module "secrets_manager" {
+  source = "./modules/secrets-manager"
+
+  name_prefix = local.name_prefix
+  kms_key_arn = module.kms.key_arn
+}
+
 module "irsa" {
   source = "./modules/irsa"
 
-  name_prefix          = local.name_prefix
-  oidc_provider_arn    = module.eks.oidc_provider_arn
-  oidc_provider_url    = module.eks.oidc_provider_url
-  s3_access_policy_arn = module.s3_storage.access_policy_arn
+  name_prefix           = local.name_prefix
+  oidc_provider_arn     = module.eks.oidc_provider_arn
+  oidc_provider_url     = module.eks.oidc_provider_url
+  s3_access_policy_arn  = module.s3_storage.access_policy_arn
+  kms_access_policy_arn = module.kms.access_policy_arn
 }
 
 module "alb_waf" {

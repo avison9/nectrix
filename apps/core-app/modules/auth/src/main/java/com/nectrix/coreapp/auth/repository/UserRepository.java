@@ -21,6 +21,7 @@ public class UserRepository {
               rs.getString("display_name"),
               rs.getBoolean("two_factor_enabled"),
               rs.getString("two_factor_secret"),
+              rs.getObject("two_factor_secret_key_version", Short.class),
               rs.getString("status"),
               uuidOrNull(rs.getString("created_by_user_id")),
               uuidOrNull(rs.getString("created_via_invitation_id")),
@@ -77,11 +78,13 @@ public class UserRepository {
   }
 
   /** Stores the (already-encrypted) TOTP secret and flips the enrollment flag in one statement. */
-  public void updateTwoFactor(UUID userId, boolean enabled, String encryptedSecret) {
+  public void updateTwoFactor(
+      UUID userId, boolean enabled, String encryptedSecret, short keyVersion) {
     jdbcTemplate.update(
-        "UPDATE users SET two_factor_enabled = ?, two_factor_secret = ?, updated_at = now() WHERE id = ?",
+        "UPDATE users SET two_factor_enabled = ?, two_factor_secret = ?, two_factor_secret_key_version = ?, updated_at = now() WHERE id = ?",
         enabled,
         encryptedSecret,
+        keyVersion,
         userId);
   }
 

@@ -102,3 +102,14 @@ resource "aws_iam_role_policy_attachment" "this" {
   role       = aws_iam_role.this[each.key].name
   policy_arn = each.value.policy_arn
 }
+
+# TICKET-011 — the core-app pod needs both S3 and KMS access, but IRSA binds
+# exactly one IAM role per K8s ServiceAccount (the eks.amazonaws.com/role-arn
+# annotation is singular), so this can't be a second local.roles map entry
+# (that would mint a *second* role trusting the same SA, which the SA could
+# never actually assume two of). A second attachment on the *same*
+# app_storage_access role is the correct shape instead.
+resource "aws_iam_role_policy_attachment" "app_kms_access" {
+  role       = aws_iam_role.this["app_storage_access"].name
+  policy_arn = var.kms_access_policy_arn
+}

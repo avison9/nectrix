@@ -14,6 +14,15 @@ resource "google_storage_bucket_iam_member" "app_storage_access" {
   member = "serviceAccount:${google_service_account.app_storage_access.email}"
 }
 
+# TICKET-011 — same GSA also needs envelope-encryption KEK access (Workload
+# Identity binds one GSA per K8s ServiceAccount, same one-role-per-SA
+# constraint AWS IRSA has — see ../../aws/modules/irsa's identical comment).
+resource "google_kms_crypto_key_iam_member" "app_kms_access" {
+  crypto_key_id = var.kms_crypto_key_id
+  role          = "roles/cloudkms.cryptoKeyEncrypterDecrypter"
+  member        = "serviceAccount:${google_service_account.app_storage_access.email}"
+}
+
 # Binds the GSA to the core-app namespace's "core-app" KubernetesServiceAccount
 # via Workload Identity — annotate that KSA with
 # iam.gke.io/gcp-service-account: <output.gsa_email> to complete the wiring.
