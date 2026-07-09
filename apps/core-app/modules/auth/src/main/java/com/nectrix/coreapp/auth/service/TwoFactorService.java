@@ -1,9 +1,13 @@
 package com.nectrix.coreapp.auth.service;
 
+import static net.logstash.logback.argument.StructuredArguments.kv;
+
 import com.nectrix.coreapp.auth.config.AuthProperties;
 import com.nectrix.coreapp.auth.domain.TwoFactorEnrollment;
 import com.nectrix.coreapp.auth.domain.User;
 import com.nectrix.coreapp.auth.repository.UserRepository;
+import com.nectrix.coreapp.crypto.api.EncryptedField;
+import com.nectrix.coreapp.crypto.api.EnvelopeEncryptionService;
 import dev.samstevens.totp.code.CodeVerifier;
 import dev.samstevens.totp.code.DefaultCodeGenerator;
 import dev.samstevens.totp.code.DefaultCodeVerifier;
@@ -17,6 +21,8 @@ import dev.samstevens.totp.time.TimeProvider;
 import dev.samstevens.totp.util.Utils;
 import java.util.NoSuchElementException;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 /**
@@ -32,20 +38,29 @@ import org.springframework.stereotype.Service;
  * the submitted code against it, and only then flips the flag to {@code true}. A user who abandons
  * enrollment just leaves a disabled, never-activated secret sitting in place — harmless, and
  * overwritten cleanly by a subsequent {@code /2fa/enable} call.
+ *
+ * <p>TICKET-011 — the secret is encrypted via {@link EnvelopeEncryptionService} (real KMS-backed
+ * envelope encryption), replacing TICKET-005's temporary {@code StubAesGcmTwoFactorSecretCipher}.
+ * {@code users.two_factor_secret_key_version} tags which KEK version wrapped each record's DEK, so
+ * decryption keeps working across a KEK rotation.
  */
 @Service
 public class TwoFactorService {
 
+  private static final Logger log = LoggerFactory.getLogger(TwoFactorService.class);
+
   private final UserRepository userRepository;
-  private final TwoFactorSecretCipher cipher;
+  private final EnvelopeEncryptionService envelopeEncryptionService;
   private final AuthProperties props;
   private final CodeVerifier codeVerifier;
   private final QrGenerator qrGenerator = new ZxingPngQrGenerator();
 
   public TwoFactorService(
-      UserRepository userRepository, TwoFactorSecretCipher cipher, AuthProperties props) {
+      UserRepository userRepository,
+      EnvelopeEncryptionService envelopeEncryptionService,
+      AuthProperties props) {
     this.userRepository = userRepository;
-    this.cipher = cipher;
+    this.envelopeEncryptionService = envelopeEncryptionService;
     this.props = props;
     TimeProvider timeProvider = new SystemTimeProvider();
     this.codeVerifier =
@@ -54,6 +69,9 @@ public class TwoFactorService {
 
   public TwoFactorEnrollment beginEnrollment(UUID userId, String email) {
     String secret = new DefaultSecretGenerator().generate();
+    // TICKET-011 AC3 — deliberately logs the real plaintext secret, tagged for
+    // bootstrap's MaskingJsonGeneratorDecorator to redact (see EnvelopeEncryptionRedactionTest).
+    log.info("2fa enrollment started", kv("secret", secret));
     QrData qrData =
         new QrData.Builder()
             .label(email)
@@ -71,7 +89,8 @@ public class TwoFactorService {
       throw new IllegalStateException("Failed to generate 2FA QR code", e);
     }
     // Stored disabled — a correct /2fa/verify call is what activates it.
-    userRepository.updateTwoFactor(userId, false, cipher.encrypt(secret));
+    EncryptedField encrypted = envelopeEncryptionService.encryptField(secret);
+    userRepository.updateTwoFactor(userId, false, encrypted.ciphertext(), encrypted.keyVersion());
     return new TwoFactorEnrollment(secret, qrCodeUri);
   }
 
@@ -87,11 +106,14 @@ public class TwoFactorService {
     if (user.twoFactorSecretCiphertext() == null) {
       return false; // never began enrollment
     }
-    String secret = cipher.decrypt(user.twoFactorSecretCiphertext());
+    String secret =
+        envelopeEncryptionService.decryptField(
+            user.twoFactorSecretCiphertext(), user.twoFactorSecretKeyVersion());
     if (!codeVerifier.isValidCode(secret, totpCode)) {
       return false;
     }
-    userRepository.updateTwoFactor(userId, true, user.twoFactorSecretCiphertext());
+    userRepository.updateTwoFactor(
+        userId, true, user.twoFactorSecretCiphertext(), user.twoFactorSecretKeyVersion());
     return true;
   }
 
@@ -103,7 +125,9 @@ public class TwoFactorService {
     if (!user.twoFactorEnabled() || user.twoFactorSecretCiphertext() == null) {
       return false;
     }
-    String secret = cipher.decrypt(user.twoFactorSecretCiphertext());
+    String secret =
+        envelopeEncryptionService.decryptField(
+            user.twoFactorSecretCiphertext(), user.twoFactorSecretKeyVersion());
     return codeVerifier.isValidCode(secret, totpCode);
   }
 }

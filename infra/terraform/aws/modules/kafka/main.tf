@@ -1,11 +1,12 @@
 # TICKET-007 — provisioned MSK, not MSK Serverless: Serverless forces
 # SASL/IAM-only client authentication (a materially bigger lift — a real
-# aws-msk-iam-auth SASL callback handler in both Kafka clients — deferred to
-# TICKET-011 alongside the CMK/secrets-manager items already skipped in
-# ../../.checkov.yaml). TLS-in-transit + the default AWS-managed at-rest key
-# is the free, correct middle ground, mirroring exactly what
-# ../elasticache-redis defers (CMK, Secrets-Manager-backed *storage* of the
-# auth token) vs. provides (transit_encryption_enabled = true) today.
+# aws-msk-iam-auth SASL callback handler in both Kafka clients) — still
+# genuinely unscoped future work, unrelated to what TICKET-011 actually
+# delivered (a KMS module + envelope-encryption utility, ../kms). TLS-in-
+# transit + the default AWS-managed at-rest key is the free, correct middle
+# ground, mirroring exactly what ../elasticache-redis provides
+# (transit_encryption_enabled = true) vs. still defers (CMK-backed at-rest
+# encryption — see ../../.checkov.yaml) today.
 
 resource "aws_security_group" "this" {
   name        = "${var.name_prefix}-kafka-sg"

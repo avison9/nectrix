@@ -17,12 +17,11 @@ public record AuthProperties(Jwt jwt, TwoFactor twoFactor, RateLimit rateLimit, 
   public record Jwt(String secret) {}
 
   /**
-   * encryptionKey backs the TEMPORARY stub AES-GCM implementation of {@link
-   * com.nectrix.coreapp.auth.service.TwoFactorSecretCipher} — replaced wholesale once TICKET-011's
-   * real KMS-backed envelope encryption exists. issuer is the TOTP QR code's label (e.g.
-   * "Nectrix").
+   * issuer is the TOTP QR code's label (e.g. "Nectrix"). The secret itself is encrypted via {@link
+   * com.nectrix.coreapp.crypto.api.EnvelopeEncryptionService} (TICKET-011) — its own KMS config
+   * lives under {@code nectrix.envelope-encryption.kms.*}, not here.
    */
-  public record TwoFactor(String encryptionKey, String issuer) {}
+  public record TwoFactor(String issuer) {}
 
   /**
    * Applies to /auth/login and /auth/2fa/verify specifically — independent of any general API rate

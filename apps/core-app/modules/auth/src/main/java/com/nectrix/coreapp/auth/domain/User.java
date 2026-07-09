@@ -10,8 +10,10 @@ public record User(
     String passwordHash, // nullable — OAuth-only users never set a password
     String displayName,
     boolean twoFactorEnabled,
-    String
-        twoFactorSecretCiphertext, // nullable; encrypted via TwoFactorSecretCipher, never plaintext
+    // nullable; encrypted via EnvelopeEncryptionService (TICKET-011), never plaintext. Both fields
+    // are null together (never enrolled) or set together (see TwoFactorService).
+    String twoFactorSecretCiphertext,
+    Short twoFactorSecretKeyVersion,
     String status,
     UUID createdByUserId,
     UUID createdViaInvitationId,

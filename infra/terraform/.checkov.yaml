@@ -10,17 +10,24 @@ directory:
 # ticket's offline-only verification story (see infra/terraform/README.md).
 
 skip-check:
-  # KMS/CMK-backed encryption-at-rest checks — this ticket uses each engine's
-  # default at-rest encryption (SSE-S3 / Google-managed keys). Customer-managed
-  # KMS keys + a secrets manager for broker-credential envelope encryption is
-  # TICKET-011's explicit scope, not this ticket's.
+  # KMS/CMK-backed encryption-at-rest checks — these engines still use their
+  # own default at-rest encryption (SSE-S3 / Google-managed keys), NOT the
+  # customer-managed KMS key TICKET-011 built (infra/terraform/{aws,gcp}/modules/kms).
+  # That key exists specifically to wrap the application-level envelope-
+  # encryption utility's per-record DEKs (apps/core-app/modules/crypto) — a
+  # different concern from "should this engine's own storage volume be
+  # encrypted with a CMK instead of the cloud's default key." Migrating each
+  # of these engines onto a CMK (this one or a dedicated one apiece) is real,
+  # separate future work, deliberately deferred until a real cloud provider
+  # is actually chosen (see infra/terraform/README.md) — not still-unstarted,
+  # just not this ticket's own scope.
   - CKV_AWS_16 # RDS encryption uses storage_encrypted, not a CMK
   - CKV_AWS_136 # ElastiCache encryption uses at_rest_encryption_enabled, not a CMK
   - CKV_AWS_145 # S3 bucket uses SSE-S3 (AES256), not a CMK
   - CKV_AWS_119 # DynamoDB (bootstrap lock table) encryption uses the default AWS-owned key, not a CMK
   - CKV_AWS_191 # ElastiCache uses at_rest_encryption_enabled, not a CMK
   - CKV_AWS_354 # RDS Performance Insights uses the default AWS-owned key, not a CMK
-  - CKV_AWS_58 # EKS secrets encryption needs a KMS CMK — same TICKET-011 deferral
+  - CKV_AWS_58 # EKS secrets encryption needs a KMS CMK — same deferral, revisit once a cloud provider is chosen
   - CKV_GCP_29 # GCS bucket uses Google-managed encryption, not a CMK
   - CKV_GCP_35 # Cloud SQL uses Google-managed encryption, not a CMK
   - CKV_GCP_84 # Artifact Registry uses Google-managed encryption, not a CSEK

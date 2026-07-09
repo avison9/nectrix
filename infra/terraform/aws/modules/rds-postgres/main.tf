@@ -1,6 +1,8 @@
-# Master password: generated and stored only in Terraform state for now.
-# KMS/secrets-manager envelope encryption for broker credentials is TICKET-011 —
-# out of scope here; do not extend this pattern to broker-credential secrets.
+# Master password: generated and stored only in Terraform state for now —
+# migrating it into ../secrets-manager (TICKET-011) is separate future work.
+# Broker-credential envelope encryption (apps/core-app/modules/crypto,
+# TICKET-011) is a different mechanism entirely — never extend this
+# Terraform-state-password pattern to broker-credential secrets.
 resource "random_password" "master" {
   length  = 32
   special = false
@@ -99,9 +101,9 @@ resource "aws_db_instance" "this" {
   monitoring_interval = 60
   monitoring_role_arn = aws_iam_role.enhanced_monitoring.arn
 
-  # Performance Insights uses the default AWS-owned key — a customer-managed
-  # CMK here is TICKET-011 scope (KMS/secrets-manager), same as the master
-  # password itself (see the comment at the top of this file).
+  # Performance Insights uses the default AWS-owned key — wiring a customer-
+  # managed CMK here (../kms, built by TICKET-011) is separate future work,
+  # deferred until a real cloud provider is chosen (see ../../.checkov.yaml).
   performance_insights_enabled = true
 
   tags = {

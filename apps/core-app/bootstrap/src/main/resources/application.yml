@@ -38,15 +38,20 @@ management:
     tags:
       application: ${spring.application.name}
 
-# TICKET-005 (Auth & Identity Service)
 nectrix:
+  # TICKET-011 — apps/core-app/modules/crypto's EnvelopeEncryptionService.
+  # endpoint-override is set only for LocalStack (local dev/CI,
+  # docker-compose.yml); real AWS KMS resolves credentials via the SDK's
+  # normal provider chain (IRSA in-cluster) and needs no override here at all.
+  envelope-encryption:
+    kms:
+      region: ${AWS_REGION:us-east-1}
+      endpoint-override: ${KMS_ENDPOINT_OVERRIDE:}
+  # TICKET-005 (Auth & Identity Service)
   auth:
     jwt:
       secret: ${JWT_SIGNING_SECRET}
     two-factor:
-      # TEMPORARY stub AES-GCM key — TICKET-011's real KMS-backed envelope
-      # encryption replaces this wholesale, see TwoFactorSecretCipher.
-      encryption-key: ${TWO_FACTOR_SECRET_ENCRYPTION_KEY}
       issuer: Nectrix
     rate-limit:
       # No numeric threshold specified in the design docs — OWASP-aligned default.

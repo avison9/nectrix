@@ -8,13 +8,14 @@
 	db-migrate db-migrate-down db-seed-dev db-status \
 	role-grant role-revoke role-list \
 	kafka-topics \
-	observability-verify
+	observability-verify \
+	localstack-init
 
 # Count of the core (non-dev-context) changesets — update when adding new
 # ones. Used for a full rollback (db-migrate-down). If dev seed data
 # (db-seed-dev) has also been applied, roll that back first — this count
-# only unwinds the 40 core changesets, not the additional dev-context ones.
-DB_CHANGESET_COUNT = 40
+# only unwinds the 42 core changesets, not the additional dev-context ones.
+DB_CHANGESET_COUNT = 42
 
 TF_DIRS = infra/terraform/aws infra/terraform/gcp
 
@@ -146,6 +147,9 @@ role-list: ## List roles for a user: make role-list EMAIL=foo@example.com
 
 kafka-topics: ## Create the full topic catalog (idempotent) against the local/CI broker
 	./infra/kafka/create-topics.sh
+
+localstack-init: ## Create the version-1 envelope-encryption KMS key in LocalStack (idempotent)
+	./infra/localstack/init-kms.sh
 
 observability-verify: ## Real, hands-on proof of TICKET-010's AC1-4 against the docker-compose observability stack
 	./infra/observability/verify.sh

@@ -5,9 +5,15 @@ plugins {
     id("io.spring.dependency-management") version "1.1.7"
 }
 
+// TICKET-011 — Gradle's BOM-managed versions don't propagate transitively
+// across subprojects: admin pulls software.amazon.awssdk:kms in transitively
+// via auth -> crypto, but needs its own BOM import to resolve it on its own
+// classpath (same reason bootstrap/build.gradle.kts needs this too — see its
+// comment for the full explanation).
 dependencyManagement {
     imports {
         mavenBom("org.springframework.boot:spring-boot-dependencies:4.1.0")
+        mavenBom("software.amazon.awssdk:bom:2.31.68")
     }
 }
 

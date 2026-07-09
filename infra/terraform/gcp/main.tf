@@ -87,12 +87,26 @@ module "gcs_storage" {
   location    = var.region
 }
 
+module "kms" {
+  source = "./modules/kms"
+
+  name_prefix = local.name_prefix
+  region      = var.region
+}
+
+module "secrets_manager" {
+  source = "./modules/secrets-manager"
+
+  name_prefix = local.name_prefix
+}
+
 module "workload_identity" {
   source = "./modules/workload-identity"
 
   name_prefix            = local.name_prefix
   workload_identity_pool = module.gke.workload_identity_pool
   gcs_bucket_name        = module.gcs_storage.bucket_name
+  kms_crypto_key_id      = module.kms.crypto_key_id
 }
 
 module "glb_cloud_armor" {

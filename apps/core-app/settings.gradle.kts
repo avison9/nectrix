@@ -9,6 +9,7 @@ include(
     "bootstrap",
     "db",
     "archunit-fixtures",
+    "modules:crypto",
     "modules:auth",
     "modules:invitations",
     "modules:social",

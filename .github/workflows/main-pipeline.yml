@@ -28,16 +28,18 @@ jobs:
       # secret fails loudly in real environments), so CI needs its own throwaway
       # values. GOOGLE_OAUTH_*/APPLE_OAUTH_* are left unset — application.yml
       # defaults those to empty strings, and no test here exercises real OAuth.
-      # Both must be valid base64 decoding to a specific byte length (JwtService
-      # requires >=32 bytes; StubAesGcmTwoFactorSecretCipher requires exactly
-      # 16/24/32 for AES-128/192/256) — these are freshly generated throwaway
-      # values via `openssl rand -base64 N`, not secrets reused anywhere real.
+      # JWT_SIGNING_SECRET must be valid base64 decoding to >=32 bytes
+      # (JwtService's requirement) — freshly generated via `openssl rand
+      # -base64 N`, not a secret reused anywhere real.
       JWT_SIGNING_SECRET: "n/ErCuickD7JyKdFhuOeH2QWJjQp6ZBxGxUosC6Mtr3kP6idy8j1sMYV0lKL0wAPeMuFQ4iwsF2uxq9lIk6MYQ=="
-      TWO_FACTOR_SECRET_ENCRYPTION_KEY: "1B/UzzovRJnn9QW1nWpWqGqZpL2y/gXi3P74UjNRVSY="
+      # TICKET-011 — LocalStack accepts any dummy AWS credentials; the SDK
+      # only requires *something* resolvable (see AwsEnvelopeKmsClient).
+      AWS_REGION: us-east-1
+      KMS_ENDPOINT_OVERRIDE: http://localhost:4566
     steps:
       - uses: actions/checkout@v7.0.0
-      - name: Start ephemeral infra (Postgres, Redis, Kafka)
-        run: docker compose -f docker-compose.yml up -d --wait postgres redis kafka
+      - name: Start ephemeral infra (Postgres, Redis, Kafka, LocalStack)
+        run: docker compose -f docker-compose.yml up -d --wait postgres redis kafka localstack
       - name: Create Kafka topic catalog (TICKET-007)
         run: ./infra/kafka/create-topics.sh
       - uses: actions/setup-java@v5.4.0
@@ -48,7 +50,9 @@ jobs:
       - name: Run database migrations (TICKET-004)
         working-directory: apps/core-app
         run: ./gradlew :db:update
-      - name: core-app infra connectivity + schema/audit-log + auth (TICKET-005) integration tests
+      - name: Create the envelope-encryption KMS key in LocalStack (TICKET-011)
+        run: ./infra/localstack/init-kms.sh
+      - name: core-app infra connectivity + schema/audit-log + auth (TICKET-005) + envelope-encryption (TICKET-011) integration tests
         working-directory: apps/core-app
         run: ./gradlew integrationTest
       - name: event-contracts/java Kafka producer/consumer + DLQ integration tests (TICKET-007)
@@ -260,20 +264,18 @@ jobs:
           for app in core-app copy-engine broker-adapters mt5-bridge-gateway; do
             kustomize edit set image "ghcr.io/avison9/nectrix/$app=${{ needs.resolve-registry.outputs.image_prefix }}/$app:${{ github.sha }}"
           done
-      # TICKET-005 — core-app's Deployment reads JWT_SIGNING_SECRET/
-      # TWO_FACTOR_SECRET_ENCRYPTION_KEY from this Secret (see
-      # deploy/base/core-app/deployment.yaml); both are read eagerly at
-      # startup regardless of whether auth is ever exercised, so without this
-      # the pod crash-loops and "Wait for rollouts" times out. Namespace is
-      # created idempotently first since `kubectl apply -k` (which normally
-      # creates it) hasn't run yet at this point. Same throwaway values as
-      # the integration-test job's env — not real secrets.
+      # TICKET-005 — core-app's Deployment reads JWT_SIGNING_SECRET from this
+      # Secret (see deploy/base/core-app/deployment.yaml); it's read eagerly
+      # at startup regardless of whether auth is ever exercised, so without
+      # this the pod crash-loops and "Wait for rollouts" times out. Namespace
+      # is created idempotently first since `kubectl apply -k` (which
+      # normally creates it) hasn't run yet at this point. Same throwaway
+      # value as the integration-test job's env — not a real secret.
       - name: Create core-app namespace + throwaway auth secrets
         run: |
           kubectl create namespace core-app --dry-run=client -o yaml | kubectl apply -f -
           kubectl create secret generic core-app-secrets -n core-app \
             --from-literal=jwt-signing-secret="n/ErCuickD7JyKdFhuOeH2QWJjQp6ZBxGxUosC6Mtr3kP6idy8j1sMYV0lKL0wAPeMuFQ4iwsF2uxq9lIk6MYQ==" \
-            --from-literal=two-factor-secret-encryption-key="1B/UzzovRJnn9QW1nWpWqGqZpL2y/gXi3P74UjNRVSY=" \
             --dry-run=client -o yaml | kubectl apply -f -
       - run: kubectl apply -k deploy/overlays/staging
       - name: Wait for rollouts
@@ -420,7 +422,6 @@ jobs:
           kubectl create namespace core-app --dry-run=client -o yaml | kubectl apply -f -
           kubectl create secret generic core-app-secrets -n core-app \
             --from-literal=jwt-signing-secret="n/ErCuickD7JyKdFhuOeH2QWJjQp6ZBxGxUosC6Mtr3kP6idy8j1sMYV0lKL0wAPeMuFQ4iwsF2uxq9lIk6MYQ==" \
-            --from-literal=two-factor-secret-encryption-key="1B/UzzovRJnn9QW1nWpWqGqZpL2y/gXi3P74UjNRVSY=" \
             --dry-run=client -o yaml | kubectl apply -f -
       - run: kubectl apply -k deploy/overlays/production
       - name: Wait for rollouts

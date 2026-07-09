@@ -83,6 +83,25 @@ services:
       timeout: 5s
       retries: 10
 
+  # TICKET-011 — a real AWS KMS API surface (open-source AWS emulator), local-
+  # dev/CI-only, same "written but never applied for real" boundary as
+  # infra/terraform/aws/modules/kms (see infra/localstack/init-kms.sh, which
+  # creates the real "version 1" key this stands in for). core-app's
+  # EnvelopeEncryptionService (apps/core-app/modules/crypto) uses the real AWS
+  # KMS SDK pointed at this locally and real AWS KMS in production — same
+  # code path, genuinely verified, not a throwaway fake.
+  localstack:
+    image: localstack/localstack:3.8.1
+    environment:
+      SERVICES: kms
+    ports:
+      - "${LOCALSTACK_PORT:-4566}:4566"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   # --- TICKET-010: observability stack (LGTM: Loki, Grafana, Tempo, +
   # Prometheus/Alertmanager) --- every service below is local-dev/CI-only,
   # same as kafka-ui — never part of a real deploy (see

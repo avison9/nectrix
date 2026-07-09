@@ -11,3 +11,8 @@ variable "gcs_bucket_name" {
   description = "GCS bucket name this GSA should get object admin access to"
   type        = string
 }
+
+variable "kms_crypto_key_id" {
+  description = "Envelope-encryption KEK ID this GSA should get encrypt/decrypt access to (infra/terraform/gcp/modules/kms output)"
+  type        = string
+}
