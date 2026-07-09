@@ -32,4 +32,17 @@ public interface UserProvisioningApi {
       UUID createdViaInvitationId,
       UUID referredByUserId,
       String region);
+
+  /**
+   * Grants an additive role (docs/06-database-schema.md's {@code roles}/{@code user_roles}) —
+   * TICKET-012's account-provisioning endpoint calls this right after {@link #createUser} so a
+   * newly-provisioned Admin/Support account can actually reach the routes its role gates.
+   * Idempotent (a repeat grant of the same role is a no-op, not an error).
+   *
+   * @param roleName must name an existing row in {@code roles} (FOLLOWER/MASTER/PARTNER/ADMIN/
+   *     SUPPORT) — callers are responsible for validating this against whatever subset they mean to
+   *     allow (e.g. the provisioning endpoint only permits ADMIN/SUPPORT); an unknown name is
+   *     silently a no-op here, not an error.
+   */
+  void grantRole(UUID userId, String roleName);
 }

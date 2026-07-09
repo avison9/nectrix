@@ -1,19 +1,25 @@
 package com.nectrix.coreapp.admin.repository;
 
+import java.sql.Timestamp;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
 /**
- * Writes to `audit_log` (docs/17-security-architecture.md §17.6 — write-only at the app-DB-role
- * level, no UPDATE/DELETE grant, so even a compromised app credential can't rewrite history).
+ * Writes to, and (TICKET-012) reads from, `audit_log` (docs/17-security-architecture.md §17.6 —
+ * write-restricted at the app-DB-role level: INSERT+SELECT only, no UPDATE/DELETE, so even a
+ * compromised app credential can't rewrite history — see 013-app-role-grants.sql).
  *
- * <p>Scoped to {@code admin} module for now — the only writer this ticket needs (impersonation,
- * ledger-adjustment demo). Other modules will eventually need to write {@code audit_log} too (every
- * CopyRelationship state transition, every fee-ledger resolution per §17.6) — at that point this
- * should be extracted into a shared utility rather than duplicated per-module. Not built now
- * (YAGNI): same forward-reference-gap pattern as TICKET-005's rate limiter (built self-contained,
- * pending TICKET-008's shared helper).
+ * <p>Scoped to {@code admin} module for now — the only writer/reader this ticket needs
+ * (impersonation/ledger-adjustment/account-provisioning writes, the Audit Log viewer's read). Other
+ * modules will eventually need to write {@code audit_log} too (every CopyRelationship state
+ * transition, every fee-ledger resolution per §17.6) — at that point this should be extracted into
+ * a shared utility rather than duplicated per-module. Not built now (YAGNI): same
+ * forward-reference-gap pattern as TICKET-005's rate limiter (built self-contained, pending
+ * TICKET-008's shared helper).
  */
 @Repository
 public class AuditLogRepository {
@@ -48,5 +54,81 @@ public class AuditLogRepository {
         targetType,
         targetId,
         metadataJson);
+  }
+
+  public record AuditLogEntry(
+      long id,
+      UUID actorUserId,
+      String actorType,
+      String action,
+      String targetType,
+      String targetId,
+      String metadataJson,
+      Instant createdAt) {}
+
+  /** All filter params nullable — an absent one is simply not added to the WHERE clause. */
+  public record Filter(
+      UUID actorUserId, String targetType, String targetId, Instant from, Instant to) {}
+
+  /** Newest-first, matching the Audit Log viewer's default sort. {@code page} is 0-indexed. */
+  public List<AuditLogEntry> findPage(Filter filter, int page, int pageSize) {
+    List<Object> params = new ArrayList<>();
+    String where = buildWhereClause(filter, params);
+    params.add(pageSize);
+    params.add(page * pageSize);
+    return jdbcTemplate.query(
+        """
+        SELECT id, actor_user_id, actor_type, action, target_type, target_id, metadata::text AS metadata, created_at
+        FROM audit_log
+        """
+            + where
+            + " ORDER BY created_at DESC LIMIT ? OFFSET ?",
+        (rs, rowNum) ->
+            new AuditLogEntry(
+                rs.getLong("id"),
+                rs.getString("actor_user_id") == null
+                    ? null
+                    : UUID.fromString(rs.getString("actor_user_id")),
+                rs.getString("actor_type"),
+                rs.getString("action"),
+                rs.getString("target_type"),
+                rs.getString("target_id"),
+                rs.getString("metadata"),
+                rs.getTimestamp("created_at").toInstant()),
+        params.toArray());
+  }
+
+  public long count(Filter filter) {
+    List<Object> params = new ArrayList<>();
+    String where = buildWhereClause(filter, params);
+    Long total =
+        jdbcTemplate.queryForObject(
+            "SELECT count(*) FROM audit_log" + where, Long.class, params.toArray());
+    return total == null ? 0 : total;
+  }
+
+  private String buildWhereClause(Filter filter, List<Object> params) {
+    List<String> conditions = new ArrayList<>();
+    if (filter.actorUserId() != null) {
+      conditions.add("actor_user_id = ?");
+      params.add(filter.actorUserId());
+    }
+    if (filter.targetType() != null) {
+      conditions.add("target_type = ?");
+      params.add(filter.targetType());
+    }
+    if (filter.targetId() != null) {
+      conditions.add("target_id = ?");
+      params.add(filter.targetId());
+    }
+    if (filter.from() != null) {
+      conditions.add("created_at >= ?");
+      params.add(Timestamp.from(filter.from()));
+    }
+    if (filter.to() != null) {
+      conditions.add("created_at <= ?");
+      params.add(Timestamp.from(filter.to()));
+    }
+    return conditions.isEmpty() ? "" : " WHERE " + String.join(" AND ", conditions);
   }
 }

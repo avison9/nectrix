@@ -98,4 +98,21 @@ public class UserRepository {
         String.class,
         userId);
   }
+
+  /**
+   * Mirrors {@code make role-grant}'s own query (see root Makefile) and {@code
+   * RbacIntegrationTest}'s test-setup helper of the same shape. Silently a no-op if {@code
+   * roleName} doesn't exist as a row in {@code roles} — callers (e.g. TICKET-012's
+   * account-provisioning endpoint) are expected to validate the role name themselves first.
+   */
+  public void insertUserRole(UUID userId, String roleName) {
+    jdbcTemplate.update(
+        """
+        INSERT INTO user_roles (user_id, role_id)
+        SELECT ?, r.id FROM roles r WHERE r.name = ?
+        ON CONFLICT (user_id, role_id) DO NOTHING
+        """,
+        userId,
+        roleName);
+  }
 }

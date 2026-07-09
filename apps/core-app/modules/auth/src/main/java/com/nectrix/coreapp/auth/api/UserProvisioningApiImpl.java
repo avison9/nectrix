@@ -35,4 +35,9 @@ public class UserProvisioningApiImpl implements UserProvisioningApi {
         referredByUserId,
         region);
   }
+
+  @Override
+  public void grantRole(UUID userId, String roleName) {
+    userRepository.insertUserRole(userId, roleName);
+  }
 }

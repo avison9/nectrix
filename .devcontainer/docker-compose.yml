@@ -42,6 +42,13 @@ services:
       # never sets KMS_ENDPOINT_OVERRIDE at all.
       AWS_REGION: us-east-1
       KMS_ENDPOINT_OVERRIDE: http://localstack:4566
+      # --- Admin Portal (TICKET-012) ---
+      # core-app runs as a plain `./gradlew bootRun` process inside this same
+      # devcontainer (not its own compose service), reachable at its own
+      # localhost:8080 — not an in-network service hostname like the vars
+      # above. Real clusters set this to core-app's in-cluster Service DNS
+      # instead (see deploy/base/admin-portal/deployment.yaml).
+      CORE_APP_BASE_URL: http://localhost:8080
     ports:
       - "8080:8080"   # core-app
       - "8090:8090"   # copy-engine
