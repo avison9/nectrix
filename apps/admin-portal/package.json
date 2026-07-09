@@ -13,7 +13,8 @@
     "react": "19.2.7",
     "react-dom": "19.2.7",
     "@nectrix/domain-model": "*",
-    "@nectrix/api-client": "*"
+    "@nectrix/api-client": "*",
+    "jose": "6.2.3"
   },
   "devDependencies": {
     "typescript": "6.0.3",

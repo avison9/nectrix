@@ -1,1 +1,52 @@
 @import "tailwindcss";
+
+@theme inline {
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+/*
+ * TICKET-012 — design tokens extracted directly from the frontend-design
+ * handoff bundle's Nectrix.dc.html (its LIGHT/DARK objects, ~line 1448).
+ * Only the shell chrome (sidebar/topbar/cards/tables) is built from this
+ * mockup at this ticket — see the ticket's own plan for why the mockup's
+ * Phase-1 feature pages aren't implemented yet.
+ */
+:root {
+  --bg: #fbfaf7;
+  --surface: #ffffff;
+  --surface-2: #f3f2ee;
+  --border: #e8e6e0;
+  --text: #232326;
+  --text-2: #63636a;
+  --text-3: #9a9aa0;
+  --accent: #57534e;
+  --accent-2: #ebe9e4;
+  --pos: #3e9b6c;
+  --neg: #c85c4e;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #141417;
+    --surface: #1c1c20;
+    --surface-2: #25252b;
+    --border: #2e2e35;
+    --text: #ececee;
+    --text-2: #9e9ea6;
+    --text-3: #6c6c74;
+    --accent: #8a8a93;
+    --accent-2: #2e2e35;
+    --pos: #57b183;
+    --neg: #d8776a;
+  }
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+}
+
+::selection {
+  background: rgba(51, 130, 122, 0.2);
+}

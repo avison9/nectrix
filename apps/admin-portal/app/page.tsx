@@ -1,7 +1,7 @@
+import { redirect } from "next/navigation";
+
+// No dedicated landing page yet (System Health is still a stub, see
+// TICKET-012's scope) — Audit Log is real/working, so it's the default view.
 export default function Home() {
-  return (
-    <main className="flex min-h-screen items-center justify-center">
-      <h1 className="text-2xl font-semibold">Nectrix — Admin Portal</h1>
-    </main>
-  );
+  redirect("/audit-log");
 }

@@ -21,5 +21,15 @@ public class AdminExceptionHandler {
     return ResponseEntity.status(HttpStatus.NOT_FOUND).body(new ErrorBody("not_found"));
   }
 
+  /**
+   * TICKET-012 — thrown by {@code AdminController#provisionUser} for a {@code role} outside the
+   * {ADMIN, SUPPORT} set it accepts (e.g. MASTER — provisioning those is a deferred Phase 1
+   * endpoint, {@code POST /api/v1/admin/masters}, since {@code master_profiles} doesn't exist yet).
+   */
+  @ExceptionHandler(IllegalArgumentException.class)
+  public ResponseEntity<ErrorBody> handleInvalidRequest() {
+    return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(new ErrorBody("invalid_request"));
+  }
+
   public record ErrorBody(String error) {}
 }

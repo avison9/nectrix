@@ -88,6 +88,11 @@ public class SecurityConfig {
                     .authenticated()
                     .requestMatchers(HttpMethod.GET, "/api/v1/admin/broker-accounts/*")
                     .authenticated()
+                    // TICKET-012 — Admin Portal's account-provisioning form + Audit Log viewer.
+                    .requestMatchers(HttpMethod.POST, "/api/v1/admin/users")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.GET, "/api/v1/admin/audit-log")
+                    .authenticated()
                     // -- add new protected/public auth-adjacent routes here (future tickets:
                     // accept-invite, by-token) — anyRequest() below is intentionally permitAll,
                     // not authenticated(), so genuinely unmapped paths 404 instead of 401; see

@@ -1,7 +1,6 @@
-# Placeholder workload — the real Admin Portal (docs/13-technology-stack.md
-# §13.3: a genuinely separate Next.js deployable) is a later ticket. This just
-# proves the namespace/Ingress wiring end-to-end (TICKET-003 scope:
-# "empty/placeholder deployments acceptable at this stage").
+# TICKET-012 — the real Admin Portal (a genuinely separate Next.js deployable,
+# docs/13-technology-stack.md §13.3), replacing TICKET-001/003's nginx
+# placeholder.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -17,21 +16,36 @@ spec:
     spec:
       containers:
         - name: admin-portal
-          image: nginxinc/nginx-unprivileged:1.27-alpine
+          image: ghcr.io/avison9/nectrix/admin-portal:REPLACED_BY_CI
           imagePullPolicy: IfNotPresent
           ports:
-            - containerPort: 8080
+            - containerPort: 3000
+          env:
+            # proxy.ts verifies the access_token cookie's signature itself
+            # (see apps/admin-portal/lib/session.ts) with the same secret
+            # core-app signs with — genuine server-side enforcement, not a
+            # UI-only check. Same admin-portal-secrets Secret pattern as
+            # core-app-secrets, created by CI before this manifest is applied.
+            - name: JWT_SIGNING_SECRET
+              valueFrom:
+                secretKeyRef: { name: admin-portal-secrets, key: jwt-signing-secret }
+            # In-cluster Service DNS — core-app's own namespace/Service (see
+            # deploy/base/core-app/service.yaml). The browser never talks to
+            # core-app directly (see lib/core-app.ts's comment); only this
+            # app's own server does, server-side.
+            - name: CORE_APP_BASE_URL
+              value: http://core-app.core-app.svc.cluster.local:8080
           securityContext:
             runAsNonRoot: true
-            runAsUser: 101
+            runAsUser: 1000
           readinessProbe:
-            httpGet: { path: /, port: 8080 }
+            httpGet: { path: /login, port: 3000 }
             initialDelaySeconds: 2
             periodSeconds: 5
           livenessProbe:
-            httpGet: { path: /, port: 8080 }
+            httpGet: { path: /login, port: 3000 }
             initialDelaySeconds: 5
             periodSeconds: 10
           resources:
-            requests: { cpu: 50m, memory: 64Mi }
-            limits: { cpu: 200m, memory: 128Mi }
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 400m, memory: 384Mi }

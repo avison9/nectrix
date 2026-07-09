@@ -86,3 +86,32 @@ export interface NormalizedOrderResult {
   rejectReason?: string;
   rawBrokerResponse: unknown; // preserved for audit, never parsed by upstream logic
 }
+
+// TICKET-012 — apps/core-app's identity/RBAC types (docs/06-database-schema.md
+// §6.2's `roles` seed rows: FOLLOWER, MASTER, PARTNER, ADMIN, SUPPORT). Only
+// the three Admin-Portal-reachable roles are modeled here — the portal's own
+// route guard rejects anyone without one of these (see apps/admin-portal).
+export type AdminPortalRole = "ADMIN" | "SUPPORT" | "MASTER";
+
+// Mirrors AdminController.AuditLogPageResponse/AuditLogRepository.AuditLogEntry
+// (apps/core-app/modules/admin) — camelCase here even though the wire JSON is
+// snake_case (Spring's global SNAKE_CASE Jackson strategy); @nectrix/api-client
+// is responsible for the translation, so every other consumer just deals in
+// idiomatic TS shapes.
+export interface AuditLogEntry {
+  id: number;
+  actorUserId: string | null;
+  actorType: string;
+  action: string;
+  targetType: string | null;
+  targetId: string | null;
+  metadataJson: string | null;
+  createdAt: string; // ISO-8601
+}
+
+export interface AuditLogPage {
+  entries: AuditLogEntry[];
+  total: number;
+  page: number;
+  pageSize: number;
+}

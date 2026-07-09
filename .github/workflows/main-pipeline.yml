@@ -115,6 +115,7 @@ jobs:
           - { name: copy-engine, dockerfile: apps/copy-engine/Dockerfile }
           - { name: broker-adapters, dockerfile: apps/broker-adapters/Dockerfile }
           - { name: mt5-bridge-gateway, dockerfile: apps/mt5-bridge-gateway/Dockerfile }
+          - { name: admin-portal, dockerfile: apps/admin-portal/Dockerfile }
     steps:
       - uses: actions/checkout@v7.0.0
       - uses: docker/setup-buildx-action@v4.2.0
@@ -238,7 +239,7 @@ jobs:
         run: gcloud auth configure-docker "$(echo '${{ vars.GCP_ARTIFACT_REGISTRY_URL }}' | cut -d/ -f1)" --quiet
       - name: Pull the just-scanned images
         run: |
-          for app in core-app copy-engine broker-adapters mt5-bridge-gateway; do
+          for app in core-app copy-engine broker-adapters mt5-bridge-gateway admin-portal; do
             docker pull ${{ needs.resolve-registry.outputs.image_prefix }}/$app:${{ github.sha }}
           done
       - uses: helm/kind-action@v1.14.0
@@ -246,7 +247,7 @@ jobs:
           cluster_name: nectrix-staging
       - name: Load images into kind (no registry pull needed inside the cluster)
         run: |
-          for app in core-app copy-engine broker-adapters mt5-bridge-gateway; do
+          for app in core-app copy-engine broker-adapters mt5-bridge-gateway admin-portal; do
             kind load docker-image "${{ needs.resolve-registry.outputs.image_prefix }}/$app:${{ github.sha }}" --name nectrix-staging
           done
       - name: Install kustomize
@@ -261,7 +262,7 @@ jobs:
         # which is the case once vars.CLOUD_PROVIDER is aws or gcp.
         working-directory: deploy/overlays/staging
         run: |
-          for app in core-app copy-engine broker-adapters mt5-bridge-gateway; do
+          for app in core-app copy-engine broker-adapters mt5-bridge-gateway admin-portal; do
             kustomize edit set image "ghcr.io/avison9/nectrix/$app=${{ needs.resolve-registry.outputs.image_prefix }}/$app:${{ github.sha }}"
           done
       # TICKET-005 — core-app's Deployment reads JWT_SIGNING_SECRET from this
@@ -271,10 +272,18 @@ jobs:
       # is created idempotently first since `kubectl apply -k` (which
       # normally creates it) hasn't run yet at this point. Same throwaway
       # value as the integration-test job's env — not a real secret.
-      - name: Create core-app namespace + throwaway auth secrets
+      - name: Create core-app/admin-portal namespaces + throwaway auth secrets
+        # admin-portal's proxy.ts verifies JWTs with the same secret core-app
+        # signs with (see lib/session.ts) — same throwaway value, duplicated
+        # into a Secret in admin-portal's own namespace since Secrets are
+        # namespace-scoped and admin-portal doesn't share core-app's.
         run: |
           kubectl create namespace core-app --dry-run=client -o yaml | kubectl apply -f -
           kubectl create secret generic core-app-secrets -n core-app \
+            --from-literal=jwt-signing-secret="n/ErCuickD7JyKdFhuOeH2QWJjQp6ZBxGxUosC6Mtr3kP6idy8j1sMYV0lKL0wAPeMuFQ4iwsF2uxq9lIk6MYQ==" \
+            --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create namespace admin-portal --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create secret generic admin-portal-secrets -n admin-portal \
             --from-literal=jwt-signing-secret="n/ErCuickD7JyKdFhuOeH2QWJjQp6ZBxGxUosC6Mtr3kP6idy8j1sMYV0lKL0wAPeMuFQ4iwsF2uxq9lIk6MYQ==" \
             --dry-run=client -o yaml | kubectl apply -f -
       - run: kubectl apply -k deploy/overlays/staging
@@ -284,6 +293,7 @@ jobs:
           kubectl rollout status deployment/broker-adapters -n copy-engine --timeout=120s
           kubectl rollout status deployment/mt5-bridge-gateway -n copy-engine --timeout=120s
           kubectl rollout status deployment/core-app -n core-app --timeout=180s
+          kubectl rollout status deployment/admin-portal -n admin-portal --timeout=120s
       - name: Verify drain hook - static assertion (terminationGracePeriodSeconds is set)
         run: |
           for dep in copy-engine broker-adapters; do
@@ -330,13 +340,18 @@ jobs:
         run: |
           kubectl rollout status deployment/copy-engine -n copy-engine --timeout=60s
           kubectl rollout status deployment/broker-adapters -n copy-engine --timeout=60s
-      - name: E2E smoke check (core-app and copy-engine)
+      - name: E2E smoke check (core-app, copy-engine, admin-portal)
         run: |
           kubectl port-forward -n copy-engine svc/copy-engine 18090:8090 &
           kubectl port-forward -n core-app svc/core-app 18080:8080 &
+          kubectl port-forward -n admin-portal svc/admin-portal 18081:8080 &
           sleep 3
           curl --fail --retry 5 --retry-delay 2 http://localhost:18090/healthz
           curl --fail --retry 5 --retry-delay 2 http://localhost:18080/hello
+          # /login is admin-portal's one public route (proxy.ts redirects
+          # everything else to it) — 200 here proves the real Next.js server
+          # started, not just that the container is Running.
+          curl --fail --retry 5 --retry-delay 2 http://localhost:18081/login
       - name: Teardown staging kind cluster
         if: always()
         run: kind delete cluster --name nectrix-staging
@@ -390,7 +405,7 @@ jobs:
         run: gcloud auth configure-docker "$(echo '${{ vars.GCP_ARTIFACT_REGISTRY_URL }}' | cut -d/ -f1)" --quiet
       - name: Pull the just-scanned images
         run: |
-          for app in core-app copy-engine broker-adapters mt5-bridge-gateway; do
+          for app in core-app copy-engine broker-adapters mt5-bridge-gateway admin-portal; do
             docker pull ${{ needs.resolve-registry.outputs.image_prefix }}/$app:${{ github.sha }}
           done
       - uses: helm/kind-action@v1.14.0
@@ -398,7 +413,7 @@ jobs:
           cluster_name: nectrix-production
       - name: Load images into kind (no registry pull needed inside the cluster)
         run: |
-          for app in core-app copy-engine broker-adapters mt5-bridge-gateway; do
+          for app in core-app copy-engine broker-adapters mt5-bridge-gateway admin-portal; do
             kind load docker-image "${{ needs.resolve-registry.outputs.image_prefix }}/$app:${{ github.sha }}" --name nectrix-production
           done
       - name: Install kustomize
@@ -410,17 +425,23 @@ jobs:
         # Explicit oldName=newName:tag form — see deploy-staging's identical note.
         working-directory: deploy/overlays/production
         run: |
-          for app in core-app copy-engine broker-adapters mt5-bridge-gateway; do
+          for app in core-app copy-engine broker-adapters mt5-bridge-gateway admin-portal; do
             kustomize edit set image "ghcr.io/avison9/nectrix/$app=${{ needs.resolve-registry.outputs.image_prefix }}/$app:${{ github.sha }}"
           done
       # TICKET-005 — see deploy-staging's identical step for why this exists.
       # Real production secret-management doesn't exist yet (out of scope
       # here — see infra/terraform/README.md); this ephemeral kind cluster
       # only proves rollout/health, so throwaway values are fine.
-      - name: Create core-app namespace + throwaway auth secrets
+      - name: Create core-app/admin-portal namespaces + throwaway auth secrets
+        # See deploy-staging's identical step for why admin-portal needs its
+        # own copy of this secret (Secrets are namespace-scoped).
         run: |
           kubectl create namespace core-app --dry-run=client -o yaml | kubectl apply -f -
           kubectl create secret generic core-app-secrets -n core-app \
+            --from-literal=jwt-signing-secret="n/ErCuickD7JyKdFhuOeH2QWJjQp6ZBxGxUosC6Mtr3kP6idy8j1sMYV0lKL0wAPeMuFQ4iwsF2uxq9lIk6MYQ==" \
+            --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create namespace admin-portal --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create secret generic admin-portal-secrets -n admin-portal \
             --from-literal=jwt-signing-secret="n/ErCuickD7JyKdFhuOeH2QWJjQp6ZBxGxUosC6Mtr3kP6idy8j1sMYV0lKL0wAPeMuFQ4iwsF2uxq9lIk6MYQ==" \
             --dry-run=client -o yaml | kubectl apply -f -
       - run: kubectl apply -k deploy/overlays/production
@@ -430,11 +451,14 @@ jobs:
           kubectl rollout status deployment/broker-adapters -n copy-engine --timeout=120s
           kubectl rollout status deployment/mt5-bridge-gateway -n copy-engine --timeout=120s
           kubectl rollout status deployment/core-app -n core-app --timeout=180s
+          kubectl rollout status deployment/admin-portal -n admin-portal --timeout=120s
       - name: Smoke check
         run: |
           kubectl port-forward -n core-app svc/core-app 18080:8080 &
+          kubectl port-forward -n admin-portal svc/admin-portal 18081:8080 &
           sleep 3
           curl --fail --retry 5 --retry-delay 2 http://localhost:18080/hello
+          curl --fail --retry 5 --retry-delay 2 http://localhost:18081/login
       - name: Teardown production kind cluster
         if: always()
         run: kind delete cluster --name nectrix-production

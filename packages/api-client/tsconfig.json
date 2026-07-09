@@ -1,7 +1,12 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2022"],
+    // DOM only for fetch/Headers/RequestInit/URLSearchParams' ambient types —
+    // this package runs server-side in Node (Next.js Route Handlers), whose
+    // built-in fetch implements that same interface; no actual browser APIs
+    // are used, and DOM is the conventional way to type them without an
+    // @types/node dependency this package otherwise has no need for.
+    "lib": ["ES2022", "DOM"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "strict": true,
