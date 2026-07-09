@@ -9,16 +9,6 @@ The Core App — a Java 21 + Spring Boot modular monolith covering Auth, Onboard
 - `archunit-fixtures/` — a deliberately-violating fixture module (outside `com.nectrix.coreapp`) that `ModuleBoundaryRuleSelfTest` checks against, proving the ArchUnit rule actually fires rather than trusting an unverified assertion.
 - `db/` — Liquibase migrations for the full schema (see "Database & migrations" below). Deliberately a separate Gradle subproject from `bootstrap`, so `liquibase-core` never ends up on the running app's classpath.
 
-## Design references
-
-- `nectrix_plan/docs/04-architecture-overview.md` — module boundary rules, bounded contexts.
-- `nectrix_plan/docs/05-domain-model.md` — the domain model each module implements.
-- `nectrix_plan/docs/06-database-schema.md` — the full schema `db/` implements.
-- `nectrix_plan/docs/13-technology-stack.md` §13.1 — why Java/Spring Boot.
-- `nectrix_plan/docs/17-security-architecture.md` §17.6 — why `audit_log` has no UPDATE/DELETE grant for the app role.
-- `nectrix_plan/phases/phase-0-foundation/tickets/TICKET-001-repo-scaffolding.md` — the ticket this scaffolding satisfies.
-- `nectrix_plan/phases/phase-0-foundation/tickets/TICKET-004-database-schema-migrations.md` — the ticket that added `db/` and the datasource wiring.
-
 ## Database & migrations
 
 Full schema from `docs/06-database-schema.md` (31 tables), applied via **Liquibase** SQL-formatted changelogs in `db/src/main/resources/db/changelog/changes/` — chosen over Flyway specifically because Liquibase Community supports real per-changeset rollback for free (Flyway's `undo` is a paid Teams feature).
@@ -79,9 +69,10 @@ generic `OidcIdTokenVerifier` machinery) but **not tested against Apple's real s
 real: Apple's `client_secret` must be a periodically-regenerated ES256 JWT (not a static string),
 and Apple only includes the user's email on their *first* authorization, never on repeat logins.
 
-2FA secret encryption uses a temporary local AES-GCM stub (`TWO_FACTOR_SECRET_ENCRYPTION_KEY`,
-`StubAesGcmTwoFactorSecretCipher`) — must be replaced by TICKET-011's real KMS-backed envelope
-encryption before any production credential flows through it (i.e. before Phase 1 broker linking).
+2FA secrets are encrypted via TICKET-011's real KMS-backed envelope encryption (`modules/crypto`'s
+`EnvelopeEncryptionService`) — the temporary local AES-GCM stub
+(`TWO_FACTOR_SECRET_ENCRYPTION_KEY`/`StubAesGcmTwoFactorSecretCipher`) is deleted outright, not left
+as a fallback. See "Secrets Management & Envelope Encryption" below.
 
 ## RBAC (TICKET-006)
 
@@ -114,7 +105,9 @@ GET  /api/v1/admin/broker-accounts/{id}    (ADMIN/SUPPORT — bypasses ownership
 Every admin/support action above writes one `audit_log` row (`docs/17-security-architecture.md`
 §17.6 — write-only at the app-DB-role level).
 
-Role management is a CLI at this phase (a full admin-portal UI is TICKET-012):
+Role management for existing accounts is still a CLI (TICKET-012's Admin Portal adds a UI for
+provisioning brand-new Admin/Support accounts with a role assigned at creation, not for changing an
+existing account's roles):
 
 ```
 make role-grant EMAIL=foo@example.com ROLE=ADMIN
@@ -128,6 +121,42 @@ The OpenTelemetry Java auto-instrumentation agent (`apps/core-app/Dockerfile` fe
 
 `OTEL_EXPORTER_OTLP_ENDPOINT`/`OTEL_SERVICE_NAME` (defaults: `http://localhost:4318`/`core-app`) are read by the agent directly — docker-compose.yml points this at the local Tempo instance. See root `README.md`'s Observability section and `infra/observability/verify.sh` for hands-on AC verification.
 
+## Secrets Management & Envelope Encryption (`modules/crypto`, TICKET-011)
+
+`EnvelopeEncryptionService` is real KMS-backed envelope encryption, replacing TICKET-005's temporary
+local AES-GCM 2FA-secret stub outright (`StubAesGcmTwoFactorSecretCipher` is deleted, not left as a
+fallback). Per field: a fresh Data Encryption Key (DEK) is generated via KMS `GenerateDataKey`, used
+to AES-256-GCM-encrypt the plaintext locally, and the KMS-wrapped DEK is packed alongside the field
+ciphertext into one opaque stored string. `kms_key_versions` is the explicit, application-level
+version registry (distinct from a cloud KMS's own opaque internal rotation) — a KEK rotation never
+needs a synchronous full-table re-encryption; old ciphertext stays decryptable via the KMS key ID its
+tagged version points to.
+
+`AwsEnvelopeKmsClient` (AWS SDK v2) is endpoint-overridable so the identical code path talks to
+**LocalStack** locally/in CI and real AWS KMS in production (IRSA credential chain). `make
+localstack-init` (`infra/localstack/init-kms.sh`) seeds the real LocalStack key + `kms_key_versions`
+row. Verified hands-on against real LocalStack KMS + Postgres: a real encrypt→decrypt round trip; a
+real KEK rotation (old ciphertext still decrypts, a fresh encryption gets the new version); and a
+redaction proof (`/2fa/enable`'s real plaintext TOTP secret confirmed absent from captured stdout,
+only the masked `"secret":"****"` form present).
+
+## Admin endpoints (TICKET-012)
+
+Two more ADMIN/SUPPORT-gated routes, backing `apps/admin-portal`'s real (non-stub) pages — see that
+app's own README for the frontend side:
+
+```
+POST /api/v1/admin/users        (ADMIN only) {email, password, display_name, role: ADMIN|SUPPORT} -> 201 {id}
+GET  /api/v1/admin/audit-log    (ADMIN/SUPPORT) ?actorUserId=&targetType=&targetId=&from=&to=&page=&pageSize= -> paginated real audit_log rows
+```
+
+`POST /api/v1/admin/users` is the platform's account-creation entry point — there is still no
+self-registration anywhere. It rejects any `role` outside `{ADMIN, SUPPORT}` with 400 —
+`POST /api/v1/admin/masters` (which also creates a `master_profiles` row) is a separate, deferred
+Phase 1 endpoint. Both routes write one audited `audit_log` row (provisioning) or are themselves
+read-only (the Audit Log viewer's data source), same write-restriction guarantee as every other
+`audit_log` writer above.
+
 ## Commands
 
 Run from the repo root (see root `README.md` for the devcontainer setup):
@@ -138,6 +167,6 @@ make core-app-test    # ./gradlew test — includes the ArchUnit boundary checks
 ```
 
 `bootstrap` exposes `GET /hello` on port 8080 once running (`./gradlew :bootstrap:bootRun`). Auth
-integration tests (`./gradlew :bootstrap:integrationTest`) need Postgres + Redis running (see root
-`docker-compose.yml`) and `JWT_SIGNING_SECRET`/`TWO_FACTOR_SECRET_ENCRYPTION_KEY` set — same
+integration tests (`./gradlew :bootstrap:integrationTest`) need Postgres + Redis + LocalStack running
+(see root `docker-compose.yml`, `make localstack-init`) and `JWT_SIGNING_SECRET` set — same
 no-default pattern as `POSTGRES_APP_PASSWORD` (see `.env.example`).
