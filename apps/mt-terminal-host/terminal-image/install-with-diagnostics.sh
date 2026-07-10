@@ -76,6 +76,15 @@ echo "$EDITOR_PATH" >"/diagnostics/${LABEL}.editor-path"
 
 if [ -n "$TERMINAL_PATH" ]; then
   cp -r "$(dirname "$TERMINAL_PATH")"/. "$CANONICAL_DIR"/ 2>/dev/null || true
+  # The installer's on-disk casing isn't guaranteed (confirmed empirically:
+  # a real MT5 install produced "MetaEditor64.exe", not "metaeditor64.exe"),
+  # so re-copy onto the exact fixed-case names the rest of the Dockerfile
+  # relies on, rather than assuming the whole-directory cp above already
+  # matches — Linux filesystems are case-sensitive, unlike Windows.
+  cp "$TERMINAL_PATH" "$CANONICAL_DIR/$TERMINAL_EXE_NAME" 2>/dev/null || true
+fi
+if [ -n "$EDITOR_PATH" ]; then
+  cp "$EDITOR_PATH" "$CANONICAL_DIR/$EDITOR_EXE_NAME" 2>/dev/null || true
 fi
 
 echo "install-with-diagnostics: $LABEL exited $EXIT_CODE, terminal=[$TERMINAL_PATH], editor=[$EDITOR_PATH]" >&2
