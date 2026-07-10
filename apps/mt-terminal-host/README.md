@@ -185,5 +185,17 @@ manual dispatch), findings so far from real x86_64 CI runs:
    promotional carousel instead).
 4. Consequently, **the installer's own process exit code is not a reliable success signal under
    Wine** — confirmed exiting 1 across multiple runs even when the wizard visibly completed.
-   `install-verified` now gates on the real file (`metaeditor64.exe`/`metaeditor.exe` actually
-   present), not the exit code, which is logged only as non-fatal context.
+   `install-verified` gated on the real file (`metaeditor64.exe`/`metaeditor.exe` actually present),
+   not the exit code, which is logged only as non-fatal context — but on the next real run, the files
+   genuinely weren't there either, despite the wizard visibly completing.
+5. **Root cause, found by cross-checking against a real, maintained third-party project**
+   ([gmag11/MetaTrader5-Docker](https://github.com/gmag11/MetaTrader5-Docker)): this Dockerfile's
+   original install command passed a custom `/portable "/S:<dir>"` destination alongside `/auto`.
+   That real project's own `start.sh` uses `/auto` **alone** — no `/portable`, no custom `/S:`
+   destination — and finds the installed terminal at MetaQuotes' own default location afterward
+   (`$WINEPREFIX/drive_c/Program Files/MetaTrader 5/terminal64.exe`). `install-with-diagnostics.sh`
+   now does the same: `/auto` alone, into its own dedicated `WINEPREFIX` per platform, then `find`s
+   wherever the installer actually placed things (rather than assuming a fixed path) and copies that
+   whole directory into a canonical location (`/canonical-mt5`, `/canonical-mt4`) the rest of the
+   Dockerfile relies on unconditionally. The `xdotool` Enter-keypress workaround (point 3) was removed
+   — unneeded once the installer isn't fighting a destination it doesn't like.

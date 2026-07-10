@@ -10,36 +10,41 @@
 # via `docker buildx build --target diagnostics-export -o type=local,...`
 # even when the real build fails downstream.
 #
-# Real, live-verified finding (see the mt-terminal-install-diagnostics CI
-# artifact from run 29115696730): MetaQuotes' /auto silent-install flag does
-# NOT suppress the installer's own final "Finish"/"Congratulations" screen —
-# both MT5 and MT4 genuinely complete their install (file-copying and all)
-# and then just sit at that confirmation screen forever, which is why the
-# wrapped process previously never exited cleanly. This script now
-# periodically sends Enter (Finish is the wizard's default/focused button)
-# to dismiss it — a harmless no-op on every earlier screen, since nothing is
-# focused/actionable yet.
+# Real, live-verified finding (confirmed against gmag11/MetaTrader5-Docker,
+# a maintained real-world Wine+MT5 Docker project — see
+# apps/mt-terminal-host/README.md): passing a custom /portable "/S:<dir>"
+# destination to the installer is what was actually broken across three
+# earlier CI attempts (xauth missing; installer exit code unreliable under
+# Wine; a synthetic xdotool Enter keypress not reliably dismissing the
+# final screen). The combination that real-world projects actually use is
+# /auto ALONE — the installer places files at its own default location
+# under WINEPREFIX, which this script discovers afterward via `find`
+# rather than assuming a fixed path, then copies into a canonical
+# directory the rest of the Dockerfile can rely on unconditionally.
 set -u
 
 INSTALLER="$1"
-DEST_DIR="$2"
+WINE_PREFIX_DIR="$2"
 LABEL="$3"
+TERMINAL_EXE_NAME="$4" # e.g. terminal64.exe or terminal.exe
+EDITOR_EXE_NAME="$5"   # e.g. metaeditor64.exe or metaeditor.exe
+CANONICAL_DIR="$6"
 
-mkdir -p /diagnostics
+mkdir -p /diagnostics "$WINE_PREFIX_DIR" "$CANONICAL_DIR"
+export WINEPREFIX="$WINE_PREFIX_DIR"
 
 Xvfb :99 -screen 0 1024x768x16 &
 XVFB_PID=$!
 export DISPLAY=:99
 sleep 2
 
-wine "$INSTALLER" /auto /portable "/S:$DEST_DIR" \
+wine "$INSTALLER" /auto \
   > "/diagnostics/${LABEL}.stdout.log" 2> "/diagnostics/${LABEL}.stderr.log" &
 WINE_PID=$!
 
 i=0
 while kill -0 "$WINE_PID" 2>/dev/null && [ "$i" -lt 20 ]; do
   xwd -root -display :99 -out "/diagnostics/${LABEL}-${i}.xwd" 2>/dev/null || true
-  xdotool key --clearmodifiers Return 2>/dev/null || true
   sleep 3
   i=$((i + 1))
 done
@@ -59,5 +64,19 @@ for f in "/diagnostics/${LABEL}"*.xwd; do
   [ -f "$f" ] && convert "$f" "${f%.xwd}.png" 2>/dev/null && rm -f "$f"
 done
 
-echo "install-with-diagnostics: $LABEL exited $EXIT_CODE" >&2
+# Discover where the installer actually put things — a real signal, not a
+# path guess (see this script's own header note above). Copies the WHOLE
+# containing directory (not just the two named exes) into CANONICAL_DIR,
+# since the terminal/MetaEditor need their surrounding DLLs/resources to
+# actually run, not just the two binaries themselves.
+TERMINAL_PATH=$(find "$WINE_PREFIX_DIR" -iname "$TERMINAL_EXE_NAME" 2>/dev/null | head -1)
+EDITOR_PATH=$(find "$WINE_PREFIX_DIR" -iname "$EDITOR_EXE_NAME" 2>/dev/null | head -1)
+echo "$TERMINAL_PATH" >"/diagnostics/${LABEL}.terminal-path"
+echo "$EDITOR_PATH" >"/diagnostics/${LABEL}.editor-path"
+
+if [ -n "$TERMINAL_PATH" ]; then
+  cp -r "$(dirname "$TERMINAL_PATH")"/. "$CANONICAL_DIR"/ 2>/dev/null || true
+fi
+
+echo "install-with-diagnostics: $LABEL exited $EXIT_CODE, terminal=[$TERMINAL_PATH], editor=[$EDITOR_PATH]" >&2
 exit 0
