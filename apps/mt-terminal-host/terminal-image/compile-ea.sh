@@ -19,7 +19,15 @@ XVFB_PID=$!
 export DISPLAY=:99
 sleep 2
 
-wine "$EDITOR_PATH" "/compile:$SOURCE_PATH" /log
+## /portable: without it, MetaEditor resolves #include <...> paths against
+## the roaming %APPDATA%\MetaQuotes\Terminal\<hash>\MQL5\Include profile
+## instead of the local install directory's own MQL5\Include — a profile
+## that's never been populated here (only the installer ran, never the
+## terminal itself). Real, live-verified finding: without /portable, even
+## the standard library's own Trade/Trade.mqh (bundled with every install)
+## fails to resolve, cascading into dozens of undeclared-identifier errors
+## for the rest of the file.
+wine "$EDITOR_PATH" /portable "/compile:$SOURCE_PATH" /log
 EXIT_CODE=$?
 
 kill "$XVFB_PID" 2>/dev/null || true

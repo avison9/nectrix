@@ -95,7 +95,7 @@ int OnInit()
   {
    ArrayResize(g_recvBuf, 0);
    ArrayResize(g_tracked, 0);
-   EventSetMillisecond(InpPollMs);
+   EventSetMillisecondTimer(InpPollMs);
    if(InpPairingToken == "")
      {
       Print("Nectrix: InpPairingToken is required — paste it from the broker-linking response.");
