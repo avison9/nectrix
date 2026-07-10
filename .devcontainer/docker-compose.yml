@@ -49,6 +49,19 @@ services:
       # above. Real clusters set this to core-app's in-cluster Service DNS
       # instead (see deploy/base/admin-portal/deployment.yaml).
       CORE_APP_BASE_URL: http://localhost:8080
+      # --- cTrader Broker Adapter (TICKET-101) ---
+      # Blank allowed, same reasoning as the Google/Apple OAuth vars above —
+      # the app boots fine without them, real broker linking just won't work
+      # until you register a cTrader Open API app and set these.
+      CTRADER_CLIENT_ID: ${CTRADER_CLIENT_ID:-}
+      CTRADER_CLIENT_SECRET: ${CTRADER_CLIENT_SECRET:-}
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-}
+      TOKEN_REFRESH_ENABLED: ${TOKEN_REFRESH_ENABLED:-false}
+      # apps/broker-adapters (Go) also runs as a plain process inside this same
+      # devcontainer, reachable at its own localhost:8091 — same
+      # not-an-in-network-hostname reasoning as CORE_APP_BASE_URL above.
+      CORE_APP_INTERNAL_BASE_URL: http://localhost:8080
+      BROKER_ADAPTERS_INTERNAL_BASE_URL: http://localhost:8091
     ports:
       - "8080:8080"   # core-app
       - "8090:8090"   # copy-engine

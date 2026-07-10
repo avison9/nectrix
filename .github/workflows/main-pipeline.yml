@@ -277,14 +277,29 @@ jobs:
         # signs with (see lib/session.ts) — same throwaway value, duplicated
         # into a Secret in admin-portal's own namespace since Secrets are
         # namespace-scoped and admin-portal doesn't share core-app's.
+        #
+        # TICKET-101 — broker-adapters-secrets/core-app-secrets' internal-
+        # service-token must be byte-for-byte identical (both sides
+        # authenticate to each other's internal endpoints with it); ctrader-
+        # client-id/secret are throwaway placeholders — broker-adapters'
+        # main.go fails fast if they're unset at all (crash-loops without
+        # them), but this ephemeral kind cluster only proves rollout/health,
+        # never a real cTrader connection, so a real value isn't needed.
         run: |
           kubectl create namespace core-app --dry-run=client -o yaml | kubectl apply -f -
           kubectl create secret generic core-app-secrets -n core-app \
             --from-literal=jwt-signing-secret="n/ErCuickD7JyKdFhuOeH2QWJjQp6ZBxGxUosC6Mtr3kP6idy8j1sMYV0lKL0wAPeMuFQ4iwsF2uxq9lIk6MYQ==" \
+            --from-literal=internal-service-token="ephemeral-ci-internal-token-DNRSbAWNZeVoRUcQyzuFtWnk" \
             --dry-run=client -o yaml | kubectl apply -f -
           kubectl create namespace admin-portal --dry-run=client -o yaml | kubectl apply -f -
           kubectl create secret generic admin-portal-secrets -n admin-portal \
             --from-literal=jwt-signing-secret="n/ErCuickD7JyKdFhuOeH2QWJjQp6ZBxGxUosC6Mtr3kP6idy8j1sMYV0lKL0wAPeMuFQ4iwsF2uxq9lIk6MYQ==" \
+            --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create namespace copy-engine --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create secret generic broker-adapters-secrets -n copy-engine \
+            --from-literal=internal-service-token="ephemeral-ci-internal-token-DNRSbAWNZeVoRUcQyzuFtWnk" \
+            --from-literal=ctrader-client-id="ephemeral-ci-placeholder-client-id" \
+            --from-literal=ctrader-client-secret="ephemeral-ci-placeholder-client-secret" \
             --dry-run=client -o yaml | kubectl apply -f -
       - run: kubectl apply -k deploy/overlays/staging
       - name: Wait for rollouts
@@ -434,15 +449,23 @@ jobs:
       # only proves rollout/health, so throwaway values are fine.
       - name: Create core-app/admin-portal namespaces + throwaway auth secrets
         # See deploy-staging's identical step for why admin-portal needs its
-        # own copy of this secret (Secrets are namespace-scoped).
+        # own copy of this secret (Secrets are namespace-scoped), and for why
+        # TICKET-101 adds broker-adapters-secrets/internal-service-token.
         run: |
           kubectl create namespace core-app --dry-run=client -o yaml | kubectl apply -f -
           kubectl create secret generic core-app-secrets -n core-app \
             --from-literal=jwt-signing-secret="n/ErCuickD7JyKdFhuOeH2QWJjQp6ZBxGxUosC6Mtr3kP6idy8j1sMYV0lKL0wAPeMuFQ4iwsF2uxq9lIk6MYQ==" \
+            --from-literal=internal-service-token="ephemeral-ci-internal-token-DNRSbAWNZeVoRUcQyzuFtWnk" \
             --dry-run=client -o yaml | kubectl apply -f -
           kubectl create namespace admin-portal --dry-run=client -o yaml | kubectl apply -f -
           kubectl create secret generic admin-portal-secrets -n admin-portal \
             --from-literal=jwt-signing-secret="n/ErCuickD7JyKdFhuOeH2QWJjQp6ZBxGxUosC6Mtr3kP6idy8j1sMYV0lKL0wAPeMuFQ4iwsF2uxq9lIk6MYQ==" \
+            --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create namespace copy-engine --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create secret generic broker-adapters-secrets -n copy-engine \
+            --from-literal=internal-service-token="ephemeral-ci-internal-token-DNRSbAWNZeVoRUcQyzuFtWnk" \
+            --from-literal=ctrader-client-id="ephemeral-ci-placeholder-client-id" \
+            --from-literal=ctrader-client-secret="ephemeral-ci-placeholder-client-secret" \
             --dry-run=client -o yaml | kubectl apply -f -
       - run: kubectl apply -k deploy/overlays/production
       - name: Wait for rollouts

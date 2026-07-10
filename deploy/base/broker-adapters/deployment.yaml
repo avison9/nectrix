@@ -25,6 +25,30 @@ spec:
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8091
+          env:
+            # TICKET-101 — main.go log.Fatalf's on any of these three being
+            # unset, so unlike core-app's own tolerant-of-blank config, a
+            # missing value here crash-loops the pod outright. The
+            # `broker-adapters-secrets` Secret is created by CI (main-
+            # pipeline.yml's deploy-staging/deploy-production jobs) with
+            # throwaway values before this manifest is applied — same
+            # pattern as core-app-secrets (real secret-management doesn't
+            # exist yet, see infra/terraform/README.md).
+            # internal-service-token must be byte-for-byte identical to
+            # core-app's own copy (deploy/base/core-app/deployment.yaml).
+            - name: INTERNAL_SERVICE_TOKEN
+              valueFrom:
+                secretKeyRef: { name: broker-adapters-secrets, key: internal-service-token }
+            - name: CTRADER_CLIENT_ID
+              valueFrom:
+                secretKeyRef: { name: broker-adapters-secrets, key: ctrader-client-id }
+            - name: CTRADER_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef: { name: broker-adapters-secrets, key: ctrader-client-secret }
+            # core-app's in-cluster Service DNS (own namespace: core-app —
+            # see deploy/base/core-app/service.yaml).
+            - name: CORE_APP_INTERNAL_BASE_URL
+              value: http://core-app.core-app.svc.cluster.local:8080
           securityContext:
             runAsNonRoot: true
             runAsUser: 65532

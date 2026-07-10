@@ -1,0 +1,37 @@
+# TICKET-101 — core-app's /internal/** surface (SecurityConfig's second,
+# shared-secret-header filter chain) must only be reachable from
+# apps/broker-adapters, never directly from the internet. NetworkPolicy
+# operates at L3/L4 (source pod/namespace + port), not HTTP path, so it
+# can't by itself distinguish /internal/** from /api/v1/** on the same
+# port 8080 — the path-level distinction is enforced at the application
+# layer (SecurityConfig's two SecurityFilterChains, plus the fact that
+# deploy/base/gateway's Ingress only ever forwards /api/v1/** traffic, never
+# /internal/**). What this policy DOES enforce for real: core-app's port
+# 8080 is reachable ONLY from the gateway namespace (public API traffic,
+# proxied in from deploy/base/gateway's Ingress) and the copy-engine
+# namespace (where apps/broker-adapters actually runs — see
+# deploy/base/broker-adapters/deployment.yaml's own namespace: copy-engine)
+# — nothing else in the cluster, and nothing outside it, can reach core-app
+# directly. Same shape as copy-engine's own broker-egress policy
+# (deploy/base/copy-engine/network-policy.yaml), mirrored for ingress
+# instead of egress.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: core-app-ingress
+  namespace: core-app
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gateway
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: copy-engine
+      ports:
+        - protocol: TCP
+          port: 8080

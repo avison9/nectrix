@@ -32,6 +32,29 @@ spec:
             - name: JWT_SIGNING_SECRET
               valueFrom:
                 secretKeyRef: { name: core-app-secrets, key: jwt-signing-secret }
+            # TICKET-101 — shared secret Go (apps/broker-adapters) and Java
+            # authenticate to each other's internal-only endpoints with (see
+            # SecurityConfig#internalFilterChain). Unlike JWT_SIGNING_SECRET,
+            # a missing value doesn't crash core-app at startup (Spring binds
+            # it null and the filter just always-401s) — but real broker
+            # linking needs it, so it's wired the same way. Same throwaway-
+            # value-from-CI reasoning as above; must be byte-for-byte
+            # identical to broker-adapters' own copy of this secret.
+            - name: INTERNAL_SERVICE_TOKEN
+              valueFrom:
+                secretKeyRef: { name: core-app-secrets, key: internal-service-token }
+            # CTRADER_CLIENT_ID/SECRET are deliberately NOT wired here yet —
+            # same precedent as GOOGLE_OAUTH_CLIENT_ID/SECRET above (not
+            # present in this manifest either): application.yml tolerates a
+            # blank value (real cTrader linking just won't work until a real
+            # operator sets these via real secret-management, which doesn't
+            # exist yet — see infra/terraform/README.md).
+            - name: TOKEN_REFRESH_ENABLED
+              value: "false"
+            # apps/broker-adapters' in-cluster Service DNS (own namespace:
+            # copy-engine — see deploy/base/broker-adapters/service.yaml).
+            - name: BROKER_ADAPTERS_INTERNAL_BASE_URL
+              value: http://broker-adapters.copy-engine.svc.cluster.local:8091
             # TICKET-011 — apps/core-app/modules/crypto's EnvelopeEncryptionService.
             # KMS_ENDPOINT_OVERRIDE is deliberately unset here (unlike
             # docker-compose.yml's LocalStack override) — a real cluster has

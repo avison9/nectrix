@@ -1,11 +1,13 @@
 package com.nectrix.coreapp.auth.config;
 
+import com.nectrix.coreapp.auth.security.InternalServiceTokenFilter;
 import java.util.Base64;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -18,6 +20,7 @@ import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
 import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
 /**
  * Stateless bearer-token JSON API — no cookies/sessions, so CSRF protection is inapplicable
@@ -40,8 +43,31 @@ import org.springframework.security.web.SecurityFilterChain;
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity
-@EnableConfigurationProperties(AuthProperties.class)
+@EnableConfigurationProperties({AuthProperties.class, InternalApiProperties.class})
 public class SecurityConfig {
+
+  /**
+   * TICKET-101 — a second, entirely separate filter chain for {@code /internal/**}, evaluated
+   * before (lower {@code @Order} = higher priority) the main JWT-based chain below. Requests
+   * matching this chain never reach the JWT logic at all — internal-only callers (apps/broker-
+   * adapters) have no JWT to present. {@link InternalServiceTokenFilter} does the actual auth
+   * check; {@code anyRequest().authenticated()} here just means "the filter above populated a
+   * SecurityContext" (a request the filter rejected already got a 401 response and never reaches
+   * this authorization check).
+   */
+  @Bean
+  @Order(1)
+  public SecurityFilterChain internalFilterChain(HttpSecurity http, InternalApiProperties props)
+      throws Exception {
+    http.securityMatcher("/internal/**")
+        .csrf(AbstractHttpConfigurer::disable)
+        .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+        .addFilterBefore(
+            new InternalServiceTokenFilter(props.serviceToken()),
+            UsernamePasswordAuthenticationFilter.class)
+        .authorizeHttpRequests(auth -> auth.anyRequest().authenticated());
+    return http.build();
+  }
 
   /**
    * Validates OUR OWN HS256 access tokens (see JwtService) — entirely separate from {@link
@@ -56,6 +82,7 @@ public class SecurityConfig {
   }
 
   @Bean
+  @Order(2)
   public SecurityFilterChain filterChain(HttpSecurity http, JwtDecoder jwtDecoder)
       throws Exception {
     http.csrf(AbstractHttpConfigurer::disable)
@@ -92,6 +119,17 @@ public class SecurityConfig {
                     .requestMatchers(HttpMethod.POST, "/api/v1/admin/users")
                     .authenticated()
                     .requestMatchers(HttpMethod.GET, "/api/v1/admin/audit-log")
+                    .authenticated()
+                    // TICKET-101 — cTrader OAuth broker-linking flow. The callback is permitAll:
+                    // the browser's redirect back from cTrader carries no bearer token, so the
+                    // state param itself (validated server-side against Redis) is the proof of
+                    // the OAuth round trip — the same reasoning as the existing
+                    // /auth/oauth/*/callback permitAll above.
+                    .requestMatchers(HttpMethod.GET, "/api/v1/broker/ctrader/authorize-url")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.POST, "/api/v1/broker/ctrader/callback")
+                    .permitAll()
+                    .requestMatchers(HttpMethod.POST, "/api/v1/broker/ctrader/link")
                     .authenticated()
                     // -- add new protected/public auth-adjacent routes here (future tickets:
                     // accept-invite, by-token) — anyRequest() below is intentionally permitAll,

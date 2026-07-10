@@ -66,6 +66,12 @@ dependencies {
     // Test-only — computes real TOTP codes against a known secret the same way
     // TwoFactorService's CodeVerifier does, for TICKET-005's AuthIntegrationTest.
     testImplementation("dev.samstevens.totp:totp:1.7.1")
+    // TICKET-101 — modules:crypto is only `implementation` (not `api`) inside
+    // modules:invitations, so it doesn't propagate to bootstrap's compile
+    // classpath transitively (Gradle java-library visibility rules); needed
+    // directly here for BrokerAccountOAuthIntegrationTest's real
+    // EnvelopeEncryptionService-backed test fixture setup.
+    testImplementation(project(":modules:crypto"))
 }
 
 application {

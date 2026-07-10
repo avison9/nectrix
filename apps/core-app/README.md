@@ -157,6 +157,163 @@ Phase 1 endpoint. Both routes write one audited `audit_log` row (provisioning) o
 read-only (the Audit Log viewer's data source), same write-restriction guarantee as every other
 `audit_log` writer above.
 
+## cTrader Broker Linking (`modules/invitations`, TICKET-101)
+
+Real (not stubbed) cTrader Open API OAuth linking — the first Phase 1 feature to talk to a live
+external broker. Core App owns the OAuth handshake, `broker_accounts` row lifecycle, and is the
+**single** `EnvelopeEncryptionService` caller for broker credentials; `apps/broker-adapters` (Go)
+owns 100% of the cTrader wire protocol (Protobuf/TLS) and never sees plaintext tokens except
+per-request, over an internal-only HTTP hop. See that app's own README for the Go side.
+
+```
+GET  /api/v1/broker/ctrader/authorize-url   (authenticated) -> {authorize_url}
+POST /api/v1/broker/ctrader/callback        (permitAll — see note below) {code, state} -> {link_session_id, accounts[]}
+POST /api/v1/broker/ctrader/link            (authenticated) {link_session_id, ctid_trader_account_id, is_live, display_label} -> BrokerAccount
+```
+
+Internal-only, called by `apps/broker-adapters`, guarded by a second `SecurityFilterChain`
+(`SecurityConfig#internalFilterChain`) checking a shared `X-Internal-Service-Token` header instead
+of a JWT — the *only* non-JWT auth path in this codebase:
+
+```
+GET  /internal/broker-accounts?status=&brokerType=              -> [{id, status}]
+GET  /internal/broker-accounts/credentials/{id}                 -> {accessToken, refreshToken, ctidTraderAccountId, isLive}
+POST /internal/broker-accounts/{id}/connection-status {status, detail} -> 200, publishes BrokerConnectionEvent
+```
+
+### Architecture — full linking + reconciliation flow
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant FE as Frontend (not yet built)
+    participant Core as Core App (Java)
+    participant Redis
+    participant PG as Postgres
+    participant Kafka
+    participant CT as cTrader (Spotware)
+    participant BA as Broker Adapters (Go)
+
+    User->>FE: Click "Connect cTrader account"
+    FE->>Core: GET /broker/ctrader/authorize-url (JWT)
+    Core->>Redis: SET state -> userId (TTL 10m)
+    Core-->>FE: {authorize_url}
+    Note over FE: Must parse `state` out of authorize_url<br/>and persist it (e.g. localStorage) —<br/>cTrader's own redirect does NOT echo it back.
+    FE->>User: Redirect browser to authorize_url
+    User->>CT: Log in + approve
+    CT-->>FE: 302 to callback?code=...  (no state param)
+    FE->>Core: POST /broker/ctrader/callback {code, state: <persisted>}
+    Core->>Redis: consume + validate state -> userId
+    Core->>CT: POST /apps/token (exchange code)
+    CT-->>Core: {accessToken, refreshToken, expiresIn}
+    Core->>BA: POST /internal/ctrader/accounts {accessToken}
+    BA->>CT: Protobuf/TLS: ApplicationAuth + GetAccountListByAccessToken
+    CT-->>BA: [{ctidTraderAccountId, isLive, traderLogin, brokerTitleShort}]
+    BA-->>Core: same, as JSON
+    Core->>Redis: cache link session {userId, tokens} (TTL 10m)
+    Core-->>FE: {link_session_id, accounts[]}
+    FE->>User: Show account picker
+    User->>FE: Select one account
+    FE->>Core: POST /broker/ctrader/link {link_session_id, ctidTraderAccountId, isLive}
+    Core->>Core: EnvelopeEncryptionService.encryptField(tokens)
+    Core->>PG: INSERT broker_accounts (connection_status = PENDING)
+    Core-->>FE: {id, connection_status: PENDING}
+
+    loop apps/broker-adapters reconciliation, every 30s
+        BA->>Core: GET /internal/broker-accounts?status=PENDING,CONNECTED&brokerType=CTRADER
+        Core-->>BA: [{id, status}]
+        BA->>Core: GET /internal/broker-accounts/credentials/{id}  (new accounts only)
+        Core->>Core: decryptField
+        Core-->>BA: {accessToken, refreshToken, ctidTraderAccountId, isLive}
+        BA->>CT: Protobuf/TLS: ApplicationAuth + AccountAuth
+        CT-->>BA: authenticated, streaming trade events
+        BA->>Core: POST /internal/broker-accounts/{id}/connection-status {CONNECTED}
+        Core->>PG: UPDATE connection_status = CONNECTED
+        Core->>Kafka: publish BrokerConnectionEvent (topic broker-connection)
+    end
+```
+
+### Real, live-verified findings
+
+Verified hands-on against a real cTrader demo account (Pepperstone-hosted, via a real registered
+cTrader Open API application) — not mocked, not just "it compiles": the full authorize → code
+exchange → account listing → link → reconcile → `CONNECTED` chain above, exactly as drawn, using
+real HTTP calls to `connect.spotware.com`/`openapi.ctrader.com` and a real Protobuf/TLS connection
+from `apps/broker-adapters` to `demo.ctraderapi.com:5035`. Two real things this pass caught (both
+now fixed and covered by regression tests, not just noted and left):
+
+- **cTrader does not echo the OAuth `state` query param back on redirect** (only `code` comes
+  back), unlike a spec-compliant OAuth2 provider. This is not a backend bug — `state`-based CSRF
+  protection is still real and correct — but it moves a real responsibility onto whoever builds the
+  frontend piece: capture `state` from the `authorize_url` response *before* redirecting, persist
+  it (survives the full top-level navigation), and re-attach it after the redirect. See
+  `BrokerAccountOAuthController`'s Javadoc for the exact detail. A cookie-based fallback was
+  considered and rejected — this codebase is deliberately cookie-free (see `SecurityConfig`'s own
+  Javadoc), and introducing one here would be a first, inconsistent exception.
+- `apps/broker-adapters`' reconciliation loop connected successfully but never reported that back
+  to Core App — `connection_status` stayed `PENDING` forever despite a genuinely healthy connection.
+  Fixed by adding the missing `POST .../connection-status` caller
+  (`internal/coreappclient.Client.ReportConnectionStatus`) and wiring it into
+  `internal/reconcile.Loop`'s connect/disconnect paths — see that package's own tests.
+
+**Known gap, not yet built**: the frontend page that catches cTrader's browser redirect and makes
+the actual `POST /callback` call. The callback endpoint is deliberately POST-only (matching the
+existing Google/Apple OAuth pattern), so a real end-to-end flow needs that piece before a user can
+complete linking without a developer manually replaying the `code`/`state` via curl, as this
+verification pass did.
+
+**Also deferred** (flagged in code, not silently assumed): `AccountSnapshot.currency` and
+`SymbolSpec.marginCurrency` (`apps/broker-adapters`) are left empty pending a cTrader
+assetId→currency-code lookup not built in this ticket; `broker_accounts.currency` is seeded as a
+`"USD"` placeholder at link time for the same reason, corrected once a real account snapshot is
+read.
+
+### Manual reproduction (runbook)
+
+Until the frontend piece exists, this is how to replay the full flow by hand — exactly what this
+ticket's own live verification pass did. Needs a real cTrader Open API application (register one at
+[connect.spotware.com](https://connect.spotware.com), add
+`http://localhost:8080/api/v1/broker/ctrader/callback` to its allowed redirect URIs) and a real
+cTrader demo account logged into in your browser.
+
+1. **Set real credentials** in `.env` (see root `.env.example`): `CTRADER_CLIENT_ID`,
+   `CTRADER_CLIENT_SECRET`, `INTERNAL_SERVICE_TOKEN` (any value, must match on both services).
+2. **Run both services** with those env vars: `./gradlew :bootstrap:bootRun` (core-app, port 8080)
+   and `go run .` in `apps/broker-adapters` (port 8091) — both need Postgres/Redis/Kafka up
+   (`docker compose up`).
+3. **Get a JWT** for any real user (login via `POST /api/v1/auth/login`, or provision one first via
+   `UserProvisioningApi`/an admin route — there's no public self-registration).
+4. **Get the authorize URL**:
+   ```
+   curl -s http://localhost:8080/api/v1/broker/ctrader/authorize-url \
+     -H "Authorization: Bearer $ACCESS_TOKEN"
+   # => {"authorize_url": "https://connect.spotware.com/apps/auth?...&state=<STATE>"}
+   ```
+5. **Open `authorize_url` in a real browser**, log into the cTrader demo account, approve. The
+   browser lands on `http://localhost:8080/api/v1/broker/ctrader/callback?code=<CODE>` and shows a
+   405 error page — expected, that endpoint is POST-only (see the note above on why). Copy `<CODE>`
+   from the address bar. Remember `<STATE>` from step 4 — the redirect does **not** include it.
+6. **Complete the code exchange** (must be within the state's 10-minute Redis TTL):
+   ```
+   curl -s -X POST http://localhost:8080/api/v1/broker/ctrader/callback \
+     -H 'Content-Type: application/json' \
+     -d "{\"code\":\"<CODE>\",\"state\":\"<STATE>\"}"
+   # => {"link_session_id": "...", "accounts": [{"ctid_trader_account_id": ..., "is_live": false, ...}]}
+   ```
+7. **Link the chosen account**:
+   ```
+   curl -s -X POST http://localhost:8080/api/v1/broker/ctrader/link \
+     -H 'Content-Type: application/json' -H "Authorization: Bearer $ACCESS_TOKEN" \
+     -d '{"link_session_id":"<LINK_SESSION_ID>","ctid_trader_account_id":<ID>,"is_live":false,"display_label":"My demo account"}'
+   # => {"id": "...", "connection_status": "PENDING", ...}
+   ```
+8. **Wait up to 30s** and confirm `apps/broker-adapters` picked it up and connected:
+   ```sql
+   SELECT connection_status, last_health_check_at FROM broker_accounts WHERE id = '<returned id>';
+   -- expect connection_status = 'CONNECTED', last_health_check_at set
+   ```
+   `apps/broker-adapters`' own logs show `reconcile: connected broker account brokerAccountId=<id>`.
+
 ## Commands
 
 Run from the repo root (see root `README.md` for the devcontainer setup):
