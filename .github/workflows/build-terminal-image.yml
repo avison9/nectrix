@@ -60,3 +60,29 @@ jobs:
           ignore-unfixed: true
       - name: Push (only reached if Trivy passed)
         run: docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/mt-terminal-image:${{ github.sha }}
+
+      # If the build above failed, the install-diagnostics stage (which
+      # never fails itself — see install-with-diagnostics.sh's own header)
+      # still has a usable, cached layer carrying real screenshots/exit
+      # codes/stdout+stderr from whatever the Wine installer was doing at
+      # the moment it failed — a GUI installer's own error dialog is
+      # otherwise invisible to this job's text-only build log above.
+      # diagnostics-export is a scratch-based stage carrying ONLY
+      # /diagnostics, so this exports a few MB, not the whole Wine image.
+      - name: On failure — export install diagnostics (screenshots, exit codes, logs)
+        if: failure()
+        run: |
+          docker buildx build \
+            --target diagnostics-export \
+            --file apps/mt-terminal-host/terminal-image/Dockerfile \
+            --cache-from type=gha,scope=mt-terminal-image \
+            -o type=local,dest=/tmp/mt-terminal-diagnostics \
+            . || true
+      - name: On failure — upload install diagnostics artifact
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mt-terminal-install-diagnostics
+          path: /tmp/mt-terminal-diagnostics
+          if-no-files-found: warn
+          retention-days: 14
