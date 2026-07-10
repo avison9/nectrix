@@ -57,6 +57,33 @@ echo "$EXIT_CODE" >"/diagnostics/${LABEL}.exitcode"
 # likely frame to show an installer error dialog, if one was ever drawn.
 xwd -root -display :99 -out "/diagnostics/${LABEL}-final.xwd" 2>/dev/null || true
 
+# Discover where the installer actually put things — a real signal, not a
+# path guess (see this script's own header note above).
+TERMINAL_PATH=$(find "$WINE_PREFIX_DIR" -iname "$TERMINAL_EXE_NAME" 2>/dev/null | head -1)
+echo "$TERMINAL_PATH" >"/diagnostics/${LABEL}.terminal-path"
+
+# Real, live-verified finding: the silent /auto install does NOT bundle the
+# MQL5/MQL4 Standard Library (Include/) — MetaEditor confirmed genuinely
+# missing Include/Trade/Trade.mqh after install. The Standard Library is
+# populated by the terminal's own first-run initialization instead, which
+# never happens under a pure silent install. So launch the terminal once
+# here (still under this same Xvfb, still /portable so it initializes the
+# LOCAL install-directory MQL5 tree that gets copied to CANONICAL_DIR below,
+# not the roaming AppData profile), give it time to create its local folder
+# structure, then kill it — this EA bridge never needs the terminal UI
+# itself to stay running during the build, only the files it creates.
+if [ -n "$TERMINAL_PATH" ]; then
+  wine "$TERMINAL_PATH" /portable \
+    > "/diagnostics/${LABEL}-warmup.stdout.log" 2> "/diagnostics/${LABEL}-warmup.stderr.log" &
+  WARMUP_PID=$!
+  sleep 15
+  xwd -root -display :99 -out "/diagnostics/${LABEL}-warmup-final.xwd" 2>/dev/null || true
+  kill "$WARMUP_PID" 2>/dev/null || true
+  wait "$WARMUP_PID" 2>/dev/null || true
+  find "$(dirname "$TERMINAL_PATH")" -iname "Include" -maxdepth 2 2>/dev/null \
+    >"/diagnostics/${LABEL}-include-dir.txt" || true
+fi
+
 kill "$XVFB_PID" 2>/dev/null || true
 wait "$XVFB_PID" 2>/dev/null || true
 
@@ -64,14 +91,10 @@ for f in "/diagnostics/${LABEL}"*.xwd; do
   [ -f "$f" ] && convert "$f" "${f%.xwd}.png" 2>/dev/null && rm -f "$f"
 done
 
-# Discover where the installer actually put things — a real signal, not a
-# path guess (see this script's own header note above). Copies the WHOLE
-# containing directory (not just the two named exes) into CANONICAL_DIR,
-# since the terminal/MetaEditor need their surrounding DLLs/resources to
-# actually run, not just the two binaries themselves.
-TERMINAL_PATH=$(find "$WINE_PREFIX_DIR" -iname "$TERMINAL_EXE_NAME" 2>/dev/null | head -1)
+# Copies the WHOLE containing directory (not just the two named exes) into
+# CANONICAL_DIR, since the terminal/MetaEditor need their surrounding
+# DLLs/resources — and now their warmed-up Include/ tree — to actually run.
 EDITOR_PATH=$(find "$WINE_PREFIX_DIR" -iname "$EDITOR_EXE_NAME" 2>/dev/null | head -1)
-echo "$TERMINAL_PATH" >"/diagnostics/${LABEL}.terminal-path"
 echo "$EDITOR_PATH" >"/diagnostics/${LABEL}.editor-path"
 
 if [ -n "$TERMINAL_PATH" ]; then
