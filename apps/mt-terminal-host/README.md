@@ -109,6 +109,10 @@ real terminal under Xvfb.
    currently have no NetworkPolicy-enforced restriction on which external broker-server hosts/ports
    they may reach (K8s NetworkPolicy is IP/CIDR-based, not hostname-based, and valid destinations
    are dynamic per-broker). A real, documented gap, not silently ignored.
+3. **MT4 is not yet supported end-to-end** — MQL4 has no native socket support, so
+   `NectrixBridgeMT4.mq4`'s WebSocket-based design cannot compile as written (see finding 9 below).
+   The MT4 terminal installs fine; the EA bridge does not yet exist for it. Needs a follow-up ticket
+   to redesign MT4's transport before `PLATFORM=MT4` accounts can actually work.
 
 ## Container images
 
@@ -199,3 +203,39 @@ manual dispatch), findings so far from real x86_64 CI runs:
    whole directory into a canonical location (`/canonical-mt5`, `/canonical-mt4`) the rest of the
    Dockerfile relies on unconditionally. The `xdotool` Enter-keypress workaround (point 3) was removed
    — unneeded once the installer isn't fighting a destination it doesn't like.
+6. **Installer output casing isn't guaranteed.** A real MT5 install produced `MetaEditor64.exe`
+   (capital E), not the lowercase `metaeditor64.exe` the rest of the Dockerfile assumed — Linux
+   filesystems are case-sensitive, so the fixed-name check never matched even though the file was
+   genuinely present. `install-with-diagnostics.sh` now explicitly re-copies the discovered exe onto
+   the exact fixed-case name the Dockerfile expects, rather than relying on the installer's real
+   on-disk casing.
+7. **`WINEPREFIX` must be set explicitly for every wine invocation, every RUN layer.**
+   `install-with-diagnostics.sh` only exports it within its own script process — that doesn't persist
+   across separate Dockerfile `RUN` layers. Without it, `wine metaeditor64.exe ...` silently fell back
+   to a brand-new default prefix (`/root/.wine`) that never had the real install's registry/COM setup,
+   and MetaEditor failed with OLE/RPC marshalling errors. Similarly, `xvfb-run -a`'s auto-display
+   selection failed near-instantly under Wine here (untested territory — every other Wine invocation
+   in this Dockerfile uses a manual `Xvfb & sleep; wine; kill` pattern instead, which is what actually
+   works); `compile-ea.sh` now uses that same proven pattern.
+8. **The first real MetaEditor compile surfaced genuine bugs in the EA source itself** (this source
+   had never been compiled by anything before this): `EventSetMillisecond` isn't a real MQL5/MQL4
+   function — the correct API is `EventSetMillisecondTimer` (fixed in both `.mq5`/`.mq4`). Separately,
+   `CTrade`/`#include <Trade/Trade.mqh>` failed to resolve even though the file exists on disk — a
+   silent `/auto` install only places the terminal/editor executables, not the MQL5/MQL4 Standard
+   Library (`Include/`), which is populated by the terminal's own first-run initialization instead.
+   `install-with-diagnostics.sh` now launches the discovered terminal once (`/portable`, ~15s, then
+   killed) right after install to trigger that initialization before copying files into the canonical
+   directory. **`NectrixBridgeMT5.mq5` now compiles with 0 errors, 0 warnings — the first real proof
+   this source is correct**, confirmed via a real CI run.
+9. **MT4 EA compilation is deliberately disabled — a genuine platform gap, not a bug.** MQL4 has no
+   native `Socket*()` functions at all (confirmed against MQL4's own reference docs — `Socket*` is an
+   MQL5-only addition), so `NectrixBridgeMT4.mq4`'s WebSocket-based design as written cannot compile
+   on real MT4, full stop. The MT4 terminal itself still installs fine (`install-verified` passes for
+   it); only EA compilation and attachment are blocked. `compile-ea` no longer attempts to compile the
+   `.mq4` source, `entrypoint.sh` fails fast and clearly for `PLATFORM=MT4` rather than silently
+   launching a terminal with no EA able to attach. **Follow-up ticket needed** to redesign MT4's
+   transport — most likely either a bundled native DLL for raw sockets (keeps the same WebSocket
+   protocol/design symmetric with MT5, but adds a new native-code component and a real security
+   surface, since DLL imports must be allowed) or HTTP long-polling via MQL4's native `WebRequest()`
+   (stays pure MQL, no DLL, but needs new `apps/mt5-bridge-gateway` work to support polling alongside
+   the existing WebSocket protocol). Not designed here — deliberately deferred so MT5 could ship.
