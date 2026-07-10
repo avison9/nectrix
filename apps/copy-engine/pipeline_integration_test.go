@@ -150,6 +150,69 @@ func runAC4Case(t *testing.T, adapter domain.BrokerAdapter) {
 	}
 }
 
+// TICKET-103: "A trade signal for a symbol with no confirmed mapping on the
+// follower account results in a copied_trades row with status=FAILED,
+// reject_reason='UNMAPPED_SYMBOL' and a corresponding follower
+// notification" (the CopiedTradeEvent FAILED publish -- see
+// dispatch.go's publishCopiedTradeFailed doc comment for why that publish
+// itself is the real, testable deliverable here). Deletes seedFixture's
+// own auto-inserted confirmed EURUSD mapping (required by every other test
+// in this file) to reconstruct the genuinely-unmapped case.
+func TestAC_UnmappedSymbol_SkipsPlaceOrderAndRecordsFailedCopiedTrade(t *testing.T) {
+	ctx := context.Background()
+	pool := newTestPool(t)
+	deduper := newTestDeduper(t)
+	topic := createDedicatedTopic(t)
+	writer := newWriter(topic)
+	t.Cleanup(func() { writer.Close() })
+
+	masterAccountID, followerAccountID, relationshipID := seedFixture(t, ctx, pool)
+	mustExec(t, ctx, pool, `DELETE FROM symbol_mappings WHERE broker_account_id = $1 AND canonical_symbol = 'EURUSD'`, followerAccountID)
+
+	adapter := stubadapter.New()
+	server := buildTestServer(t, ctx, pool, deduper, writer, adapter, masterAccountID, followerAccountID)
+
+	brokerPositionID := "ac-unmapped-pos-" + uuid.NewString()
+	serverTimestamp := time.Now().UTC().Format(time.RFC3339)
+	postInject(t, server, brokerPositionID, serverTimestamp, 1.0)
+
+	assertTradeSignalRowCount(t, ctx, pool, masterAccountID, brokerPositionID, 1)
+
+	// The real, authoritative proof: no PlaceOrder call ever reached the
+	// adapter -- if the unmapped-symbol check were missing/broken, the
+	// stub adapter would have recorded a real (wrongly) filled order.
+	if got := adapter.PlaceOrderCallCount(); got != 0 {
+		t.Fatalf("PlaceOrder was called %d times, want 0 (symbol is unmapped, must never be attempted)", got)
+	}
+
+	var status, rejectReason string
+	err := pool.QueryRow(ctx,
+		`SELECT status, reject_reason FROM copied_trades WHERE copy_relationship_id = $1`,
+		relationshipID).Scan(&status, &rejectReason)
+	if err != nil {
+		t.Fatalf("query copied_trades: %v", err)
+	}
+	if status != "FAILED" {
+		t.Fatalf("copied_trades.status = %q, want FAILED", status)
+	}
+	if rejectReason != "UNMAPPED_SYMBOL" {
+		t.Fatalf("copied_trades.reject_reason = %q, want UNMAPPED_SYMBOL", rejectReason)
+	}
+
+	reader := newReader(topic, "test-group-"+uuid.NewString())
+	defer reader.Close()
+	event := readCopiedTradeEvent(t, reader)
+	if event.GetCopyRelationshipId() != relationshipID {
+		t.Fatalf("copy_relationship_id = %q, want %q", event.GetCopyRelationshipId(), relationshipID)
+	}
+	if event.GetEventType() != eventsv1.CopiedTradeEventType_COPIED_TRADE_EVENT_TYPE_FAILED {
+		t.Fatalf("event_type = %v, want FAILED", event.GetEventType())
+	}
+	if event.GetRejectReason() != "UNMAPPED_SYMBOL" {
+		t.Fatalf("reject_reason = %q, want UNMAPPED_SYMBOL", event.GetRejectReason())
+	}
+}
+
 // ---- shared test wiring ----
 
 func buildTestServer(t *testing.T, ctx context.Context, pool *pgxpool.Pool, deduper domain.Deduper, kafkaWriter *kafka.Writer, adapter domain.BrokerAdapter, masterAccountID, followerAccountID string) *httptest.Server {
@@ -249,6 +312,18 @@ func seedFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (masterA
 		INSERT INTO copy_relationships (id, master_profile_id, master_broker_account_id, follower_user_id, follower_broker_account_id, money_management_profile_id, risk_profile_id, status, performance_fee_percent, fee_collection_method, originating_follow_request_id)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,'ACTIVE',20.00,'BROKER_PARTNERSHIP',$8)`,
 		relationshipID, masterProfileID, masterAccountID, followerUserID, followerAccountID, mmProfileID, riskProfileID, followRequestID)
+
+	// TICKET-103: the dispatcher now gates every dispatch on a CONFIRMED
+	// symbol_mappings row for the follower account — required, not just
+	// additive, since every existing test here injects a synthetic event
+	// via stubadapter.InjectEventParams, whose Symbol defaults to "EURUSD"
+	// (see internal/stubadapter/inject.go's buildEvent) when unset, as it
+	// always is here. Without this row, every AC test above would now dead-
+	// end at the new UNMAPPED_SYMBOL skip instead of reaching PlaceOrder.
+	mustExec(t, ctx, pool, `
+		INSERT INTO symbol_mappings (broker_account_id, canonical_symbol, broker_symbol_name, contract_size, lot_step, min_lot, max_lot, pip_size, digits, margin_currency, is_confirmed)
+		VALUES ($1,'EURUSD','EURUSD',100000,0.01,0.01,100,0.0001,5,'USD',TRUE)`,
+		followerAccountID)
 
 	return masterAccountID, followerAccountID, relationshipID
 }

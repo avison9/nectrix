@@ -237,7 +237,7 @@ func (f *fakeStatusReporter) statusesFor(id string) []string {
 
 func TestStatusHandler_ReportsConnectedAndDisconnected(t *testing.T) {
 	reporter := &fakeStatusReporter{}
-	handler := NewStatusHandler(reporter, nil)
+	handler := NewStatusHandler(reporter, nil, nil)
 
 	handler.OnSessionEstablished(context.Background(), "acct-1", domain.BrokerTypeMT5)
 	handler.OnSessionLost(context.Background(), "acct-1")
@@ -250,7 +250,7 @@ func TestStatusHandler_ReportsConnectedAndDisconnected(t *testing.T) {
 
 func TestStatusHandler_ReportFailureDoesNotPanic(t *testing.T) {
 	reporter := &fakeStatusReporter{failNext: true}
-	handler := NewStatusHandler(reporter, nil)
+	handler := NewStatusHandler(reporter, nil, nil)
 
 	// Must not panic — a reporting failure is best-effort/logged only,
 	// mirroring reconcile.Loop's own reportStatus contract.
@@ -258,5 +258,93 @@ func TestStatusHandler_ReportFailureDoesNotPanic(t *testing.T) {
 
 	if statuses := reporter.statusesFor("acct-1"); len(statuses) != 0 {
 		t.Fatalf("expected no successful report recorded, got %v", statuses)
+	}
+}
+
+// orderedEventLog records, in real call order, which of two TICKET-103
+// hooks fired first — mirrors apps/broker-adapters/internal/reconcile's own
+// identically-purposed type (not shared across module boundaries, same
+// reasoning as this package's own duplicated SymbolMappingReporter).
+type orderedEventLog struct {
+	mu     sync.Mutex
+	events []string
+}
+
+func (l *orderedEventLog) record(event string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.events = append(l.events, event)
+}
+
+func (l *orderedEventLog) snapshot() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	out := make([]string, len(l.events))
+	copy(out, l.events)
+	return out
+}
+
+type fakeSymbolResolver struct{}
+
+func (fakeSymbolResolver) ResolveSymbol(ctx context.Context, brokerSymbol string) (domain.NormalizedSymbol, error) {
+	if brokerSymbol != "EURUSD" {
+		return domain.NormalizedSymbol{}, fmt.Errorf("fakeSymbolResolver: unknown symbol")
+	}
+	return domain.NormalizedSymbol{CanonicalCode: "EURUSD", AssetClass: domain.AssetClassFX}, nil
+}
+
+func (fakeSymbolResolver) GetSymbolSpecification(ctx context.Context, symbol domain.NormalizedSymbol) (domain.SymbolSpec, error) {
+	return domain.SymbolSpec{Symbol: symbol, BrokerSymbolName: "EURUSD"}, nil
+}
+
+type loggingMappingReporter struct{ log *orderedEventLog }
+
+func (r loggingMappingReporter) SuggestSymbolMappings(ctx context.Context, brokerAccountID string, specs []domain.SymbolSpec) error {
+	r.log.record("suggest")
+	return nil
+}
+
+type loggingStatusReporter struct{ log *orderedEventLog }
+
+func (r loggingStatusReporter) ReportConnectionStatus(ctx context.Context, brokerAccountID, status, detail string) error {
+	if status == "CONNECTED" {
+		r.log.record("connected")
+	}
+	return nil
+}
+
+// TestStatusHandler_SuggestsSymbolMappingsBeforeReportingConnected proves
+// TICKET-103's real ordering requirement, not just that both calls
+// eventually happen: nectrix_plan/docs/07-auth-onboarding-broker-linking.md
+// §7.5's flow diagram populates symbol_mappings suggestions BEFORE marking
+// a broker_accounts row CONNECTED.
+func TestStatusHandler_SuggestsSymbolMappingsBeforeReportingConnected(t *testing.T) {
+	log := &orderedEventLog{}
+	handler := NewStatusHandler(loggingStatusReporter{log: log}, loggingMappingReporter{log: log}, nil)
+	handler.SetSymbolResolvers(map[domain.BrokerType]domain.SymbolResolver{
+		domain.BrokerTypeMT5: fakeSymbolResolver{},
+	})
+
+	handler.OnSessionEstablished(context.Background(), "acct-1", domain.BrokerTypeMT5)
+
+	events := log.snapshot()
+	if len(events) != 2 || events[0] != "suggest" || events[1] != "connected" {
+		t.Fatalf("event order = %v, want [suggest connected]", events)
+	}
+}
+
+// TestStatusHandler_NoResolverForPlatformSkipsSuggestion proves a platform
+// with no registered resolver (e.g. SetSymbolResolvers never called, or
+// called with a partial map) just skips straight to reporting CONNECTED —
+// never blocks or errors.
+func TestStatusHandler_NoResolverForPlatformSkipsSuggestion(t *testing.T) {
+	log := &orderedEventLog{}
+	handler := NewStatusHandler(loggingStatusReporter{log: log}, loggingMappingReporter{log: log}, nil)
+
+	handler.OnSessionEstablished(context.Background(), "acct-1", domain.BrokerTypeMT5)
+
+	events := log.snapshot()
+	if len(events) != 1 || events[0] != "connected" {
+		t.Fatalf("event order = %v, want [connected] (no suggest — no resolver registered)", events)
 	}
 }

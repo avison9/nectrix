@@ -199,7 +199,7 @@ func TestReconcileOnce_ReportsConnectionStatus(t *testing.T) {
 	adapter := newFakeAdapter()
 	adapter.connectErr = map[string]error{"acc-bad": errors.New("bad token")}
 	reporter := newFakeStatusReporter()
-	loop := reconcile.New(lister, newFakeCredentialFetcher(), reporter, adapter, noopOnEvent, 20*time.Millisecond, nil)
+	loop := reconcile.New(lister, newFakeCredentialFetcher(), reporter, nil, nil, adapter, noopOnEvent, 20*time.Millisecond, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -230,7 +230,7 @@ func TestReconcileOnce_PassesTheLoopsOwnOnEventToStreamTradeEvents(t *testing.T)
 	}
 	lister := &fakeLister{accounts: []reconcile.BrokerAccountRef{{ID: "acc-1"}}}
 	adapter := newFakeAdapter()
-	loop := reconcile.New(lister, newFakeCredentialFetcher(), newFakeStatusReporter(), adapter, onEvent, time.Hour, nil)
+	loop := reconcile.New(lister, newFakeCredentialFetcher(), newFakeStatusReporter(), nil, nil, adapter, onEvent, time.Hour, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -255,7 +255,7 @@ func TestReconcileOnce_ConnectsAndStreamsNewlyListedAccounts(t *testing.T) {
 		{ID: "acc-2"},
 	}}
 	adapter := newFakeAdapter()
-	loop := reconcile.New(lister, newFakeCredentialFetcher(), newFakeStatusReporter(), adapter, noopOnEvent, time.Hour, nil)
+	loop := reconcile.New(lister, newFakeCredentialFetcher(), newFakeStatusReporter(), nil, nil, adapter, noopOnEvent, time.Hour, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -270,7 +270,7 @@ func TestReconcileOnce_ConnectsAndStreamsNewlyListedAccounts(t *testing.T) {
 func TestRun_DisconnectsAccountsNoLongerListed(t *testing.T) {
 	lister := &fakeLister{accounts: []reconcile.BrokerAccountRef{{ID: "acc-1"}, {ID: "acc-2"}}}
 	adapter := newFakeAdapter()
-	loop := reconcile.New(lister, newFakeCredentialFetcher(), newFakeStatusReporter(), adapter, noopOnEvent, 20*time.Millisecond, nil)
+	loop := reconcile.New(lister, newFakeCredentialFetcher(), newFakeStatusReporter(), nil, nil, adapter, noopOnEvent, 20*time.Millisecond, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -289,7 +289,7 @@ func TestRun_DoesNotReconnectAlreadyConnectedAccounts(t *testing.T) {
 	lister := &fakeLister{accounts: []reconcile.BrokerAccountRef{{ID: "acc-1"}}}
 	adapter := newFakeAdapter()
 	fetcher := newFakeCredentialFetcher()
-	loop := reconcile.New(lister, fetcher, newFakeStatusReporter(), adapter, noopOnEvent, 10*time.Millisecond, nil)
+	loop := reconcile.New(lister, fetcher, newFakeStatusReporter(), nil, nil, adapter, noopOnEvent, 10*time.Millisecond, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -309,7 +309,7 @@ func TestRun_DoesNotReconnectAlreadyConnectedAccounts(t *testing.T) {
 func TestRun_ContextCancellationDisconnectsEverything(t *testing.T) {
 	lister := &fakeLister{accounts: []reconcile.BrokerAccountRef{{ID: "acc-1"}, {ID: "acc-2"}}}
 	adapter := newFakeAdapter()
-	loop := reconcile.New(lister, newFakeCredentialFetcher(), newFakeStatusReporter(), adapter, noopOnEvent, time.Hour, nil)
+	loop := reconcile.New(lister, newFakeCredentialFetcher(), newFakeStatusReporter(), nil, nil, adapter, noopOnEvent, time.Hour, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go loop.Run(ctx)
@@ -322,7 +322,7 @@ func TestRun_ContextCancellationDisconnectsEverything(t *testing.T) {
 func TestReconcileOnce_ListerErrorLeavesExistingConnectionsAlone(t *testing.T) {
 	lister := &fakeLister{accounts: []reconcile.BrokerAccountRef{{ID: "acc-1"}}}
 	adapter := newFakeAdapter()
-	loop := reconcile.New(lister, newFakeCredentialFetcher(), newFakeStatusReporter(), adapter, noopOnEvent, 10*time.Millisecond, nil)
+	loop := reconcile.New(lister, newFakeCredentialFetcher(), newFakeStatusReporter(), nil, nil, adapter, noopOnEvent, 10*time.Millisecond, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -342,7 +342,7 @@ func TestReconcileOnce_CredentialFetchFailureSkipsThatAccountButNotOthers(t *tes
 	adapter := newFakeAdapter()
 	fetcher := newFakeCredentialFetcher()
 	fetcher.setErr("acc-bad", errors.New("core app: decrypt failed"))
-	loop := reconcile.New(lister, fetcher, newFakeStatusReporter(), adapter, noopOnEvent, time.Hour, nil)
+	loop := reconcile.New(lister, fetcher, newFakeStatusReporter(), nil, nil, adapter, noopOnEvent, time.Hour, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -365,4 +365,89 @@ func waitFor(t *testing.T, cond func() bool) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal("condition not met within 2s")
+}
+
+// orderedEventLog records, in real call order, which of two TICKET-103
+// hooks fired first — the actual proof mechanism for the
+// nectrix_plan/docs/07-auth-onboarding-broker-linking.md §7.5 ordering
+// requirement (populate symbol_mappings suggestions BEFORE reporting
+// CONNECTED), not just "both eventually happened".
+type orderedEventLog struct {
+	mu     sync.Mutex
+	events []string
+}
+
+func (l *orderedEventLog) record(event string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.events = append(l.events, event)
+}
+
+func (l *orderedEventLog) snapshot() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	out := make([]string, len(l.events))
+	copy(out, l.events)
+	return out
+}
+
+// fakeSymbolResolver resolves exactly one canonical code (EURUSD, via its
+// bare-code candidate) so SuggestSymbolMappings has something real to
+// report — every other catalog entry is silently unresolved, matching a
+// real broker that doesn't offer everything in the curated catalog.
+type fakeSymbolResolver struct{}
+
+func (fakeSymbolResolver) ResolveSymbol(ctx context.Context, brokerSymbol string) (domain.NormalizedSymbol, error) {
+	if brokerSymbol != "EURUSD" {
+		return domain.NormalizedSymbol{}, errors.New("fakeSymbolResolver: unknown symbol")
+	}
+	return domain.NormalizedSymbol{CanonicalCode: "EURUSD", AssetClass: domain.AssetClassFX}, nil
+}
+
+func (fakeSymbolResolver) GetSymbolSpecification(ctx context.Context, symbol domain.NormalizedSymbol) (domain.SymbolSpec, error) {
+	return domain.SymbolSpec{Symbol: symbol, BrokerSymbolName: "EURUSD"}, nil
+}
+
+type loggingMappingReporter struct{ log *orderedEventLog }
+
+func (r loggingMappingReporter) SuggestSymbolMappings(ctx context.Context, brokerAccountID string, specs []domain.SymbolSpec) error {
+	r.log.record("suggest")
+	return nil
+}
+
+type loggingStatusReporter struct{ log *orderedEventLog }
+
+func (r loggingStatusReporter) ReportConnectionStatus(ctx context.Context, brokerAccountID, status, detail string) error {
+	if status == "CONNECTED" {
+		r.log.record("connected")
+	}
+	return nil
+}
+
+// TestConnectLocked_SuggestsSymbolMappingsBeforeReportingConnected proves
+// TICKET-103's real ordering requirement, not just that both calls
+// eventually happen: nectrix_plan/docs/07-auth-onboarding-broker-linking.md
+// §7.5's flow diagram populates symbol_mappings suggestions BEFORE marking
+// a broker_accounts row CONNECTED, so a user never sees "CONNECTED" with no
+// suggestions yet to review.
+func TestConnectLocked_SuggestsSymbolMappingsBeforeReportingConnected(t *testing.T) {
+	log := &orderedEventLog{}
+	lister := &fakeLister{accounts: []reconcile.BrokerAccountRef{{ID: "acc-1"}}}
+	adapter := newFakeAdapter()
+	loop := reconcile.New(
+		lister, newFakeCredentialFetcher(), loggingStatusReporter{log: log},
+		fakeSymbolResolver{}, loggingMappingReporter{log: log},
+		adapter, noopOnEvent, time.Hour, nil,
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go loop.Run(ctx)
+	waitFor(t, func() bool { return adapter.isConnected("acc-1") })
+	waitFor(t, func() bool { return len(log.snapshot()) >= 2 })
+
+	events := log.snapshot()
+	if len(events) != 2 || events[0] != "suggest" || events[1] != "connected" {
+		t.Fatalf("event order = %v, want [suggest connected]", events)
+	}
 }

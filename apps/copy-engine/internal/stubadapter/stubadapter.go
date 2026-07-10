@@ -54,8 +54,9 @@ type stubCore struct {
 	brokerType domain.BrokerType
 	fill       fillStrategy
 
-	mu   sync.Mutex
-	subs map[string]func(context.Context, domain.NormalizedTradeEvent) error // handle.ID -> registered onEvent
+	mu              sync.Mutex
+	subs            map[string]func(context.Context, domain.NormalizedTradeEvent) error // handle.ID -> registered onEvent
+	placeOrderCalls int
 }
 
 func newCore(brokerType domain.BrokerType, fill fillStrategy) *stubCore {
@@ -145,7 +146,20 @@ func (s *subscription) Close() error {
 	return nil
 }
 
+// PlaceOrderCallCount is test-only observability (TICKET-103's
+// unmapped-symbol test uses it to assert PlaceOrder was never even
+// attempted) — deliberately not part of domain.BrokerAdapter, same
+// "promoted, test-code-only affordance" pattern as Injectable in inject.go.
+func (c *stubCore) PlaceOrderCallCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.placeOrderCalls
+}
+
 func (c *stubCore) PlaceOrder(ctx context.Context, handle domain.ConnectionHandle, order domain.NormalizedOrderRequest) (domain.NormalizedOrderResult, error) {
+	c.mu.Lock()
+	c.placeOrderCalls++
+	c.mu.Unlock()
 	filled := c.fill(fakeMarketPrice, order.Direction)
 	positionID := uuid.NewString()
 	observability.LogWithTrace(ctx, "stubadapter: PlaceOrder",

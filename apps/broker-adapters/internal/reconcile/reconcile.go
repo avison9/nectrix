@@ -70,6 +70,14 @@ type StatusReporter interface {
 	ReportConnectionStatus(ctx context.Context, brokerAccountID, status, detail string) error
 }
 
+// SymbolMappingReporter is the Core-App-owned internal endpoint contract for
+// persisting auto-suggested symbol_mappings (TICKET-103) — a POST of
+// whatever real SymbolSpecs domain.SuggestSymbolMappings managed to resolve
+// against the broker's own symbol catalog.
+type SymbolMappingReporter interface {
+	SuggestSymbolMappings(ctx context.Context, brokerAccountID string, specs []domain.SymbolSpec) error
+}
+
 // Adapter is the subset of domain.BrokerAdapter this loop needs — narrowed
 // so tests can substitute a fake without implementing every BrokerAdapter
 // method.
@@ -86,31 +94,35 @@ type connectedAccount struct {
 
 // Loop owns the live connected-account set, keyed by broker_accounts.id.
 type Loop struct {
-	lister         BrokerAccountLister
-	credentials    CredentialFetcher
-	statusReporter StatusReporter
-	adapter        Adapter
-	onEvent        func(context.Context, domain.NormalizedTradeEvent) error
-	interval       time.Duration
-	logger         *slog.Logger
+	lister          BrokerAccountLister
+	credentials     CredentialFetcher
+	statusReporter  StatusReporter
+	symbolResolver  domain.SymbolResolver
+	mappingReporter SymbolMappingReporter
+	adapter         Adapter
+	onEvent         func(context.Context, domain.NormalizedTradeEvent) error
+	interval        time.Duration
+	logger          *slog.Logger
 
 	mu        sync.Mutex
 	connected map[string]connectedAccount
 }
 
-func New(lister BrokerAccountLister, credentials CredentialFetcher, statusReporter StatusReporter, adapter Adapter, onEvent func(context.Context, domain.NormalizedTradeEvent) error, interval time.Duration, logger *slog.Logger) *Loop {
+func New(lister BrokerAccountLister, credentials CredentialFetcher, statusReporter StatusReporter, symbolResolver domain.SymbolResolver, mappingReporter SymbolMappingReporter, adapter Adapter, onEvent func(context.Context, domain.NormalizedTradeEvent) error, interval time.Duration, logger *slog.Logger) *Loop {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &Loop{
-		lister:         lister,
-		credentials:    credentials,
-		statusReporter: statusReporter,
-		adapter:        adapter,
-		onEvent:        onEvent,
-		interval:       interval,
-		logger:         logger,
-		connected:      make(map[string]connectedAccount),
+		lister:          lister,
+		credentials:     credentials,
+		statusReporter:  statusReporter,
+		symbolResolver:  symbolResolver,
+		mappingReporter: mappingReporter,
+		adapter:         adapter,
+		onEvent:         onEvent,
+		interval:        interval,
+		logger:          logger,
+		connected:       make(map[string]connectedAccount),
 	}
 }
 
@@ -193,7 +205,31 @@ func (l *Loop) connectLocked(ctx context.Context, id string) {
 
 	l.connected[id] = connectedAccount{handle: handle, sub: sub}
 	l.logger.Info("reconcile: connected broker account", "brokerAccountId", id)
+	// TICKET-103: populate symbol_mappings suggestions BEFORE reporting
+	// CONNECTED (nectrix_plan/docs/07-auth-onboarding-broker-linking.md
+	// §7.5's intended fetch-SymbolSpec-before-CONNECTED ordering), so a
+	// user never sees "CONNECTED" with no suggestions to review yet.
+	l.suggestSymbolMappingsLocked(ctx, id)
 	l.reportStatus(ctx, id, "CONNECTED", "")
+}
+
+const symbolSuggestionConcurrency = 8
+
+// suggestSymbolMappingsLocked is best-effort like reportStatus -- never
+// blocks or reverses a connection that already succeeded, and a broker
+// with no live connection to actually probe (symbolResolver unset, e.g. in
+// older test wiring) is silently skipped.
+func (l *Loop) suggestSymbolMappingsLocked(ctx context.Context, id string) {
+	if l.symbolResolver == nil || l.mappingReporter == nil {
+		return
+	}
+	specs := domain.SuggestSymbolMappings(ctx, l.symbolResolver, symbolSuggestionConcurrency)
+	if len(specs) == 0 {
+		return
+	}
+	if err := l.mappingReporter.SuggestSymbolMappings(ctx, id, specs); err != nil {
+		l.logger.Error("reconcile: suggest symbol mappings failed", "brokerAccountId", id, "error", err)
+	}
 }
 
 func (l *Loop) disconnectLocked(ctx context.Context, id string, conn connectedAccount) {

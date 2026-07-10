@@ -483,7 +483,7 @@ func TestTradeEvent_DeliveredToServerLevelCallbackAndExtraSubscribers(t *testing
 
 	ea.pushTradeEvent(tradeEventMessage{
 		EventID: "evt-1", EventType: string(domain.TradeEventPositionOpened),
-		Position: wirePosition{BrokerPositionID: "1", CanonicalSymbol: "EURUSD", AssetClass: "FX", Direction: "BUY", VolumeLots: 1, OpenPrice: 1.1, OpenedAt: "2026-07-10T12:00:00Z"},
+		Position:        wirePosition{BrokerPositionID: "1", CanonicalSymbol: "EURUSD", AssetClass: "FX", Direction: "BUY", VolumeLots: 1, OpenPrice: 1.1, OpenedAt: "2026-07-10T12:00:00Z"},
 		ServerTimestamp: "2026-07-10T12:00:00Z",
 	})
 
@@ -509,7 +509,7 @@ func TestTradeEvent_DeliveredToServerLevelCallbackAndExtraSubscribers(t *testing
 	_ = sub.Close()
 	ea.pushTradeEvent(tradeEventMessage{
 		EventID: "evt-2", EventType: string(domain.TradeEventPositionClosed),
-		Position: wirePosition{BrokerPositionID: "1", CanonicalSymbol: "EURUSD", AssetClass: "FX", Direction: "BUY", VolumeLots: 1, OpenPrice: 1.1, OpenedAt: "2026-07-10T12:00:00Z"},
+		Position:        wirePosition{BrokerPositionID: "1", CanonicalSymbol: "EURUSD", AssetClass: "FX", Direction: "BUY", VolumeLots: 1, OpenPrice: 1.1, OpenedAt: "2026-07-10T12:00:00Z"},
 		ServerTimestamp: "2026-07-10T12:01:00Z",
 	})
 	waitFor(t, func() bool {
@@ -633,5 +633,99 @@ func TestSession_ConcurrentRequestsAreCorrectlyCorrelated(t *testing.T) {
 	close(errs)
 	for err := range errs {
 		t.Error(err)
+	}
+}
+
+// --- TICKET-103: readLoop-before-OnSessionEstablished ordering -------------
+
+// syncSymbolResolveEventHandler's OnSessionEstablished immediately issues a
+// SYNCHRONOUS RequestSymbolSpec call against the just-established session —
+// exactly what a real SymbolMappingReporter-wiring OnSessionEstablished
+// implementation does (apps/mt5-bridge-gateway/internal/pairing.StatusHandler).
+// Real, live-verified deadlock hazard this proves fixed: RequestSymbolSpec
+// blocks on session.call()'s <-ch until readLoop's resolvePending delivers a
+// response — if readLoop hasn't started yet (the pre-fix ordering), no
+// reader ever exists to deliver it, and this hangs forever.
+type syncSymbolResolveEventHandler struct {
+	server *Server
+
+	mu      sync.Mutex
+	result  SymbolSpecResult
+	callErr error
+}
+
+func (h *syncSymbolResolveEventHandler) OnSessionEstablished(ctx context.Context, brokerAccountID string, platform domain.BrokerType) {
+	sess, ok := h.server.Session(brokerAccountID)
+	if !ok {
+		h.mu.Lock()
+		h.callErr = fmt.Errorf("no live session for %s", brokerAccountID)
+		h.mu.Unlock()
+		return
+	}
+	// Bounded, independent of the real request context, so a regression
+	// (the deadlock this test guards against) fails this test within a few
+	// seconds instead of hanging the whole suite indefinitely.
+	callCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	result, err := sess.RequestSymbolSpec(callCtx, "EURUSD")
+	h.mu.Lock()
+	h.result, h.callErr = result, err
+	h.mu.Unlock()
+}
+
+func (h *syncSymbolResolveEventHandler) OnSessionLost(ctx context.Context, brokerAccountID string) {}
+
+func (h *syncSymbolResolveEventHandler) snapshot() (SymbolSpecResult, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.result, h.callErr
+}
+
+func TestOnSessionEstablished_SynchronousRequestSymbolSpecDoesNotDeadlock(t *testing.T) {
+	events := &syncSymbolResolveEventHandler{}
+	srv := NewServer(nil, events, nil)
+	events.server = srv
+	srv.RegisterPairing("tok-1", PairingInfo{BrokerAccountID: "acct-1", ExpectedLogin: "1", ExpectedServer: "S", Platform: domain.BrokerTypeMT5})
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	ea := newFakeEA(t, wsURL(ts))
+	// sendHello/readHelloAck FIRST (a single direct synchronous read of
+	// exactly the hello_ack frame), matching every other test in this
+	// file — only THEN register the responder and start serve()'s
+	// background read loop. Calling serve() before readHelloAck would put
+	// two goroutines concurrently reading the same *websocket.Conn (serve's
+	// background loop and readHelloAck's direct read), which is unsafe/racy
+	// with gorilla/websocket. The server may still issue
+	// symbol_spec_request immediately after accepting the handshake (from
+	// within OnSessionEstablished, before this test code even reaches
+	// readHelloAck) — that's fine, it simply waits in the socket's receive
+	// buffer until serve()'s read loop starts, no data is lost.
+	ea.sendHello(helloMessage{PairingToken: "tok-1", Platform: "MT5", Login: "1", Server: "S"})
+	ea.readHelloAck()
+
+	ea.on(msgTypeSymbolSpecReq, func(raw json.RawMessage) any {
+		var req symbolSpecRequestMessage
+		_ = json.Unmarshal(raw, &req)
+		return symbolSpecResultMessage{
+			Type: msgTypeSymbolSpecRes, RequestID: req.RequestID,
+			BrokerSymbolName: "EURUSD", ContractSize: 100000,
+		}
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ea.serve(ctx)
+
+	waitFor(t, func() bool {
+		result, err := events.snapshot()
+		return err != nil || result.BrokerSymbolName != ""
+	})
+
+	result, err := events.snapshot()
+	if err != nil {
+		t.Fatalf("synchronous RequestSymbolSpec from OnSessionEstablished failed (deadlock or real error): %v", err)
+	}
+	if result.BrokerSymbolName != "EURUSD" || result.ContractSize != 100000 {
+		t.Fatalf("unexpected result: %+v", result)
 	}
 }

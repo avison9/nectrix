@@ -234,12 +234,8 @@ func (a *CTraderAdapter) resolveSymbolByID(ctx context.Context, conn *connection
 		a.symbols.mu.Unlock()
 	}
 
-	canonical := normalizeSymbolName(light.GetSymbolName())
-	assetClass := domain.AssetClassFX
-	if len(canonical) != 6 {
-		assetClass = domain.AssetClassCommodity // best-effort, same caveat as ResolveSymbol
-	}
-	return domain.NormalizedSymbol{CanonicalCode: canonical, AssetClass: assetClass}, full.GetLotSize(), nil
+	canonical := domain.NormalizeSymbolName(light.GetSymbolName())
+	return domain.NormalizedSymbol{CanonicalCode: canonical, AssetClass: domain.AssetClassOf(canonical)}, full.GetLotSize(), nil
 }
 
 func msToRFC3339(ms int64) string {

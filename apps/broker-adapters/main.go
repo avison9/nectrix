@@ -69,7 +69,9 @@ func main() {
 		nil,
 	)
 
-	loop := reconcile.New(coreApp, coreApp, coreApp, adapter, publisher.OnEvent, reconcileInterval, logger)
+	// adapter satisfies domain.SymbolResolver for free -- dedupadapter.Adapter
+	// embeds domain.BrokerAdapter, promoting ResolveSymbol/GetSymbolSpecification.
+	loop := reconcile.New(coreApp, coreApp, coreApp, adapter, coreApp, adapter, publisher.OnEvent, reconcileInterval, logger)
 	go loop.Run(ctx)
 
 	mux := http.NewServeMux()
