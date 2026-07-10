@@ -2,7 +2,11 @@
 #   docker build -f apps/copy-engine/Dockerfile -t <tag> .
 # (go.work ties this module to packages/go-domain, packages/event-contracts/go,
 # and packages/redis-client/go via local `use` directives — those sibling
-# directories must be in context.)
+# directories must be in context. go build resolves the *whole* workspace's
+# `use` list even for a module that doesn't import every sibling package, so
+# apps/mt-terminal-host must be present below too — a real CI failure
+# ("cannot load module ../mt-terminal-host") caught this gotcha for real the
+# first time that module actually landed on main.)
 
 # ---- Build stage ----
 FROM golang:1.26.4-bookworm AS build
@@ -16,6 +20,7 @@ COPY packages/ctrader-proto/go   packages/ctrader-proto/go
 COPY apps/copy-engine             apps/copy-engine
 COPY apps/broker-adapters         apps/broker-adapters
 COPY apps/mt5-bridge-gateway      apps/mt5-bridge-gateway
+COPY apps/mt-terminal-host        apps/mt-terminal-host
 
 WORKDIR /workspace/apps/copy-engine
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/copy-engine .
