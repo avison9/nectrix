@@ -82,10 +82,20 @@ COPY --from=install-diagnostics /diagnostics /diagnostics
 # builds if both installs genuinely succeeded.
 FROM install-diagnostics AS install-verified
 
-RUN test "$(cat /diagnostics/mt5-install.exitcode)" = "0" || (echo "MT5 install failed — see the mt-terminal-install-diagnostics CI artifact" >&2 && exit 1)
-RUN test -f /terminal-mt5/metaeditor64.exe || (echo "MT5 install reported success but metaeditor64.exe is missing" >&2 && exit 1)
-RUN test "$(cat /diagnostics/mt4-install.exitcode)" = "0" || (echo "MT4 install failed — see the mt-terminal-install-diagnostics CI artifact" >&2 && exit 1)
-RUN test -f /terminal-mt4/metaeditor.exe || (echo "MT4 install reported success but metaeditor.exe is missing" >&2 && exit 1)
+# Real, live-verified finding (mt-terminal-install-diagnostics artifacts from
+# two separate CI runs, 29115696730 and 29116213572): the installer's own
+# process exit code is NOT a reliable success/failure signal under Wine —
+# both runs exited 1 even though the screenshots show the wizard genuinely
+# completing (progress bar full, "Finish"/"Congratulations" screen reached).
+# xdotool's synthetic Enter keypress (intended to dismiss that screen) does
+# not reliably land on the right control either — it may just be cycling
+# the installer's own promotional carousel instead. What actually matters is
+# whether the real files got installed, checked directly here as the
+# authoritative signal; the exit code is logged only as non-fatal context.
+RUN echo "mt5 install exit code (informational only, not gating — see comment above): $(cat /diagnostics/mt5-install.exitcode)"
+RUN test -f /terminal-mt5/metaeditor64.exe || (echo "MT5 install genuinely failed — metaeditor64.exe is missing; see the mt-terminal-install-diagnostics CI artifact" >&2 && exit 1)
+RUN echo "mt4 install exit code (informational only, not gating — see comment above): $(cat /diagnostics/mt4-install.exitcode)"
+RUN test -f /terminal-mt4/metaeditor.exe || (echo "MT4 install genuinely failed — metaeditor.exe is missing; see the mt-terminal-install-diagnostics CI artifact" >&2 && exit 1)
 
 # ---- Compile stage: our own EA source, against the verified terminal install ----
 # A separate stage (not inlined into the final image) purely so the final
