@@ -26,12 +26,19 @@ set -eu
 : "${GATEWAY_HOST:?GATEWAY_HOST is required}"
 : "${GATEWAY_PORT:?GATEWAY_PORT is required}"
 
+## WINEPREFIX reuses the exact prefix the terminal was installed into at
+## build time (see terminal-image/Dockerfile's install-diagnostics stage)
+## — carried forward into the final image since only diagnostics-export
+## starts from `scratch`. Avoids any first-run Wine initialization surprise
+## at container start that a fresh, never-before-used prefix could hit.
 if [ "$PLATFORM" = "MT5" ]; then
-  TERMINAL_DIR=/terminal-mt5
+  TERMINAL_DIR=/canonical-mt5
+  export WINEPREFIX=/wine-mt5
   TERMINAL_EXE=terminal64.exe
   EA_NAME=NectrixBridgeMT5
 elif [ "$PLATFORM" = "MT4" ]; then
-  TERMINAL_DIR=/terminal-mt4
+  TERMINAL_DIR=/canonical-mt4
+  export WINEPREFIX=/wine-mt4
   TERMINAL_EXE=terminal.exe
   EA_NAME=NectrixBridgeMT4
 else
