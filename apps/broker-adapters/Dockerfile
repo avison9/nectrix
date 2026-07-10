@@ -4,7 +4,10 @@
 # and packages/redis-client/go via local `use` directives — those sibling
 # directories must be in context. Note: go build resolves the *whole*
 # workspace's `use` list even for a module that doesn't import redis-client,
-# so it must be present here too, not just in copy-engine's Dockerfile.)
+# so it must be present here too, not just in copy-engine's Dockerfile. Same
+# reason apps/mt-terminal-host must be present below — a real CI failure
+# ("cannot load module ../mt-terminal-host") caught this gotcha for real the
+# first time that module actually landed on main.)
 
 # ---- Build stage ----
 FROM golang:1.26.4-bookworm AS build
@@ -18,6 +21,7 @@ COPY packages/ctrader-proto/go   packages/ctrader-proto/go
 COPY apps/copy-engine             apps/copy-engine
 COPY apps/broker-adapters         apps/broker-adapters
 COPY apps/mt5-bridge-gateway      apps/mt5-bridge-gateway
+COPY apps/mt-terminal-host        apps/mt-terminal-host
 
 WORKDIR /workspace/apps/broker-adapters
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/broker-adapters .
