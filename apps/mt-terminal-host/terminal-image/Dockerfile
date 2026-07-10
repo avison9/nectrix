@@ -20,17 +20,19 @@
 FROM debian:bookworm-slim AS wine-base
 
 # wine32/wine64: MT5/MT4 (and MetaEditor, bundled with each) are
-# Windows-only binaries. xvfb: Wine's own GUI (including its installer)
-# needs a display even when run headless. winbind/cabextract: real,
+# Windows-only binaries. xvfb + xauth: Wine's own GUI (including its
+# installer) needs a display even when run headless — xvfb-run itself
+# hard-requires xauth to manage the X authority cookie, and fails
+# immediately (exit code 3, before Wine ever starts) without it; this was
+# caught for real on the first live CI run of this Dockerfile (see
+# apps/mt-terminal-host/README.md's "Live verification" section) — not
+# something documentation-reading alone surfaced. winbind/cabextract: real,
 # documented Wine dependencies for a clean 64-bit WINEPREFIX. wget/
 # ca-certificates: fetching the real MetaQuotes installers below.
-# UNVERIFIED in this devcontainer (no Wine here) — this exact package
-# set/install sequence follows Wine's own documented Debian install guide,
-# not independently confirmed against a real build.
 RUN dpkg --add-architecture i386 \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
-       wine wine32 wine64 xvfb winbind cabextract wget ca-certificates \
+       wine wine32 wine64 xvfb xauth winbind cabextract wget ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 ENV WINEPREFIX=/wine
