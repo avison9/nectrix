@@ -376,6 +376,16 @@ jobs:
             --from-literal=ctrader-client-id="ephemeral-ci-placeholder-client-id" \
             --from-literal=ctrader-client-secret="ephemeral-ci-placeholder-client-secret" \
             --dry-run=client -o yaml | kubectl apply -f -
+          # Real, live-verified finding: mt5-bridge-gateway's main.go
+          # log.Fatalf's without INTERNAL_SERVICE_TOKEN — a genuine
+          # deploy-staging rollout timeout caught this the first time this
+          # Deployment was ever actually applied. Same throwaway value as
+          # every other service's internal-service-token (must be
+          # byte-for-byte identical — see deploy/base/mt5-bridge-gateway/
+          # deployment.yaml's own comment).
+          kubectl create secret generic mt5-bridge-gateway-secrets -n copy-engine \
+            --from-literal=internal-service-token="ephemeral-ci-internal-token-DNRSbAWNZeVoRUcQyzuFtWnk" \
+            --dry-run=client -o yaml | kubectl apply -f -
           # Nectrix-hosted MT5/MT4 terminals — mt-terminal-provisioner-token
           # is deliberately a DIFFERENT throwaway value from
           # internal-service-token above (see SecurityConfig's Javadoc for
@@ -567,6 +577,10 @@ jobs:
             --from-literal=internal-service-token="ephemeral-ci-internal-token-DNRSbAWNZeVoRUcQyzuFtWnk" \
             --from-literal=ctrader-client-id="ephemeral-ci-placeholder-client-id" \
             --from-literal=ctrader-client-secret="ephemeral-ci-placeholder-client-secret" \
+            --dry-run=client -o yaml | kubectl apply -f -
+          # See deploy-staging's identical step for why this exists.
+          kubectl create secret generic mt5-bridge-gateway-secrets -n copy-engine \
+            --from-literal=internal-service-token="ephemeral-ci-internal-token-DNRSbAWNZeVoRUcQyzuFtWnk" \
             --dry-run=client -o yaml | kubectl apply -f -
           # Nectrix-hosted MT5/MT4 terminals — mt-terminal-provisioner-token
           # is deliberately a DIFFERENT throwaway value from
