@@ -27,6 +27,11 @@ dependencyManagement {
 dependencies {
     // TICKET-101 — EnvelopeEncryptionService, for BrokerLinkingService.
     implementation(project(":modules:crypto"))
+    // Nectrix-hosted MT5/MT4 terminal-provisioning — AuditLogRepository, for
+    // MtTerminalCredentialService's audit trail on every real plaintext-password
+    // fetch. Shared-kernel utility (same tier as modules:crypto), not a
+    // bounded-context module — consistent with the crypto exception above.
+    implementation(project(":modules:audit"))
     implementation("org.springframework.boot:spring-boot-starter-web") // @RestController, RestClient
     implementation("org.springframework.boot:spring-boot-starter-jdbc") // JdbcTemplate
     // @PreAuthorize/@PostAuthorize, Authentication, AccessDeniedException —

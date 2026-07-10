@@ -72,6 +72,10 @@ dependencies {
     // directly here for BrokerAccountOAuthIntegrationTest's real
     // EnvelopeEncryptionService-backed test fixture setup.
     testImplementation(project(":modules:crypto"))
+    // Same visibility reason as modules:crypto above — needed directly here for
+    // BrokerAccountMtTerminalCredentialsIntegrationTest's real AuditLogRepository-backed
+    // assertions (confirming a real audit_log row was written).
+    testImplementation(project(":modules:audit"))
 }
 
 application {

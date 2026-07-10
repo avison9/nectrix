@@ -6,15 +6,20 @@
 # install always bundles MetaEditor, so there's no need for a separate
 # compile step/image elsewhere — one build, one source of truth). See
 # entrypoint.sh for the runtime config-generation + launch sequence, and
-# apps/mt-terminal-host/README.md's "Real, in-progress terminal-image
-# debugging" section for the full history of what's been found/fixed here
-# so far via real CI runs. Wired into CI as a workflow_dispatch-only job
-# (build-terminal-image.yml), not on every push, for exactly that reason —
-# see that workflow's own comment.
+# apps/mt-terminal-host/README.md's "Real terminal-image debugging history"
+# section for the full history of what it took to get this genuinely
+# building/compiling/scanning/pushing for real (11 fix PRs, 7 real CI runs).
+# Built/scanned/pushed on every push to `main` via main-pipeline.yml's
+# build-scan-push matrix, same as every other service in this repo — was
+# workflow_dispatch-only while unverified; folded into the always-on
+# pipeline once a real CI run proved it green end-to-end.
 #
-# UNRESOLVED, must be validated before this image is ever built for real:
-# MetaQuotes' terminal EULA/licensing for redistributing the terminal binary
-# inside a container image Nectrix hosts itself — see README.md.
+# STILL UNRESOLVED, real legal risk: MetaQuotes' terminal EULA/licensing for
+# redistributing the terminal binary inside a container image Nectrix hosts
+# itself has NOT been reviewed — see README.md. Wiring this into the
+# always-on pipeline is a build/CI decision (this image now compiles
+# correctly), not a legal sign-off; that review still needs to happen before
+# any real terminal pod is ever provisioned against a real broker account.
 
 FROM debian:bookworm-slim AS wine-base
 

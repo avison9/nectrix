@@ -48,6 +48,12 @@ public class BrokerAccountInternalController {
     return CredentialsResponse.from(service.fetchCredentials(id));
   }
 
+  /** TICKET-102 — additive; cTrader's own {@link #credentials} endpoint above stays untouched. */
+  @GetMapping("/internal/broker-accounts/mt-credentials/{id}")
+  public MtCredentialsResponse mtCredentials(@PathVariable UUID id) {
+    return MtCredentialsResponse.from(service.fetchMtCredentials(id));
+  }
+
   @PostMapping("/internal/broker-accounts/{id}/connection-status")
   public void updateConnectionStatus(
       @PathVariable UUID id, @RequestBody ConnectionStatusRequest request) {
@@ -72,4 +78,11 @@ public class BrokerAccountInternalController {
 
   @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
   public record ConnectionStatusRequest(String status, String detail) {}
+
+  @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
+  public record MtCredentialsResponse(String login, String server, String pairingToken) {
+    static MtCredentialsResponse from(BrokerAccountInternalService.DecryptedMtCredentials creds) {
+      return new MtCredentialsResponse(creds.login(), creds.server(), creds.pairingToken());
+    }
+  }
 }

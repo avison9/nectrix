@@ -10,6 +10,7 @@ include(
     "db",
     "archunit-fixtures",
     "modules:crypto",
+    "modules:audit",
     "modules:auth",
     "modules:invitations",
     "modules:social",

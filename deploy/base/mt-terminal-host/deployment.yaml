@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mt-terminal-host
+  namespace: copy-engine
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: mt-terminal-host }
+  template:
+    metadata:
+      labels: { app: mt-terminal-host }
+    spec:
+      serviceAccountName: mt-terminal-host
+      containers:
+        - name: mt-terminal-host
+          image: ghcr.io/avison9/nectrix/mt-terminal-host:REPLACED_BY_CI
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8093
+          env:
+            # main.go log.Fatalf's on any of these being unset. mt-terminal-host-secrets
+            # is created by CI (main-pipeline.yml's deploy-staging/deploy-production
+            # jobs) with throwaway values — same pattern as broker-adapters-secrets.
+            # internal-service-token must be byte-for-byte identical to core-app's own
+            # copy; mt-terminal-provisioner-token must be byte-for-byte identical to
+            # core-app's nectrix.internal.mt-terminal-provisioner-token — a DIFFERENT
+            # value from internal-service-token (see SecurityConfig's Javadoc for why
+            # these are deliberately separate secrets).
+            - name: INTERNAL_SERVICE_TOKEN
+              valueFrom:
+                secretKeyRef: { name: mt-terminal-host-secrets, key: internal-service-token }
+            - name: MT_TERMINAL_PROVISIONER_TOKEN
+              valueFrom:
+                secretKeyRef: { name: mt-terminal-host-secrets, key: mt-terminal-provisioner-token }
+            - name: TERMINAL_IMAGE
+              value: ghcr.io/avison9/nectrix/mt-terminal-image:REPLACED_BY_CI
+            - name: TERMINAL_NAMESPACE
+              value: mt-terminals
+            # apps/mt5-bridge-gateway's in-cluster Service DNS (own namespace:
+            # copy-engine — see deploy/base/mt5-bridge-gateway/service.yaml). This is
+            # the address every provisioned terminal's EA is told to dial (baked into
+            # its Secret's GATEWAY_HOST/GATEWAY_PORT — see internal/k8sprovision).
+            - name: GATEWAY_HOST
+              value: mt5-bridge-gateway.copy-engine.svc.cluster.local
+            - name: GATEWAY_PORT
+              value: "8092"
+            - name: CORE_APP_INTERNAL_BASE_URL
+              value: http://core-app.core-app.svc.cluster.local:8080
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8093 }
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8093 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: 200m, memory: 128Mi }

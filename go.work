@@ -3,6 +3,7 @@ go 1.26
 use (
 	./apps/broker-adapters
 	./apps/copy-engine
+	./apps/mt-terminal-host
 	./apps/mt5-bridge-gateway
 	./packages/ctrader-proto/go
 	./packages/event-contracts/go

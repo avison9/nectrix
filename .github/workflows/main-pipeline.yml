@@ -68,6 +68,13 @@ jobs:
           # key for this loop.
           cache: false
       - name: Go services infra connectivity smoke test + event-contracts Kafka producer/consumer + DLQ tests (TICKET-007)
+        # apps/mt-terminal-host is deliberately NOT in this loop: its own
+        # -tags=integration tests need a real Kubernetes cluster (KUBECONFIG
+        # pointed at one), not this job's Postgres/Redis/Kafka-only ephemeral
+        # infra — proven separately, for real, via `make kind-mt-terminal-host-test`
+        # (infra/kind/mt-terminal-host-test/run.sh), the same
+        # host-tools-only pattern kind-netpol-test/kind-hpa-test already use
+        # (see infra/kind/README.md) rather than wired into this job.
         run: |
           for d in apps/copy-engine apps/broker-adapters apps/mt5-bridge-gateway packages/event-contracts/go; do
             (cd "$d" && go test -tags=integration ./...)
@@ -115,6 +122,18 @@ jobs:
           - { name: copy-engine, dockerfile: apps/copy-engine/Dockerfile }
           - { name: broker-adapters, dockerfile: apps/broker-adapters/Dockerfile }
           - { name: mt5-bridge-gateway, dockerfile: apps/mt5-bridge-gateway/Dockerfile }
+          - { name: mt-terminal-host, dockerfile: apps/mt-terminal-host/Dockerfile }
+          # The Wine/terminal image (apps/mt-terminal-host/terminal-image/) — real,
+          # live-verified working as of a real CI run (all install/compile/scan/push
+          # stages passed for real; see apps/mt-terminal-host/README.md's "Real,
+          # in-progress terminal-image debugging" section for the full history).
+          # Previously workflow_dispatch-only (build-terminal-image.yml, now
+          # removed) while genuinely unverified; folded into this always-on matrix
+          # now that it's proven, per the original TICKET-102 plan's CI wiring
+          # intent. Slower than every other leg here (~3 real minutes: Wine setup +
+          # two MetaQuotes installs + a real MetaEditor compile), but fail-fast:
+          # false means it never blocks the other legs.
+          - { name: mt-terminal-image, dockerfile: apps/mt-terminal-host/terminal-image/Dockerfile }
           - { name: admin-portal, dockerfile: apps/admin-portal/Dockerfile }
     steps:
       - uses: actions/checkout@v7.0.0
@@ -142,6 +161,38 @@ jobs:
           ignore-unfixed: true
       - name: Push (only reached if Trivy passed)
         run: docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.app.name }}:${{ github.sha }}
+
+      # mt-terminal-image only: if the build above failed, the
+      # install-diagnostics stage (which never fails itself — see
+      # install-with-diagnostics.sh's own header) still has a usable, cached
+      # layer carrying real screenshots/exit codes/stdout+stderr from
+      # whatever the Wine installer was doing at the moment it failed — a GUI
+      # installer's own error dialog is otherwise invisible to this job's
+      # text-only build log above. Ported from the now-removed
+      # build-terminal-image.yml (see apps/mt-terminal-host/README.md's "Real,
+      # in-progress terminal-image debugging" section for the history this
+      # capability made possible) rather than dropped when that workflow was
+      # folded into this always-on matrix — this Dockerfile is meaningfully
+      # more fragile than every other leg here (Wine + an external MetaQuotes
+      # CDN dependency + a real GUI installer under Xvfb), so losing this on
+      # the next real failure would be a real regression, not a cleanup.
+      - name: mt-terminal-image — on failure, export install diagnostics (screenshots, exit codes, logs)
+        if: failure() && matrix.app.name == 'mt-terminal-image'
+        run: |
+          docker buildx build \
+            --target diagnostics-export \
+            --file apps/mt-terminal-host/terminal-image/Dockerfile \
+            --cache-from type=gha,scope=mt-terminal-image \
+            -o type=local,dest=/tmp/mt-terminal-diagnostics \
+            . || true
+      - name: mt-terminal-image — on failure, upload install diagnostics artifact
+        if: failure() && matrix.app.name == 'mt-terminal-image'
+        uses: actions/upload-artifact@v4
+        with:
+          name: mt-terminal-install-diagnostics
+          path: /tmp/mt-terminal-diagnostics
+          if-no-files-found: warn
+          retention-days: 14
 
       # --- Cloud-native registry mirror (infra/terraform/{aws,gcp}/modules/{ecr,artifact-registry}) ---
       # Mutually exclusive on vars.CLOUD_PROVIDER (set once a cloud is chosen
@@ -238,8 +289,14 @@ jobs:
         if: vars.CLOUD_PROVIDER == 'gcp'
         run: gcloud auth configure-docker "$(echo '${{ vars.GCP_ARTIFACT_REGISTRY_URL }}' | cut -d/ -f1)" --quiet
       - name: Pull the just-scanned images
+        # mt-terminal-image isn't its own deployed service (no
+        # deploy/base/mt-terminal-image/ — it's a base image mt-terminal-host's
+        # reconciler references per-broker-account, see the TERMINAL_IMAGE patch
+        # step below), but still pulled/kind-loaded here so it's available
+        # locally if this environment's smoke test ever provisions a real
+        # terminal pod.
         run: |
-          for app in core-app copy-engine broker-adapters mt5-bridge-gateway admin-portal; do
+          for app in core-app copy-engine broker-adapters mt5-bridge-gateway mt-terminal-host mt-terminal-image admin-portal; do
             docker pull ${{ needs.resolve-registry.outputs.image_prefix }}/$app:${{ github.sha }}
           done
       - uses: helm/kind-action@v1.14.0
@@ -247,7 +304,7 @@ jobs:
           cluster_name: nectrix-staging
       - name: Load images into kind (no registry pull needed inside the cluster)
         run: |
-          for app in core-app copy-engine broker-adapters mt5-bridge-gateway admin-portal; do
+          for app in core-app copy-engine broker-adapters mt5-bridge-gateway mt-terminal-host mt-terminal-image admin-portal; do
             kind load docker-image "${{ needs.resolve-registry.outputs.image_prefix }}/$app:${{ github.sha }}" --name nectrix-staging
           done
       - name: Install kustomize
@@ -260,11 +317,28 @@ jobs:
         # required whenever the resolved registry differs from the
         # ghcr.io/avison9/nectrix hardcoded in deploy/base/*/deployment.yaml,
         # which is the case once vars.CLOUD_PROVIDER is aws or gcp.
+        #
+        # mt-terminal-image deliberately excluded from this loop — kustomize's
+        # `set image` only rewrites container `image:` fields in Deployment
+        # specs, and mt-terminal-image has no Deployment of its own (see above).
+        # It's referenced instead as the TERMINAL_IMAGE env var value on
+        # mt-terminal-host's own Deployment, patched separately below since
+        # kustomize's image-set mechanism doesn't reach into env var strings.
         working-directory: deploy/overlays/staging
         run: |
-          for app in core-app copy-engine broker-adapters mt5-bridge-gateway admin-portal; do
+          for app in core-app copy-engine broker-adapters mt5-bridge-gateway mt-terminal-host admin-portal; do
             kustomize edit set image "ghcr.io/avison9/nectrix/$app=${{ needs.resolve-registry.outputs.image_prefix }}/$app:${{ github.sha }}"
           done
+      - name: Patch TERMINAL_IMAGE env var into mt-terminal-host's base Deployment
+        # deploy/base/mt-terminal-host/deployment.yaml ships with a
+        # REPLACED_BY_CI sentinel for TERMINAL_IMAGE (same convention as its
+        # own `image:` field, which kustomize's set-image step above handles) —
+        # but that's an env var VALUE, not a container image field, so it needs
+        # a direct substitution instead. Mutates the checked-out base file
+        # in-place, same as kustomize's own edits above; this runner and its
+        # checkout are thrown away at the end of this ephemeral job.
+        run: |
+          sed -i "s|ghcr.io/avison9/nectrix/mt-terminal-image:REPLACED_BY_CI|${{ needs.resolve-registry.outputs.image_prefix }}/mt-terminal-image:${{ github.sha }}|" deploy/base/mt-terminal-host/deployment.yaml
       # TICKET-005 — core-app's Deployment reads JWT_SIGNING_SECRET from this
       # Secret (see deploy/base/core-app/deployment.yaml); it's read eagerly
       # at startup regardless of whether auth is ever exercised, so without
@@ -290,6 +364,7 @@ jobs:
           kubectl create secret generic core-app-secrets -n core-app \
             --from-literal=jwt-signing-secret="n/ErCuickD7JyKdFhuOeH2QWJjQp6ZBxGxUosC6Mtr3kP6idy8j1sMYV0lKL0wAPeMuFQ4iwsF2uxq9lIk6MYQ==" \
             --from-literal=internal-service-token="ephemeral-ci-internal-token-DNRSbAWNZeVoRUcQyzuFtWnk" \
+            --from-literal=mt-terminal-provisioner-token="ephemeral-ci-terminal-provisioner-token-XvJhq2NpTr8FbGdKz" \
             --dry-run=client -o yaml | kubectl apply -f -
           kubectl create namespace admin-portal --dry-run=client -o yaml | kubectl apply -f -
           kubectl create secret generic admin-portal-secrets -n admin-portal \
@@ -301,12 +376,29 @@ jobs:
             --from-literal=ctrader-client-id="ephemeral-ci-placeholder-client-id" \
             --from-literal=ctrader-client-secret="ephemeral-ci-placeholder-client-secret" \
             --dry-run=client -o yaml | kubectl apply -f -
+          # Nectrix-hosted MT5/MT4 terminals — mt-terminal-provisioner-token
+          # is deliberately a DIFFERENT throwaway value from
+          # internal-service-token above (see SecurityConfig's Javadoc for
+          # why these are separate secrets in real deployments too).
+          # mt-terminals namespace + the RBAC objects are applied here,
+          # BEFORE the main `kubectl apply -k` below, so the ServiceAccount
+          # mt-terminal-host's Deployment references already exists by the
+          # time that Deployment is created.
+          kubectl create namespace mt-terminals --dry-run=client -o yaml | kubectl apply -f -
+          kubectl apply -f deploy/base/mt-terminal-host/serviceaccount.yaml
+          kubectl apply -f deploy/base/mt-terminal-host/role.yaml
+          kubectl apply -f deploy/base/mt-terminal-host/rolebinding.yaml
+          kubectl create secret generic mt-terminal-host-secrets -n copy-engine \
+            --from-literal=internal-service-token="ephemeral-ci-internal-token-DNRSbAWNZeVoRUcQyzuFtWnk" \
+            --from-literal=mt-terminal-provisioner-token="ephemeral-ci-terminal-provisioner-token-XvJhq2NpTr8FbGdKz" \
+            --dry-run=client -o yaml | kubectl apply -f -
       - run: kubectl apply -k deploy/overlays/staging
       - name: Wait for rollouts
         run: |
           kubectl rollout status deployment/copy-engine -n copy-engine --timeout=120s
           kubectl rollout status deployment/broker-adapters -n copy-engine --timeout=120s
           kubectl rollout status deployment/mt5-bridge-gateway -n copy-engine --timeout=120s
+          kubectl rollout status deployment/mt-terminal-host -n copy-engine --timeout=120s
           kubectl rollout status deployment/core-app -n core-app --timeout=180s
           kubectl rollout status deployment/admin-portal -n admin-portal --timeout=120s
       - name: Verify drain hook - static assertion (terminationGracePeriodSeconds is set)
@@ -419,8 +511,10 @@ jobs:
         if: vars.CLOUD_PROVIDER == 'gcp'
         run: gcloud auth configure-docker "$(echo '${{ vars.GCP_ARTIFACT_REGISTRY_URL }}' | cut -d/ -f1)" --quiet
       - name: Pull the just-scanned images
+        # mt-terminal-image isn't its own deployed service — see
+        # deploy-staging's identical note.
         run: |
-          for app in core-app copy-engine broker-adapters mt5-bridge-gateway admin-portal; do
+          for app in core-app copy-engine broker-adapters mt5-bridge-gateway mt-terminal-host mt-terminal-image admin-portal; do
             docker pull ${{ needs.resolve-registry.outputs.image_prefix }}/$app:${{ github.sha }}
           done
       - uses: helm/kind-action@v1.14.0
@@ -428,7 +522,7 @@ jobs:
           cluster_name: nectrix-production
       - name: Load images into kind (no registry pull needed inside the cluster)
         run: |
-          for app in core-app copy-engine broker-adapters mt5-bridge-gateway admin-portal; do
+          for app in core-app copy-engine broker-adapters mt5-bridge-gateway mt-terminal-host mt-terminal-image admin-portal; do
             kind load docker-image "${{ needs.resolve-registry.outputs.image_prefix }}/$app:${{ github.sha }}" --name nectrix-production
           done
       - name: Install kustomize
@@ -438,11 +532,17 @@ jobs:
           echo "/tmp/kustomize-bin" >> "$GITHUB_PATH"
       - name: Patch image tags into the production overlay
         # Explicit oldName=newName:tag form — see deploy-staging's identical note.
+        # mt-terminal-image deliberately excluded — see deploy-staging's
+        # identical note (patched via TERMINAL_IMAGE env var below instead).
         working-directory: deploy/overlays/production
         run: |
-          for app in core-app copy-engine broker-adapters mt5-bridge-gateway admin-portal; do
+          for app in core-app copy-engine broker-adapters mt5-bridge-gateway mt-terminal-host admin-portal; do
             kustomize edit set image "ghcr.io/avison9/nectrix/$app=${{ needs.resolve-registry.outputs.image_prefix }}/$app:${{ github.sha }}"
           done
+      - name: Patch TERMINAL_IMAGE env var into mt-terminal-host's base Deployment
+        # See deploy-staging's identical step for why this exists.
+        run: |
+          sed -i "s|ghcr.io/avison9/nectrix/mt-terminal-image:REPLACED_BY_CI|${{ needs.resolve-registry.outputs.image_prefix }}/mt-terminal-image:${{ github.sha }}|" deploy/base/mt-terminal-host/deployment.yaml
       # TICKET-005 — see deploy-staging's identical step for why this exists.
       # Real production secret-management doesn't exist yet (out of scope
       # here — see infra/terraform/README.md); this ephemeral kind cluster
@@ -456,6 +556,7 @@ jobs:
           kubectl create secret generic core-app-secrets -n core-app \
             --from-literal=jwt-signing-secret="n/ErCuickD7JyKdFhuOeH2QWJjQp6ZBxGxUosC6Mtr3kP6idy8j1sMYV0lKL0wAPeMuFQ4iwsF2uxq9lIk6MYQ==" \
             --from-literal=internal-service-token="ephemeral-ci-internal-token-DNRSbAWNZeVoRUcQyzuFtWnk" \
+            --from-literal=mt-terminal-provisioner-token="ephemeral-ci-terminal-provisioner-token-XvJhq2NpTr8FbGdKz" \
             --dry-run=client -o yaml | kubectl apply -f -
           kubectl create namespace admin-portal --dry-run=client -o yaml | kubectl apply -f -
           kubectl create secret generic admin-portal-secrets -n admin-portal \
@@ -467,12 +568,29 @@ jobs:
             --from-literal=ctrader-client-id="ephemeral-ci-placeholder-client-id" \
             --from-literal=ctrader-client-secret="ephemeral-ci-placeholder-client-secret" \
             --dry-run=client -o yaml | kubectl apply -f -
+          # Nectrix-hosted MT5/MT4 terminals — mt-terminal-provisioner-token
+          # is deliberately a DIFFERENT throwaway value from
+          # internal-service-token above (see SecurityConfig's Javadoc for
+          # why these are separate secrets in real deployments too).
+          # mt-terminals namespace + the RBAC objects are applied here,
+          # BEFORE the main `kubectl apply -k` below, so the ServiceAccount
+          # mt-terminal-host's Deployment references already exists by the
+          # time that Deployment is created.
+          kubectl create namespace mt-terminals --dry-run=client -o yaml | kubectl apply -f -
+          kubectl apply -f deploy/base/mt-terminal-host/serviceaccount.yaml
+          kubectl apply -f deploy/base/mt-terminal-host/role.yaml
+          kubectl apply -f deploy/base/mt-terminal-host/rolebinding.yaml
+          kubectl create secret generic mt-terminal-host-secrets -n copy-engine \
+            --from-literal=internal-service-token="ephemeral-ci-internal-token-DNRSbAWNZeVoRUcQyzuFtWnk" \
+            --from-literal=mt-terminal-provisioner-token="ephemeral-ci-terminal-provisioner-token-XvJhq2NpTr8FbGdKz" \
+            --dry-run=client -o yaml | kubectl apply -f -
       - run: kubectl apply -k deploy/overlays/production
       - name: Wait for rollouts
         run: |
           kubectl rollout status deployment/copy-engine -n copy-engine --timeout=120s
           kubectl rollout status deployment/broker-adapters -n copy-engine --timeout=120s
           kubectl rollout status deployment/mt5-bridge-gateway -n copy-engine --timeout=120s
+          kubectl rollout status deployment/mt-terminal-host -n copy-engine --timeout=120s
           kubectl rollout status deployment/core-app -n core-app --timeout=180s
           kubectl rollout status deployment/admin-portal -n admin-portal --timeout=120s
       - name: Smoke check

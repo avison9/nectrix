@@ -11,9 +11,17 @@ import "context"
 // fetched, decrypted, at connect-time from apps/core-app's internal
 // credentials endpoint (Go never decrypts these itself — see
 // docs/17-security-architecture.md's single-encryption-authority design,
-// TICKET-011's EnvelopeEncryptionService). Login/Server/APIToken remain
-// reserved for TICKET-102's MT5 adapter, whose credential shape (EA-bridge
-// endpoint, not OAuth) hasn't landed yet.
+// TICKET-011's EnvelopeEncryptionService).
+//
+// TICKET-102 (MT5/MT4, EA-bridge strategy): Login/Server are the terminal's
+// own trade-account login and server name, used to cross-check against what
+// a connecting EA session reports (defense against a leaked pairing token
+// being attached to the wrong account). APIToken carries the per-account
+// pairing token — an opaque secret the user pastes into the EA's own input
+// parameters at attach-time, NOT an OAuth-style bearer token; Connect()
+// doesn't dial anywhere for these adapters, it registers what to match
+// against when a real EA session arrives (see apps/mt5-bridge-gateway's
+// internal/eabridge package).
 type BrokerCredentials struct {
 	BrokerType BrokerType
 	AccountID  string // broker_accounts.id this connection represents

@@ -1,0 +1,20 @@
+# A namespace-scoped Role (not ClusterRole) living IN mt-terminals — the
+# ServiceAccount this binds to (copy-engine/mt-terminal-host) can only ever
+# touch Deployments/Secrets inside this one namespace, nothing cluster-wide
+# and nothing in any other namespace (verified for real by
+# infra/kind/mt-terminal-host-test's negative RBAC assertion). Deliberately
+# no access to pods/exec/logs — this process only ever manages the
+# Deployment/Secret objects themselves, never needs to reach into a running
+# terminal container directly.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: mt-terminal-host
+  namespace: mt-terminals
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
