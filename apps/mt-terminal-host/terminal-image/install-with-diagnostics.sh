@@ -9,6 +9,16 @@
 # own layer always commits and its /diagnostics content stays exportable
 # via `docker buildx build --target diagnostics-export -o type=local,...`
 # even when the real build fails downstream.
+#
+# Real, live-verified finding (see the mt-terminal-install-diagnostics CI
+# artifact from run 29115696730): MetaQuotes' /auto silent-install flag does
+# NOT suppress the installer's own final "Finish"/"Congratulations" screen —
+# both MT5 and MT4 genuinely complete their install (file-copying and all)
+# and then just sit at that confirmation screen forever, which is why the
+# wrapped process previously never exited cleanly. This script now
+# periodically sends Enter (Finish is the wizard's default/focused button)
+# to dismiss it — a harmless no-op on every earlier screen, since nothing is
+# focused/actionable yet.
 set -u
 
 INSTALLER="$1"
@@ -22,16 +32,14 @@ XVFB_PID=$!
 export DISPLAY=:99
 sleep 2
 
-# +seh,+module: exception-handling and DLL-load tracing — the two channels
-# most likely to explain a silent exit(1) with no installer-drawn error
-# text (a crash before any dialog renders, or a missing/incompatible DLL).
-WINEDEBUG=+seh,+module wine "$INSTALLER" /auto /portable "/S:$DEST_DIR" \
+wine "$INSTALLER" /auto /portable "/S:$DEST_DIR" \
   > "/diagnostics/${LABEL}.stdout.log" 2> "/diagnostics/${LABEL}.stderr.log" &
 WINE_PID=$!
 
 i=0
 while kill -0 "$WINE_PID" 2>/dev/null && [ "$i" -lt 20 ]; do
   xwd -root -display :99 -out "/diagnostics/${LABEL}-${i}.xwd" 2>/dev/null || true
+  xdotool key --clearmodifiers Return 2>/dev/null || true
   sleep 3
   i=$((i + 1))
 done
