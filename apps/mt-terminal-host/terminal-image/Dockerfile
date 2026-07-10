@@ -25,16 +25,20 @@ FROM debian:bookworm-slim AS wine-base
 # caught for real on the first live CI run of this Dockerfile (see
 # apps/mt-terminal-host/README.md's "Live verification" section). x11-apps
 # (xwd)/imagemagick (convert): NOT needed by the real image itself — only
-# by install-with-diagnostics.sh below, to screenshot whatever the
-# installer was showing at the moment it failed (a GUI installer's own
-# error dialog is otherwise invisible to a text-only Docker build log).
+# by install-with-diagnostics.sh, to screenshot whatever the installer was
+# showing at the moment it failed (a GUI installer's own error dialog is
+# otherwise invisible to a text-only Docker build log) — this is how a
+# second real CI run found that /auto does NOT suppress the installer's
+# own final "Finish" confirmation screen (both MT5 and MT4 genuinely
+# complete their install and then just sit there waiting for a click).
+# xdotool: dismisses that screen (see install-with-diagnostics.sh).
 # winbind/cabextract: real, documented Wine dependencies for a clean
 # 64-bit WINEPREFIX. wget/ca-certificates: fetching the real MetaQuotes
 # installers below.
 RUN dpkg --add-architecture i386 \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
-       wine wine32 wine64 xvfb xauth x11-apps imagemagick winbind cabextract wget ca-certificates \
+       wine wine32 wine64 xvfb xauth x11-apps imagemagick xdotool winbind cabextract wget ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 ENV WINEPREFIX=/wine
