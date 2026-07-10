@@ -26,14 +26,25 @@ set -eu
 : "${GATEWAY_HOST:?GATEWAY_HOST is required}"
 : "${GATEWAY_PORT:?GATEWAY_PORT is required}"
 
+## WINEPREFIX reuses the exact prefix the terminal was installed into at
+## build time (see terminal-image/Dockerfile's install-diagnostics stage)
+## — carried forward into the final image since only diagnostics-export
+## starts from `scratch`. Avoids any first-run Wine initialization surprise
+## at container start that a fresh, never-before-used prefix could hit.
 if [ "$PLATFORM" = "MT5" ]; then
-  TERMINAL_DIR=/terminal-mt5
+  TERMINAL_DIR=/canonical-mt5
+  export WINEPREFIX=/wine-mt5
   TERMINAL_EXE=terminal64.exe
   EA_NAME=NectrixBridgeMT5
 elif [ "$PLATFORM" = "MT4" ]; then
-  TERMINAL_DIR=/terminal-mt4
-  TERMINAL_EXE=terminal.exe
-  EA_NAME=NectrixBridgeMT4
+  # Deliberately unsupported for now — real, live-verified finding: MQL4 has
+  # no native Socket*() functions, so NectrixBridgeMT4.mq4 cannot compile as
+  # designed (see terminal-image/Dockerfile's compile-ea stage comment and
+  # apps/mt-terminal-host/README.md). No .ex4 is built into this image, so
+  # failing fast and clearly here beats silently launching a terminal with
+  # no EA ever able to attach.
+  echo "entrypoint: PLATFORM=MT4 is not yet supported — MQL4 has no native socket support, so the EA bridge cannot run as designed; see apps/mt-terminal-host/README.md" >&2
+  exit 1
 else
   echo "entrypoint: unknown PLATFORM '$PLATFORM' (expected MT5 or MT4)" >&2
   exit 1
