@@ -169,11 +169,21 @@ cleanly for a CI environment that has both — just not exercised here). This wi
 runbook once the terminal image has been built and validated for real.
 
 **Real, in-progress `terminal-image` debugging** (`.github/workflows/build-terminal-image.yml`,
-manual dispatch): the first real CI run caught a genuine bug (`xvfb-run` needs `xauth`, not just
-`xvfb` — fixed). The install itself still fails on real x86_64 CI hardware after that fix, with no
-human-readable error (a GUI installer's own dialog isn't visible in a text-only build log). The
-Dockerfile now has a diagnostics stage (`install-diagnostics`/`diagnostics-export`,
-`terminal-image/install-with-diagnostics.sh`) that always commits its own layer — even when the real
-`install-verified` gate fails — capturing periodic screenshots, the real exit code, and Wine's own
-stdout/stderr for both the MT5 and MT4 installs. On a failed CI run, the `mt-terminal-install-diagnostics`
-workflow artifact has these for real inspection, instead of guessing blind.
+manual dispatch), findings so far from real x86_64 CI runs:
+
+1. `xvfb-run` needs `xauth`, not just `xvfb` (fixed).
+2. The Dockerfile has a diagnostics stage (`install-diagnostics`/`diagnostics-export`,
+   `terminal-image/install-with-diagnostics.sh`) that always commits its own layer — even when the
+   real `install-verified` gate fails — capturing periodic screenshots, the real exit code, and
+   Wine's own stdout/stderr for both the MT5 and MT4 installs, uploaded as the
+   `mt-terminal-install-diagnostics` workflow artifact on any failure. This is how (2) and (3) below
+   were actually found, not guessed.
+3. MetaQuotes' `/auto` flag does NOT suppress the installer's own final "Finish"/"Congratulations"
+   confirmation screen — both installers genuinely complete (screenshots show the full wizard, file
+   copying and all) and then just sit there. A synthetic `xdotool` Enter keypress was added to try
+   dismissing it, but doesn't reliably land on the right control (may just cycle the installer's own
+   promotional carousel instead).
+4. Consequently, **the installer's own process exit code is not a reliable success signal under
+   Wine** — confirmed exiting 1 across multiple runs even when the wizard visibly completed.
+   `install-verified` now gates on the real file (`metaeditor64.exe`/`metaeditor.exe` actually
+   present), not the exit code, which is logged only as non-fatal context.
