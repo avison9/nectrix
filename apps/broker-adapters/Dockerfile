@@ -14,6 +14,7 @@ COPY go.work go.work.sum ./
 COPY packages/go-domain          packages/go-domain
 COPY packages/event-contracts/go packages/event-contracts/go
 COPY packages/redis-client/go    packages/redis-client/go
+COPY packages/ctrader-proto/go   packages/ctrader-proto/go
 COPY apps/copy-engine             apps/copy-engine
 COPY apps/broker-adapters         apps/broker-adapters
 COPY apps/mt5-bridge-gateway      apps/mt5-bridge-gateway
