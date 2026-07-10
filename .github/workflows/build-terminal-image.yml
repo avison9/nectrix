@@ -1,0 +1,62 @@
+name: Build Terminal Image (manual)
+
+# Deliberately its OWN workflow file, not a job inside main-pipeline.yml:
+# main-pipeline.yml's `on:` already includes workflow_dispatch (so it can be
+# manually re-run), and every job in it besides this one has no
+# event-based `if:` gating — a manual dispatch of that workflow runs the
+# WHOLE pipeline (real build-scan-push for 7 images, two real ephemeral
+# kind-based deploys), not just this one build. Keeping this isolated
+# means triggering it only ever does exactly this one thing.
+#
+# Nectrix-hosted MT5/MT4 terminals: Wine + Xvfb + a real MetaTrader
+# terminal + our own EA, compiled from source INSIDE this image's own
+# build (see apps/mt-terminal-host/terminal-image/Dockerfile). Manual-only
+# (no `push` trigger, unlike main-pipeline.yml): this .mq5/.mq4 source has
+# never been compiled anywhere, this Dockerfile has never been built
+# anywhere (no Wine in any environment this ticket had access to), and
+# MetaQuotes' own terminal EULA/licensing for redistributing it in a
+# container image Nectrix hosts itself is a real, still-open question (see
+# that Dockerfile's own header and apps/mt-terminal-host/README.md).
+# Wiring this into an always-on push-triggered pipeline before any of that
+# is resolved would make routine, unrelated commits fail on a genuinely
+# experimental, unverified path.
+
+on:
+  workflow_dispatch: {}
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAMESPACE: avison9/nectrix
+
+jobs:
+  build-scan-push-terminal-image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: docker/setup-buildx-action@v4.2.0
+      - uses: docker/login-action@v4.4.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v7.3.0
+        with:
+          context: .
+          file: apps/mt-terminal-host/terminal-image/Dockerfile
+          push: false
+          load: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/mt-terminal-image:${{ github.sha }}
+          cache-from: type=gha,scope=mt-terminal-image
+          cache-to: type=gha,mode=max,scope=mt-terminal-image
+      - uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/mt-terminal-image:${{ github.sha }}
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          ignore-unfixed: true
+      - name: Push (only reached if Trivy passed)
+        run: docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/mt-terminal-image:${{ github.sha }}
