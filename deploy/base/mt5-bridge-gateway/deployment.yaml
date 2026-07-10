@@ -17,6 +17,28 @@ spec:
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8092
+          env:
+            # Real, live-verified finding: main.go log.Fatalf's if this is
+            # unset — without it the pod crash-loops and never becomes
+            # ready (caught for real via a genuine deploy-staging rollout
+            # timeout, the first time this Deployment was ever actually
+            # applied). Same pattern as broker-adapters-secrets/
+            # core-app-secrets — the mt5-bridge-gateway-secrets Secret is
+            # created by CI (main-pipeline.yml's deploy-staging/
+            # deploy-production jobs) with a throwaway value before this
+            # manifest is applied. Must be byte-for-byte identical to
+            # core-app's own copy.
+            - name: INTERNAL_SERVICE_TOKEN
+              valueFrom:
+                secretKeyRef: { name: mt5-bridge-gateway-secrets, key: internal-service-token }
+            # core-app's in-cluster Service DNS (own namespace: core-app —
+            # see deploy/base/core-app/service.yaml). Has a localhost
+            # fallback in main.go (envOr), which is wrong for a real
+            # cluster — not fatal like INTERNAL_SERVICE_TOKEN above, but
+            # set explicitly for correctness, matching broker-adapters'
+            # identical pattern.
+            - name: CORE_APP_INTERNAL_BASE_URL
+              value: http://core-app.core-app.svc.cluster.local:8080
           securityContext:
             runAsNonRoot: true
             runAsUser: 65532
