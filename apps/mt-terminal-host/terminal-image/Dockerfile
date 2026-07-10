@@ -111,23 +111,19 @@ FROM install-verified AS compile-ea
 COPY apps/mt5-bridge-gateway/ea/mt5/NectrixBridgeMT5.mq5 /canonical-mt5/MQL5/Experts/NectrixBridgeMT5.mq5
 COPY apps/mt5-bridge-gateway/ea/mt4/NectrixBridgeMT4.mq4 /canonical-mt4/MQL4/Experts/NectrixBridgeMT4.mq4
 
+COPY apps/mt-terminal-host/terminal-image/compile-ea.sh /compile-ea.sh
+RUN chmod +x /compile-ea.sh
+
 # /compile:<path> /log are MetaEditor's own documented CLI compile switches
-# (exit code and /log's contents are how a real build would detect a
-# compile error — UNVERIFIED here, this source has never been run through
-# a real MetaEditor; a genuine compile error would only surface the first
-# time this stage actually runs).
-#
-# Real, live-verified finding: WINEPREFIX must be set explicitly here to the
-# SAME prefix each terminal was actually installed into (/wine-mt5,
-# /wine-mt4) — install-with-diagnostics.sh only exports WINEPREFIX within
-# its own script process, which doesn't persist across separate Dockerfile
-# RUN layers. Without it, wine silently falls back to a brand-new default
-# prefix (/root/.wine) that never had the real install's registry/COM setup,
-# and MetaEditor fails with OLE/RPC marshalling errors as a result.
-RUN WINEPREFIX=/wine-mt5 xvfb-run -a wine /canonical-mt5/metaeditor64.exe "/compile:/canonical-mt5/MQL5/Experts/NectrixBridgeMT5.mq5" /log \
-    && test -f /canonical-mt5/MQL5/Experts/NectrixBridgeMT5.ex5
-RUN WINEPREFIX=/wine-mt4 xvfb-run -a wine /canonical-mt4/metaeditor.exe "/compile:/canonical-mt4/MQL4/Experts/NectrixBridgeMT4.mq4" /log \
-    && test -f /canonical-mt4/MQL4/Experts/NectrixBridgeMT4.ex4
+# (compile-ea.sh's own header explains why it manually manages Xvfb rather
+# than using `xvfb-run -a` — the latter failed near-instantly the one time
+# it was tried here). WINEPREFIX must match the prefix each terminal was
+# actually installed into (/wine-mt5, /wine-mt4) — real, live-verified
+# finding: without it, wine silently falls back to a brand-new default
+# prefix that never had the real install's registry/COM setup, and
+# MetaEditor fails with OLE/RPC marshalling errors as a result.
+RUN /compile-ea.sh /wine-mt5 /canonical-mt5/metaeditor64.exe /canonical-mt5/MQL5/Experts/NectrixBridgeMT5.mq5 /canonical-mt5/MQL5/Experts/NectrixBridgeMT5.ex5
+RUN /compile-ea.sh /wine-mt4 /canonical-mt4/metaeditor.exe /canonical-mt4/MQL4/Experts/NectrixBridgeMT4.mq4 /canonical-mt4/MQL4/Experts/NectrixBridgeMT4.ex4
 
 # ---- Final image ----
 FROM install-verified AS final
