@@ -61,6 +61,27 @@ public class BrokerAccountInternalService {
   }
 
   /**
+   * TICKET-102 — the MT5/MT4 counterpart of {@link #fetchCredentials}, called by
+   * apps/mt5-bridge-gateway's internal/pairing discovery loop. Deliberately never returns {@code
+   * password}: the gateway only needs {@code login}/{@code server} (to cross-check against what a
+   * connecting EA session reports) and {@code pairingToken} (to attribute the session) — the
+   * terminal password is never transmitted anywhere past this decrypt, since the EA authenticates
+   * to its own terminal locally, not to this platform.
+   */
+  public DecryptedMtCredentials fetchMtCredentials(UUID brokerAccountId) {
+    BrokerAccountRepository.CredentialsRow row =
+        repository
+            .findCredentialsById(brokerAccountId)
+            .orElseThrow(BrokerAccountNotFoundException::new);
+    String ciphertext = new String(row.credentialsCiphertext(), StandardCharsets.UTF_8);
+    String json = envelopeEncryptionService.decryptField(ciphertext, row.credentialsKeyVersion());
+    MtLinkingService.MtStoredCredentials credentials =
+        objectMapper.readValue(json, MtLinkingService.MtStoredCredentials.class);
+    return new DecryptedMtCredentials(
+        credentials.login(), credentials.server(), credentials.pairingToken());
+  }
+
+  /**
    * Updates the row AND publishes {@link BrokerConnectionEvent} to the {@code broker-connection}
    * topic — the plan's own spec for this endpoint bundles both, not split across two calls, so a
    * caller (Go) reporting a transition can't accidentally update the row without the rest of the
@@ -100,4 +121,6 @@ public class BrokerAccountInternalService {
 
   public record DecryptedCredentials(
       String accessToken, String refreshToken, long ctidTraderAccountId, boolean isLive) {}
+
+  public record DecryptedMtCredentials(String login, String server, String pairingToken) {}
 }

@@ -314,6 +314,110 @@ cTrader demo account logged into in your browser.
    ```
    `apps/broker-adapters`' own logs show `reconcile: connected broker account brokerAccountId=<id>`.
 
+## MT5/MT4 Broker Linking (`modules/invitations`, TICKET-102)
+
+Direct-credential linking for MT5 and MT4 — the EA-bridge counterpart of the cTrader OAuth flow
+above, pulled forward from MT4's original Phase-3 scope (`TICKET-311`) alongside MT5. No
+redirect/state/callback dance: the user submits their terminal login/password/server directly, Core
+App encrypts them alongside a freshly generated opaque `pairingToken`, and returns that token + the
+gateway's WebSocket URL for the user to paste into their EA's own input parameters. See
+`apps/mt5-bridge-gateway/README.md` for the full sequence diagram and the Go/EA side — this section
+covers the Java surface + what's new relative to TICKET-101's cTrader flow.
+
+```
+POST /api/v1/broker-accounts/mt5  (authenticated) {login, password, server, is_demo, display_label} -> {id, pairing_token, gateway_url, connection_status: PENDING}
+POST /api/v1/broker-accounts/mt4  (authenticated) — identical shape
+```
+
+New internal-only endpoint (additive — cTrader's own `credentials` endpoint above is untouched),
+same shared-secret auth as every other `/internal/**` route:
+
+```
+GET /internal/broker-accounts/mt-credentials/{id} -> {login, server, pairingToken}
+```
+
+Deliberately never returns the terminal `password` — `apps/mt5-bridge-gateway` only needs
+`login`/`server` (to cross-check against what a connecting EA session reports) and `pairingToken`
+(to attribute the session); the EA authenticates to its own terminal locally, never to this
+platform, so the password never needs to leave this decrypt at all. See
+`BrokerAccountInternalService#fetchMtCredentials`'s Javadoc.
+
+### What's reused unmodified from TICKET-101
+
+The **only** new Java surface for this ticket is `MtLinkingService`, `BrokerAccountMtController`,
+the new internal endpoint above, and a Liquibase migration (`018-mt4-broker-type.sql`) widening the
+three `broker_type` CHECK constraints (`broker_accounts`, `broker_ib_links`, `broker_fee_reports` —
+previously `'CTRADER','MT5'` only) to also allow `'MT4'`. Everything else is the exact same
+machinery TICKET-101 built: `EnvelopeEncryptionService`, the `/internal/**` shared-secret filter
+chain, `BrokerAccountRepository.insert`/`existsForUser` (already broker-type-generic, no changes
+needed), and — on the Go side — the `ReportConnectionStatus` endpoint/caller.
+
+### Real, live-verified findings
+
+Verified via 8 real integration tests (`BrokerAccountMtIntegrationTest`, real Postgres, real
+`EnvelopeEncryptionService`, real HTTP calls — `./gradlew :bootstrap:integrationTest`): auth
+requirements on both link routes, a real `PENDING` row created with a real pairing token + gateway
+URL, the real `018-mt4-broker-type.sql` constraint widening (proven by successfully inserting a real
+`MT4` row — an unmodified constraint would have made the insert itself fail with a 500), duplicate-
+account rejection (409), 404 for an unknown internal credentials lookup, and the real decrypt path
+returning `login`/`server`/`pairingToken` while confirming `password` never appears in the response.
+
+The Go gateway side (`apps/mt5-bridge-gateway`'s `eabridge`/`mtadapter`/`pairing` packages) is
+proven separately, against a real WebSocket connection from a fake-EA test client — see that
+service's own README for the full breakdown, including the one piece that genuinely can't be
+automated here: compiling and running the real MQL5/MQL4 EA source (`ea/mt5`, `ea/mt4`) against a
+live terminal, which needs MetaEditor (Windows or Wine) — unavailable in this devcontainer. That
+service's README has the step-by-step runbook for whoever has a real terminal to complete this.
+
+## Nectrix-Hosted MT5/MT4 Terminals (`modules/invitations` + `modules/audit`, `apps/mt-terminal-host`)
+
+On top of the MT5/MT4 linking flow above: instead of the user running their own MT5/MT4 terminal and
+manually pasting a pairing token into an EA, Nectrix runs the terminal on their behalf (Wine, in
+Kubernetes) — linking an MT5/MT4 account becomes "enter credentials, done," the same feel as
+cTrader's OAuth flow. See `apps/mt-terminal-host/README.md` for the full architecture; this section
+covers what's new on the Java side.
+
+**New, deliberately separate internal endpoint** — not an extra field on the existing
+`mt-credentials` endpoint above, so that endpoint's own Javadoc claim ("deliberately never returns
+password") stays literally true:
+
+```
+GET /internal/broker-accounts/mt-terminal-credentials/{id} -> {login, password, server, pairingToken}
+```
+
+This is the **one place in the entire system a real plaintext broker password is ever returned**
+over the wire. Two things make that a deliberate, contained decision rather than an oversight:
+
+1. **A separate auth secret.** Guarded by its own `SecurityFilterChain`
+   (`SecurityConfig#internalMtTerminalCredentialsFilterChain`, `@Order(0)` — evaluated before the
+   general `/internal/**` chain), checking a new `MT_TERMINAL_PROVISIONER_TOKEN` — NOT the shared
+   `X-Internal-Service-Token` every other internal caller (`apps/broker-adapters`,
+   `apps/mt5-bridge-gateway`) uses. A leak of either of those two already-deployed, WebSocket/
+   broker-facing processes' tokens must not be able to mint a raw-password fetch.
+2. **A real audit trail.** Every call writes an `audit_log` row (`MT_TERMINAL_CREDENTIALS_FETCHED`,
+   `actorType=SYSTEM`, `targetType=broker_account`) via a newly-extracted shared-kernel module,
+   **`modules:audit`** (moved out of `modules:admin`, which previously owned `AuditLogRepository`
+   exclusively — its own original Javadoc anticipated exactly this: *"Other modules will eventually
+   need to write audit_log too... at that point this should be extracted into a shared utility"*).
+   `modules:admin`'s existing Audit Log viewer/writes are unchanged, just repointed to the new
+   module — verified via the full existing Admin Portal/RBAC integration-test suite still passing
+   unmodified.
+
+### Real, live-verified findings
+
+5 real integration tests (`MtTerminalCredentialIntegrationTest`, real Postgres, real
+`EnvelopeEncryptionService`, real `audit_log` row assertions): the endpoint genuinely rejects the
+shared `service-token` (401 — proving the separate-secret design actually works, not just documented
+intent), genuinely accepts the correct `mt-terminal-provisioner-token`, genuinely returns the real
+plaintext password (confirmed against what `POST /api/v1/broker-accounts/mt5` actually stored), 404s
+for an unknown account, and genuinely writes a real, queryable `audit_log` row on every successful
+fetch.
+
+The Kubernetes-provisioning side (`apps/mt-terminal-host`) — RBAC scoping, the reconcile loop, and
+the Wine/terminal image — is proven separately; see that service's own README, including its
+honestly-flagged open items (MetaQuotes terminal licensing, network egress policy for pods holding
+real credentials).
+
 ## Commands
 
 Run from the repo root (see root `README.md` for the devcontainer setup):

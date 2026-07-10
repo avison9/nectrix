@@ -31,3 +31,15 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: platform
+---
+# Nectrix-hosted MT5/MT4 terminals (Wine + Xvfb + real terminal + EA), one
+# Deployment+Secret per broker_accounts row, provisioned by
+# apps/mt-terminal-host (whose own ServiceAccount lives in copy-engine — see
+# deploy/base/mt-terminal-host/role.yaml for the RBAC scoping this
+# namespace boundary enforces). Deliberately separate from copy-engine: these
+# pods hold real plaintext broker credentials, a materially different blast
+# radius than anything else in that namespace.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mt-terminals

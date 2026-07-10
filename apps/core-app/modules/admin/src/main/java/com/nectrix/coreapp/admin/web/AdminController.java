@@ -1,6 +1,6 @@
 package com.nectrix.coreapp.admin.web;
 
-import com.nectrix.coreapp.admin.repository.AuditLogRepository;
+import com.nectrix.coreapp.audit.repository.AuditLogRepository;
 import com.nectrix.coreapp.auth.api.ImpersonationApi;
 import com.nectrix.coreapp.auth.api.ImpersonationResult;
 import com.nectrix.coreapp.auth.api.UserProvisioningApi;

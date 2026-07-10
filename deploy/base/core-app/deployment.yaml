@@ -43,6 +43,16 @@ spec:
             - name: INTERNAL_SERVICE_TOKEN
               valueFrom:
                 secretKeyRef: { name: core-app-secrets, key: internal-service-token }
+            # Nectrix-hosted MT5/MT4 terminals — a SEPARATE secret from
+            # INTERNAL_SERVICE_TOKEN above (see SecurityConfig's Javadoc:
+            # this one is deliberately narrower-blast-radius, since it gates
+            # the one endpoint that returns a real plaintext broker
+            # password). Same missing-value-doesn't-crash behavior as
+            # INTERNAL_SERVICE_TOKEN; must be byte-for-byte identical to
+            # apps/mt-terminal-host's own copy of this secret.
+            - name: MT_TERMINAL_PROVISIONER_TOKEN
+              valueFrom:
+                secretKeyRef: { name: core-app-secrets, key: mt-terminal-provisioner-token }
             # CTRADER_CLIENT_ID/SECRET are deliberately NOT wired here yet —
             # same precedent as GOOGLE_OAUTH_CLIENT_ID/SECRET above (not
             # present in this manifest either): application.yml tolerates a

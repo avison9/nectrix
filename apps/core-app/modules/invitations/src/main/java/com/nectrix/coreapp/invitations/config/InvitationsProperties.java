@@ -12,7 +12,10 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  */
 @ConfigurationProperties(prefix = "nectrix.invitations")
 public record InvitationsProperties(
-    CtraderOauth ctraderOauth, BrokerAdapters brokerAdapters, TokenRefresh tokenRefresh) {
+    CtraderOauth ctraderOauth,
+    BrokerAdapters brokerAdapters,
+    TokenRefresh tokenRefresh,
+    MtBridge mtBridge) {
 
   /**
    * clientId/clientSecret identify THIS platform's own registered cTrader Open API application
@@ -24,6 +27,14 @@ public record InvitationsProperties(
    * Internal-only HTTP surface of apps/broker-adapters — see that service's internalapi package.
    */
   public record BrokerAdapters(String internalBaseUrl, String serviceToken) {}
+
+  /**
+   * TICKET-102 — the MT5/MT4 EA-bridge gateway (apps/mt5-bridge-gateway). {@code gatewayUrl} is the
+   * WebSocket URL returned to the user at link time for them to paste into their EA's own input
+   * parameters — a public-facing address (the user's own terminal must be able to reach it), unlike
+   * {@code brokerAdapters.internalBaseUrl} above, which is cluster-internal only.
+   */
+  public record MtBridge(String gatewayUrl) {}
 
   /**
    * TICKET-101 task #120 — TokenRefreshJob's own poll cadence and "nearing expiry" threshold.

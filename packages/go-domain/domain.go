@@ -12,6 +12,11 @@ type BrokerType string
 const (
 	BrokerTypeCTrader BrokerType = "CTRADER"
 	BrokerTypeMT5     BrokerType = "MT5"
+	// BrokerTypeMT4 — TICKET-102, pulled forward from its original Phase-3
+	// scope (TICKET-311) at the user's request, alongside MT5. Both use the
+	// same EA-bridge strategy (apps/mt5-bridge-gateway), sharing nearly all
+	// Go-side code — see that app's README for the shared protocol design.
+	BrokerTypeMT4 BrokerType = "MT4"
 )
 
 // AssetClass categorizes a NormalizedSymbol.

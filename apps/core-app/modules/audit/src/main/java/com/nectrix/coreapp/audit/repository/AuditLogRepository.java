@@ -1,4 +1,4 @@
-package com.nectrix.coreapp.admin.repository;
+package com.nectrix.coreapp.audit.repository;
 
 import java.sql.Timestamp;
 import java.time.Instant;
@@ -13,13 +13,12 @@ import org.springframework.stereotype.Repository;
  * write-restricted at the app-DB-role level: INSERT+SELECT only, no UPDATE/DELETE, so even a
  * compromised app credential can't rewrite history — see 013-app-role-grants.sql).
  *
- * <p>Scoped to {@code admin} module for now — the only writer/reader this ticket needs
- * (impersonation/ledger-adjustment/account-provisioning writes, the Audit Log viewer's read). Other
- * modules will eventually need to write {@code audit_log} too (every CopyRelationship state
- * transition, every fee-ledger resolution per §17.6) — at that point this should be extracted into
- * a shared utility rather than duplicated per-module. Not built now (YAGNI): same
- * forward-reference-gap pattern as TICKET-005's rate limiter (built self-contained, pending
- * TICKET-008's shared helper).
+ * <p>Extracted out of {@code modules:admin} into this shared-kernel module (same tier as {@code
+ * modules:crypto} — no domain data/business capability of its own, just a reusable infrastructure
+ * primitive) once a second bounded-context module needed to write {@code audit_log} too, exactly as
+ * this class's own original Javadoc anticipated: the Nectrix-hosted MT5/ MT4 terminal-provisioning
+ * flow needs to audit every real plaintext-password fetch, which is at least as sensitive as
+ * anything the Admin Portal already audits.
  */
 @Repository
 public class AuditLogRepository {

@@ -34,9 +34,9 @@ jobs:
     # once the job actually starts. A job-level `if: false` skips before that
     # expansion, reporting one unexpanded "go-apps" check instead of the 5
     # matrix-leg names branch protection's required-status-checks expects —
-    # those 5 required checks would then never report and block merges
+    # those 7 required checks would then never report and block merges
     # forever. Gating each step instead keeps the matrix always expanding
-    # into the same 5 named checks, whether or not there's real work to do.
+    # into the same 7 named checks, whether or not there's real work to do.
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -47,6 +47,7 @@ jobs:
           - { dir: apps/copy-engine, name: copy-engine }
           - { dir: apps/broker-adapters, name: broker-adapters }
           - { dir: apps/mt5-bridge-gateway, name: mt5-bridge-gateway }
+          - { dir: apps/mt-terminal-host, name: mt-terminal-host }
     steps:
       - if: inputs.run-go-apps
         uses: actions/checkout@v7.0.0

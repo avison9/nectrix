@@ -74,6 +74,11 @@ nectrix:
   # INTERNAL_SERVICE_TOKEN) — Go and Java authenticate to each other with it.
   internal:
     service-token: ${INTERNAL_SERVICE_TOKEN}
+    # Nectrix-hosted MT5/MT4 terminal-provisioning — a separate secret from
+    # service-token above, checked by its own, narrower SecurityFilterChain
+    # (SecurityConfig#internalMtTerminalCredentialsFilterChain). Only
+    # apps/mt-terminal-host holds this value.
+    mt-terminal-provisioner-token: ${MT_TERMINAL_PROVISIONER_TOKEN:}
   # TICKET-101 (cTrader Broker Adapter) — real broker linking.
   invitations:
     ctrader-oauth:
@@ -93,3 +98,7 @@ nectrix:
       # Hourly poll, refresh once under 24h remains.
       interval-seconds: 3600
       refresh-before-expiry-seconds: 86400
+    # TICKET-102 (MT5/MT4 EA-bridge) — the user's own terminal dials this address directly, so it
+    # must be reachable from outside the cluster, unlike broker-adapters.internal-base-url above.
+    mt-bridge:
+      gateway-url: ${MT_BRIDGE_GATEWAY_URL:ws://localhost:8092/ea/ws}

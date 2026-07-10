@@ -47,13 +47,36 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 public class SecurityConfig {
 
   /**
-   * TICKET-101 — a second, entirely separate filter chain for {@code /internal/**}, evaluated
-   * before (lower {@code @Order} = higher priority) the main JWT-based chain below. Requests
-   * matching this chain never reach the JWT logic at all — internal-only callers (apps/broker-
-   * adapters) have no JWT to present. {@link InternalServiceTokenFilter} does the actual auth
-   * check; {@code anyRequest().authenticated()} here just means "the filter above populated a
-   * SecurityContext" (a request the filter rejected already got a 401 response and never reaches
-   * this authorization check).
+   * The Nectrix-hosted MT5/MT4 terminal-provisioning work's one, narrowly-scoped endpoint that
+   * returns a real plaintext broker password — a materially more sensitive capability than anything
+   * else under {@code /internal/**}, so it gets its OWN {@code SecurityFilterChain} checking a
+   * separate {@link InternalApiProperties#mtTerminalProvisionerToken()}, not the shared {@code
+   * serviceToken} every other internal caller uses. {@code @Order(0)} — evaluated BEFORE {@link
+   * #internalFilterChain}'s broader {@code /internal/**} matcher below, so this narrower path is
+   * claimed by this chain first and never falls through to the shared-token one.
+   */
+  @Bean
+  @Order(0)
+  public SecurityFilterChain internalMtTerminalCredentialsFilterChain(
+      HttpSecurity http, InternalApiProperties props) throws Exception {
+    http.securityMatcher("/internal/broker-accounts/mt-terminal-credentials/**")
+        .csrf(AbstractHttpConfigurer::disable)
+        .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+        .addFilterBefore(
+            new InternalServiceTokenFilter(props.mtTerminalProvisionerToken()),
+            UsernamePasswordAuthenticationFilter.class)
+        .authorizeHttpRequests(auth -> auth.anyRequest().authenticated());
+    return http.build();
+  }
+
+  /**
+   * TICKET-101 — a second, entirely separate filter chain for the rest of {@code /internal/**},
+   * evaluated before (lower {@code @Order} = higher priority) the main JWT-based chain below.
+   * Requests matching this chain never reach the JWT logic at all — internal-only callers (apps/
+   * broker-adapters, apps/mt5-bridge-gateway) have no JWT to present. {@link
+   * InternalServiceTokenFilter} does the actual auth check; {@code anyRequest().authenticated()}
+   * here just means "the filter above populated a SecurityContext" (a request the filter rejected
+   * already got a 401 response and never reaches this authorization check).
    */
   @Bean
   @Order(1)
@@ -130,6 +153,13 @@ public class SecurityConfig {
                     .requestMatchers(HttpMethod.POST, "/api/v1/broker/ctrader/callback")
                     .permitAll()
                     .requestMatchers(HttpMethod.POST, "/api/v1/broker/ctrader/link")
+                    .authenticated()
+                    // TICKET-102 — MT5/MT4 direct-credential linking. No callback/permitAll
+                    // route needed here: unlike cTrader's OAuth dance, this is a single
+                    // authenticated call, start to finish.
+                    .requestMatchers(HttpMethod.POST, "/api/v1/broker-accounts/mt5")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.POST, "/api/v1/broker-accounts/mt4")
                     .authenticated()
                     // -- add new protected/public auth-adjacent routes here (future tickets:
                     // accept-invite, by-token) — anyRequest() below is intentionally permitAll,

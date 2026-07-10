@@ -24,7 +24,6 @@ dependencies {
     // declared here too, and this module's own code (AdminController)
     // compiles directly against ObjectMapper to build audit_log metadata JSON.
     implementation("tools.jackson.core:jackson-databind")
-    implementation("org.springframework.boot:spring-boot-starter-jdbc") // JdbcTemplate (audit_log)
     // @PreAuthorize, Authentication — just the annotations/types.
     implementation("org.springframework.security:spring-security-core")
     // The Jwt type (@AuthenticationPrincipal Jwt jwt) lives in oauth2-jose,
@@ -38,4 +37,9 @@ dependencies {
     // ImpersonationApi (auth) and BrokerAccountLookupApi (invitations).
     implementation(project(":modules:auth"))
     implementation(project(":modules:invitations"))
+    // AuditLogRepository — extracted into this shared-kernel module (same tier as
+    // modules:crypto) once modules:invitations also needed to write audit_log
+    // (the Nectrix-hosted MT5/MT4 terminal-provisioning work), exactly as that
+    // class's own original Javadoc anticipated.
+    implementation(project(":modules:audit"))
 }
