@@ -68,3 +68,28 @@ nectrix:
         client-id: ${APPLE_OAUTH_CLIENT_ID:}
         client-secret: ${APPLE_OAUTH_CLIENT_SECRET:}
         redirect-uri: http://localhost:8080/api/v1/auth/oauth/apple/callback
+  # TICKET-101 — internal-only shared-secret header, checked by SecurityConfig's
+  # second, /internal/**-scoped SecurityFilterChain. Same value as
+  # nectrix.invitations.broker-adapters.service-token below (both resolve
+  # INTERNAL_SERVICE_TOKEN) — Go and Java authenticate to each other with it.
+  internal:
+    service-token: ${INTERNAL_SERVICE_TOKEN}
+  # TICKET-101 (cTrader Broker Adapter) — real broker linking.
+  invitations:
+    ctrader-oauth:
+      client-id: ${CTRADER_CLIENT_ID:}
+      client-secret: ${CTRADER_CLIENT_SECRET:}
+      redirect-uri: http://localhost:8080/api/v1/broker/ctrader/callback
+    broker-adapters:
+      internal-base-url: ${BROKER_ADAPTERS_INTERNAL_BASE_URL:http://localhost:8091}
+      service-token: ${INTERNAL_SERVICE_TOKEN}
+    token-refresh:
+      # Defaults to false — see InvitationsProperties.TokenRefresh's Javadoc for why
+      # (no per-test Spring profile in this codebase; real deployments opt in via
+      # TOKEN_REFRESH_ENABLED=true, deploy/base/core-app).
+      enabled: ${TOKEN_REFRESH_ENABLED:false}
+      # Placeholders — cTrader's real access-token TTL wasn't confirmed against a
+      # live account during this ticket (see the live-verification runbook).
+      # Hourly poll, refresh once under 24h remains.
+      interval-seconds: 3600
+      refresh-before-expiry-seconds: 86400

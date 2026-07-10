@@ -43,6 +43,7 @@ jobs:
         module:
           - { dir: packages/go-domain, name: go-domain }
           - { dir: packages/event-contracts/go, name: event-contracts-go }
+          - { dir: packages/ctrader-proto/go, name: ctrader-proto-go }
           - { dir: apps/copy-engine, name: copy-engine }
           - { dir: apps/broker-adapters, name: broker-adapters }
           - { dir: apps/mt5-bridge-gateway, name: mt5-bridge-gateway }

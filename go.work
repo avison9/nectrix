@@ -4,6 +4,7 @@ use (
 	./apps/broker-adapters
 	./apps/copy-engine
 	./apps/mt5-bridge-gateway
+	./packages/ctrader-proto/go
 	./packages/event-contracts/go
 	./packages/go-domain
 	./packages/redis-client/go

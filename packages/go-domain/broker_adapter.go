@@ -3,16 +3,33 @@ package domain
 import "context"
 
 // BrokerCredentials carries whatever a BrokerAdapter needs to establish a
-// connection for one broker_accounts row. Deliberately minimal/untyped
-// beyond AccountID for this stub-era interface — real adapters (Phase 1)
-// will need OAuth tokens/API keys/MT5 bridge endpoints, shaped once those
-// adapters exist (docs/07-auth-onboarding-broker-linking.md).
+// connection for one broker_accounts row. Fields below AccountID are grouped
+// per broker family — a given BrokerAdapter implementation only reads the
+// fields its own BrokerType actually needs; the others stay zero-valued.
+//
+// TICKET-101 (cTrader): AccessToken/RefreshToken/CtidTraderAccountID are
+// fetched, decrypted, at connect-time from apps/core-app's internal
+// credentials endpoint (Go never decrypts these itself — see
+// docs/17-security-architecture.md's single-encryption-authority design,
+// TICKET-011's EnvelopeEncryptionService). Login/Server/APIToken remain
+// reserved for TICKET-102's MT5 adapter, whose credential shape (EA-bridge
+// endpoint, not OAuth) hasn't landed yet.
 type BrokerCredentials struct {
 	BrokerType BrokerType
 	AccountID  string // broker_accounts.id this connection represents
 	Login      string
 	Server     string
 	APIToken   string
+
+	// cTrader Open API OAuth 2.0 (docs/07-auth-onboarding-broker-linking.md §7.6).
+	AccessToken         string
+	RefreshToken        string
+	CtidTraderAccountID int64
+	// IsLive selects which cTrader host to dial — demo and live are
+	// entirely separate connections/hosts, never mixed (confirmed via
+	// cTrader's own docs). false for every account this ticket's ACs
+	// exercise (demo-only).
+	IsLive bool
 }
 
 // ConnectionHandle is the opaque handle returned by Connect and threaded
