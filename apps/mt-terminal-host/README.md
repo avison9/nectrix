@@ -116,18 +116,27 @@ real terminal under Xvfb.
 
 ## Container images
 
-Two separate images, two separate CI paths:
+Two images, both built/scanned/pushed on every push to `main` via `main-pipeline.yml`'s
+`build-scan-push` matrix — the same always-on path every other service in this repo uses:
 
-- **`apps/mt-terminal-host/Dockerfile`** (the Go provisioner binary) — built/scanned/pushed on
-  every push to `main`, exactly like every other Go service in this repo
-  (`ghcr.io/avison9/nectrix/mt-terminal-host:<commit-sha>`).
-- **`apps/mt-terminal-host/terminal-image/Dockerfile`** (the Wine/terminal image) — **manual
-  (`workflow_dispatch`) only**, not on every push. This `.mq5`/`.mq4` source has never been compiled
-  anywhere, this Dockerfile has never been built anywhere (no Wine in any environment this ticket
-  had access to), and the licensing question above is still open — wiring it into the always-on
-  pipeline before any of that is resolved would make routine, unrelated commits fail the whole
-  pipeline on a genuinely experimental path. Run by hand (Actions tab → Run workflow) once ready to
-  actually validate this for real.
+- **`apps/mt-terminal-host/Dockerfile`** (the Go provisioner binary) —
+  `ghcr.io/avison9/nectrix/mt-terminal-host:<commit-sha>`.
+- **`apps/mt-terminal-host/terminal-image/Dockerfile`** (the Wine/terminal image) —
+  `ghcr.io/avison9/nectrix/mt-terminal-image:<commit-sha>`. Previously
+  **`workflow_dispatch`-only** (a standalone `build-terminal-image.yml`, now removed) while this
+  `.mq5` source had never been compiled and this Dockerfile had never been built anywhere for real —
+  folded into the always-on matrix now that a real CI run has proven the whole pipeline genuinely
+  green end-to-end (install → compile → Trivy scan → push; see "Real, in-progress `terminal-image`
+  debugging" below for the full history of what it took to get there). Meaningfully slower than
+  every other leg in that matrix (~3 real minutes: Wine setup + two MetaQuotes installs + a real
+  MetaEditor compile) and depends on an external MetaQuotes CDN, but `fail-fast: false` means it
+  never blocks the other legs. Its on-failure diagnostics-export/upload steps (screenshots, exit
+  codes, install logs) were ported into the matrix rather than dropped — this Dockerfile is
+  meaningfully more fragile than everything else in it.
+  `deploy-staging`/`deploy-production` patch its resolved tag into `mt-terminal-host`'s
+  `TERMINAL_IMAGE` env var directly (`sed`, not `kustomize edit set image` — that only rewrites
+  container `image:` fields, and this image has no Deployment of its own to rewrite one on; it's
+  referenced dynamically per-broker-account by the reconciler instead).
 
 ## Commands
 
@@ -172,8 +181,10 @@ exists in this devcontainer, and there's no single environment here with both a 
 cleanly for a CI environment that has both — just not exercised here). This will need its own
 runbook once the terminal image has been built and validated for real.
 
-**Real, in-progress `terminal-image` debugging** (`.github/workflows/build-terminal-image.yml`,
-manual dispatch), findings so far from real x86_64 CI runs:
+**Real `terminal-image` debugging history** — now resolved and folded into `main-pipeline.yml`'s
+always-on `build-scan-push` matrix (see "Container images" above); findings below are from the real
+x86_64 CI runs it took to get there (originally against a standalone `build-terminal-image.yml`,
+`workflow_dispatch`-only, since removed):
 
 1. `xvfb-run` needs `xauth`, not just `xvfb` (fixed).
 2. The Dockerfile has a diagnostics stage (`install-diagnostics`/`diagnostics-export`,
