@@ -37,10 +37,14 @@ if [ "$PLATFORM" = "MT5" ]; then
   TERMINAL_EXE=terminal64.exe
   EA_NAME=NectrixBridgeMT5
 elif [ "$PLATFORM" = "MT4" ]; then
-  TERMINAL_DIR=/canonical-mt4
-  export WINEPREFIX=/wine-mt4
-  TERMINAL_EXE=terminal.exe
-  EA_NAME=NectrixBridgeMT4
+  # Deliberately unsupported for now — real, live-verified finding: MQL4 has
+  # no native Socket*() functions, so NectrixBridgeMT4.mq4 cannot compile as
+  # designed (see terminal-image/Dockerfile's compile-ea stage comment and
+  # apps/mt-terminal-host/README.md). No .ex4 is built into this image, so
+  # failing fast and clearly here beats silently launching a terminal with
+  # no EA ever able to attach.
+  echo "entrypoint: PLATFORM=MT4 is not yet supported — MQL4 has no native socket support, so the EA bridge cannot run as designed; see apps/mt-terminal-host/README.md" >&2
+  exit 1
 else
   echo "entrypoint: unknown PLATFORM '$PLATFORM' (expected MT5 or MT4)" >&2
   exit 1

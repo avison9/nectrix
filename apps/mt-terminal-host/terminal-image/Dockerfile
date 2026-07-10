@@ -104,12 +104,22 @@ RUN test -f /canonical-mt4/metaeditor.exe || (echo "MT4 install genuinely failed
 
 # ---- Compile stage: our own EA source, against the verified terminal install ----
 # A separate stage (not inlined into the final image) purely so the final
-# image never carries the .mq5/.mq4 SOURCE or MetaEditor's own compile logs
-# — only the compiled .ex5/.ex4 binaries get copied forward below.
+# image never carries the .mq5 SOURCE or MetaEditor's own compile logs —
+# only the compiled .ex5 binary gets copied forward below.
+#
+# MT4 EA compilation is deliberately DISABLED here — real, live-verified
+# finding: MQL4 has no native Socket*() functions at all (confirmed against
+# MQL4's own reference docs — Socket* is an MQL5-only addition), so
+# NectrixBridgeMT4.mq4's WebSocket-based design as written cannot compile
+# on real MT4, full stop — not a bug to patch, a genuine platform gap.
+# Deferred to a follow-up ticket to redesign MT4's transport (DLL-based
+# sockets, or HTTP long-polling via MQL4's native WebRequest()) — see
+# apps/mt-terminal-host/README.md. The MT4 terminal itself still installs
+# fine above (install-verified passes for it); only EA compilation and
+# attachment are blocked on that follow-up.
 FROM install-verified AS compile-ea
 
 COPY apps/mt5-bridge-gateway/ea/mt5/NectrixBridgeMT5.mq5 /canonical-mt5/MQL5/Experts/NectrixBridgeMT5.mq5
-COPY apps/mt5-bridge-gateway/ea/mt4/NectrixBridgeMT4.mq4 /canonical-mt4/MQL4/Experts/NectrixBridgeMT4.mq4
 
 COPY apps/mt-terminal-host/terminal-image/compile-ea.sh /compile-ea.sh
 RUN chmod +x /compile-ea.sh
@@ -118,18 +128,16 @@ RUN chmod +x /compile-ea.sh
 # (compile-ea.sh's own header explains why it manually manages Xvfb rather
 # than using `xvfb-run -a` — the latter failed near-instantly the one time
 # it was tried here). WINEPREFIX must match the prefix each terminal was
-# actually installed into (/wine-mt5, /wine-mt4) — real, live-verified
-# finding: without it, wine silently falls back to a brand-new default
-# prefix that never had the real install's registry/COM setup, and
-# MetaEditor fails with OLE/RPC marshalling errors as a result.
+# actually installed into (/wine-mt5) — real, live-verified finding:
+# without it, wine silently falls back to a brand-new default prefix that
+# never had the real install's registry/COM setup, and MetaEditor fails
+# with OLE/RPC marshalling errors as a result.
 RUN /compile-ea.sh /wine-mt5 /canonical-mt5/metaeditor64.exe /canonical-mt5/MQL5/Experts/NectrixBridgeMT5.mq5 /canonical-mt5/MQL5/Experts/NectrixBridgeMT5.ex5
-RUN /compile-ea.sh /wine-mt4 /canonical-mt4/metaeditor.exe /canonical-mt4/MQL4/Experts/NectrixBridgeMT4.mq4 /canonical-mt4/MQL4/Experts/NectrixBridgeMT4.ex4
 
 # ---- Final image ----
 FROM install-verified AS final
 
 COPY --from=compile-ea /canonical-mt5/MQL5/Experts/NectrixBridgeMT5.ex5 /canonical-mt5/MQL5/Experts/NectrixBridgeMT5.ex5
-COPY --from=compile-ea /canonical-mt4/MQL4/Experts/NectrixBridgeMT4.ex4 /canonical-mt4/MQL4/Experts/NectrixBridgeMT4.ex4
 
 COPY apps/mt-terminal-host/terminal-image/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
