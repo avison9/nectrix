@@ -197,12 +197,16 @@ func TestGetAccountSnapshotAndPositions(t *testing.T) {
 	ea := newFakeEA(t, ts)
 	ea.handshake("tok-1", "MT5", "1", "S")
 	ea.on("snapshot_request", func(raw json.RawMessage) any {
-		var req struct{ RequestID string `json:"requestId"` }
+		var req struct {
+			RequestID string `json:"requestId"`
+		}
 		_ = json.Unmarshal(raw, &req)
 		return map[string]any{"type": "snapshot_result", "requestId": req.RequestID, "currency": "USD", "balance": 5000.0, "equity": 5100.0, "usedMargin": 100.0, "freeMargin": 5000.0, "asOf": "2026-07-10T12:00:00Z"}
 	})
 	ea.on("positions_request", func(raw json.RawMessage) any {
-		var req struct{ RequestID string `json:"requestId"` }
+		var req struct {
+			RequestID string `json:"requestId"`
+		}
 		_ = json.Unmarshal(raw, &req)
 		return map[string]any{"type": "positions_result", "requestId": req.RequestID, "positions": []map[string]any{
 			{"brokerPositionId": "1", "canonicalSymbol": "EURUSD", "assetClass": "FX", "direction": "BUY", "volumeLots": 0.1, "openPrice": 1.1, "openedAt": "2026-07-10T12:00:00Z"},
@@ -304,7 +308,7 @@ func TestStreamTradeEvents(t *testing.T) {
 
 	if err := ea.conn.WriteJSON(map[string]any{
 		"type": "trade_event", "eventId": "evt-1", "eventType": "POSITION_OPENED",
-		"position": map[string]any{"brokerPositionId": "1", "canonicalSymbol": "EURUSD", "assetClass": "FX", "direction": "BUY", "volumeLots": 1.0, "openPrice": 1.1, "openedAt": "2026-07-10T12:00:00Z"},
+		"position":        map[string]any{"brokerPositionId": "1", "canonicalSymbol": "EURUSD", "assetClass": "FX", "direction": "BUY", "volumeLots": 1.0, "openPrice": 1.1, "openedAt": "2026-07-10T12:00:00Z"},
 		"serverTimestamp": "2026-07-10T12:00:00Z",
 	}); err != nil {
 		t.Fatalf("push trade event: %v", err)
@@ -368,5 +372,42 @@ func TestResolveSymbolAndGetSymbolSpecification(t *testing.T) {
 	// not a legitimate gap (see GetSymbolSpecification's doc comment).
 	if _, err := adapter.GetSymbolSpecification(ctx, domain.NormalizedSymbol{CanonicalCode: "GBPUSD"}); err == nil {
 		t.Fatalf("expected error for unresolved canonical code")
+	}
+}
+
+// TestResolveSymbol_UsesCuratedCatalogAssetClass proves ResolveSymbol now
+// returns a real, catalog-backed AssetClass (TICKET-103) for an instrument
+// the old 6-letter-code-only heuristic could never classify correctly (an
+// index CFD like "US500" is not 6 letters, so the old heuristic guessed
+// COMMODITY, not INDEX).
+func TestResolveSymbol_UsesCuratedCatalogAssetClass(t *testing.T) {
+	srv, ts := newTestServer(t)
+	adapter := NewMT5(srv)
+	srv.RegisterPairing("tok-1", eabridge.PairingInfo{BrokerAccountID: "acct-1", ExpectedLogin: "1", ExpectedServer: "S", Platform: domain.BrokerTypeMT5})
+
+	ea := newFakeEA(t, ts)
+	ea.handshake("tok-1", "MT5", "1", "S")
+	ea.on("symbol_spec_request", func(raw json.RawMessage) any {
+		var req struct {
+			RequestID        string `json:"requestId"`
+			BrokerSymbolName string `json:"brokerSymbolName"`
+		}
+		_ = json.Unmarshal(raw, &req)
+		return map[string]any{
+			"type": "symbol_spec_result", "requestId": req.RequestID, "brokerSymbolName": req.BrokerSymbolName,
+			"contractSize": 1.0, "lotStep": 0.1, "minLot": 0.1, "maxLot": 20.0, "pipSize": 1.0, "digits": 2.0, "marginCurrency": "USD",
+		}
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	ea.serve(ctx)
+	waitFor(t, func() bool { _, ok := srv.Session("acct-1"); return ok })
+
+	normalized, err := adapter.ResolveSymbol(ctx, "US500")
+	if err != nil {
+		t.Fatalf("ResolveSymbol: %v", err)
+	}
+	if normalized.AssetClass != domain.AssetClassIndex {
+		t.Fatalf("AssetClass = %q, want INDEX", normalized.AssetClass)
 	}
 }

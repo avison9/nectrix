@@ -202,11 +202,27 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 
 	s.logger.Info("eabridge: EA session established", "brokerAccountId", info.BrokerAccountID, "platform", info.Platform, "login", hello.Login, "server", hello.Server)
+
+	// TICKET-103: readLoop is started FIRST, in its own goroutine, before
+	// OnSessionEstablished runs — real, live-verified deadlock hazard found
+	// while wiring symbol-mapping auto-suggestion: OnSessionEstablished may
+	// need to issue a synchronous RequestSymbolSpec call (session.call,
+	// blocking on <-ch until readLoop's resolvePending delivers a
+	// response), but readLoop previously only started AFTER
+	// OnSessionEstablished returned — no reader would ever exist to
+	// deliver that response, hanging forever. This preserves handleWS's
+	// existing "block until the session truly ends" behavior (<-done),
+	// just reordered so a reader is always live before any handler code
+	// that might need one runs.
+	readLoopDone := make(chan struct{})
+	go func() {
+		session.readLoop(r.Context())
+		close(readLoopDone)
+	}()
 	if s.events != nil {
 		s.events.OnSessionEstablished(r.Context(), info.BrokerAccountID, info.Platform)
 	}
-
-	session.readLoop(r.Context())
+	<-readLoopDone
 
 	s.mu.Lock()
 	if s.sessions[info.BrokerAccountID] == session {

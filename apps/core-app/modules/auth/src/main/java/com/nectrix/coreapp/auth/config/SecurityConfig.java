@@ -161,6 +161,14 @@ public class SecurityConfig {
                     .authenticated()
                     .requestMatchers(HttpMethod.POST, "/api/v1/broker-accounts/mt4")
                     .authenticated()
+                    // TICKET-103 — symbol-mapping confirmation flow. Ownership/staff-bypass is
+                    // method-security (SymbolMappingService's own calls into
+                    // BrokerAccountService#getBrokerAccount), same reasoning as the
+                    // GET .../broker-accounts/* matcher above.
+                    .requestMatchers(HttpMethod.GET, "/api/v1/broker-accounts/*/symbol-mappings")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.PUT, "/api/v1/broker-accounts/*/symbol-mappings/*")
+                    .authenticated()
                     // -- add new protected/public auth-adjacent routes here (future tickets:
                     // accept-invite, by-token) — anyRequest() below is intentionally permitAll,
                     // not authenticated(), so genuinely unmapped paths 404 instead of 401; see

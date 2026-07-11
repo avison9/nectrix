@@ -3,7 +3,6 @@ package ctrader
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 
 	openapi "github.com/avison9/nectrix/ctrader-proto/go/gen"
@@ -40,7 +39,7 @@ func (c *symbolCache) put(symbols []*openapi.ProtoOALightSymbol) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, s := range symbols {
-		c.byName[normalizeSymbolName(s.GetSymbolName())] = s
+		c.byName[domain.NormalizeSymbolName(s.GetSymbolName())] = s
 		c.byID[s.GetSymbolId()] = s
 	}
 }
@@ -48,40 +47,24 @@ func (c *symbolCache) put(symbols []*openapi.ProtoOALightSymbol) {
 func (c *symbolCache) byBrokerName(name string) (*openapi.ProtoOALightSymbol, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	s, ok := c.byName[normalizeSymbolName(name)]
+	s, ok := c.byName[domain.NormalizeSymbolName(name)]
 	return s, ok
 }
 
-// normalizeSymbolName mirrors the stub adapter's own heuristic
-// (apps/copy-engine/internal/stubadapter) — brokers commonly append
-// suffixes to a raw symbol name (EURUSD.a, EURUSDm, EURUSD_i, ...); the
-// platform's canonical code is always the bare uppercase pair.
-func normalizeSymbolName(raw string) string {
-	name := strings.ToUpper(raw)
-	for _, suffix := range []string{".A", "M", "_I"} {
-		name = strings.TrimSuffix(name, suffix)
-	}
-	return name
-}
-
 // ResolveSymbol maps a raw broker symbol name onto this platform's
-// canonical NormalizedSymbol. AssetClass is best-effort FX for anything
-// that looks like a currency pair (6 letters) — cTrader's own asset-class
-// taxonomy (via baseAssetId/quoteAssetId/symbolCategoryId) needs a further
-// asset/category lookup this ticket doesn't build out; Money Management
-// (TICKET-104) is the first consumer that actually branches on AssetClass,
-// so refining this is deferred there rather than guessed precisely now.
+// canonical NormalizedSymbol. AssetClass comes from domain.AssetClassOf's
+// curated catalog (TICKET-103) where the canonical code is a known
+// instrument, falling back to a best-effort FX-if-6-letters guess
+// otherwise — cTrader's own asset-class taxonomy (via
+// baseAssetId/quoteAssetId/symbolCategoryId) would need a further
+// asset/category lookup this ticket doesn't build out.
 func (a *CTraderAdapter) ResolveSymbol(ctx context.Context, brokerSymbol string) (domain.NormalizedSymbol, error) {
 	light, ok := a.symbols.byBrokerName(brokerSymbol)
 	if !ok {
 		return domain.NormalizedSymbol{}, fmt.Errorf("ctrader: unknown symbol %q (no connection has populated the symbol cache yet, or this broker doesn't list it)", brokerSymbol)
 	}
-	canonical := normalizeSymbolName(light.GetSymbolName())
-	assetClass := domain.AssetClassFX
-	if len(canonical) != 6 {
-		assetClass = domain.AssetClassCommodity // best-effort — see doc-comment above
-	}
-	return domain.NormalizedSymbol{CanonicalCode: canonical, AssetClass: assetClass}, nil
+	canonical := domain.NormalizeSymbolName(light.GetSymbolName())
+	return domain.NormalizedSymbol{CanonicalCode: canonical, AssetClass: domain.AssetClassOf(canonical)}, nil
 }
 
 // GetSymbolSpecification fetches (and caches) the full trading spec for a

@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"strings"
 
+	domain "github.com/avison9/nectrix/go-domain"
 	"github.com/avison9/nectrix/mt5-bridge-gateway/internal/pairing"
 )
 
@@ -28,9 +29,10 @@ type Client struct {
 }
 
 var (
-	_ pairing.Lister            = (*Client)(nil)
-	_ pairing.CredentialFetcher = (*Client)(nil)
-	_ pairing.StatusReporter    = (*Client)(nil)
+	_ pairing.Lister                = (*Client)(nil)
+	_ pairing.CredentialFetcher     = (*Client)(nil)
+	_ pairing.StatusReporter        = (*Client)(nil)
+	_ pairing.SymbolMappingReporter = (*Client)(nil)
 )
 
 func New(baseURL, sharedSecret string, httpClient *http.Client) *Client {
@@ -161,6 +163,72 @@ func (c *Client) ReportConnectionStatus(ctx context.Context, brokerAccountID, st
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("coreappclient: report connection status for %s: unexpected status %d", brokerAccountID, resp.StatusCode)
+	}
+	return nil
+}
+
+type suggestSymbolMappingRequest struct {
+	CanonicalSymbol  string  `json:"canonicalSymbol"`
+	BrokerSymbolName string  `json:"brokerSymbolName"`
+	ContractSize     float64 `json:"contractSize"`
+	LotStep          float64 `json:"lotStep"`
+	MinLot           float64 `json:"minLot"`
+	MaxLot           float64 `json:"maxLot"`
+	PipSize          float64 `json:"pipSize"`
+	Digits           int     `json:"digits"`
+	MarginCurrency   string  `json:"marginCurrency"`
+}
+
+type suggestSymbolMappingsRequest struct {
+	Suggestions []suggestSymbolMappingRequest `json:"suggestions"`
+}
+
+// SuggestSymbolMappings calls POST /internal/broker-accounts/{id}/symbol-mappings/suggestions
+// (TICKET-103) — mirrors apps/broker-adapters' identically-named method
+// exactly (same endpoint/shape, see that package's own comment for why this
+// isn't a shared package). Core App upserts each as an UNCONFIRMED
+// symbol_mappings row, never clobbering one a user already confirmed. A
+// no-op if specs is empty.
+func (c *Client) SuggestSymbolMappings(ctx context.Context, brokerAccountID string, specs []domain.SymbolSpec) error {
+	if len(specs) == 0 {
+		return nil
+	}
+	reqBody := suggestSymbolMappingsRequest{Suggestions: make([]suggestSymbolMappingRequest, 0, len(specs))}
+	for _, s := range specs {
+		reqBody.Suggestions = append(reqBody.Suggestions, suggestSymbolMappingRequest{
+			CanonicalSymbol:  s.Symbol.CanonicalCode,
+			BrokerSymbolName: s.BrokerSymbolName,
+			ContractSize:     s.ContractSize,
+			LotStep:          s.LotStep,
+			MinLot:           s.MinLot,
+			MaxLot:           s.MaxLot,
+			PipSize:          s.PipSize,
+			Digits:           s.Digits,
+			MarginCurrency:   s.MarginCurrency,
+		})
+	}
+
+	u := c.baseURL + "/internal/broker-accounts/" + url.PathEscape(brokerAccountID) + "/symbol-mappings/suggestions"
+
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("coreappclient: marshal suggest symbol mappings request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("coreappclient: build request: %w", err)
+	}
+	req.Header.Set("X-Internal-Service-Token", c.sharedSecret)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("coreappclient: suggest symbol mappings: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("coreappclient: suggest symbol mappings for %s: unexpected status %d", brokerAccountID, resp.StatusCode)
 	}
 	return nil
 }

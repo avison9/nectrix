@@ -3,7 +3,6 @@ package mtadapter
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 
 	domain "github.com/avison9/nectrix/go-domain"
@@ -46,37 +45,14 @@ func (c *symbolCache) put(canonical string, s cachedSymbol) {
 	c.byCanonical[canonical] = s
 }
 
-// normalizeSymbolName mirrors internal/ctrader's own identical heuristic
-// (and the stub adapter's before it) — brokers commonly append suffixes to
-// a raw symbol name (EURUSD.a, EURUSDm, EURUSD_i, ...); the platform's
-// canonical code is always the bare uppercase pair. Kept package-local
-// rather than shared, matching how internal/ctrader didn't extract it
-// either — a 5-line heuristic isn't worth a shared package's coupling.
-func normalizeSymbolName(raw string) string {
-	name := strings.ToUpper(raw)
-	for _, suffix := range []string{".A", "M", "_I"} {
-		name = strings.TrimSuffix(name, suffix)
-	}
-	return name
-}
-
-// guessAssetClass is the same best-effort compromise internal/ctrader's
-// ResolveSymbol documents: FX for anything that looks like a 6-letter
-// currency pair, COMMODITY otherwise. Refining this needs a real
-// asset-category lookup neither adapter builds out yet — Money Management
-// (TICKET-104) is the first consumer that actually branches on AssetClass.
-func guessAssetClass(canonical string) domain.AssetClass {
-	if len(canonical) == 6 {
-		return domain.AssetClassFX
-	}
-	return domain.AssetClassCommodity
-}
-
 // ResolveSymbol asks any live session of this adapter's platform to resolve
 // brokerSymbol (e.g. "EURUSD.a") via a real symbol_spec_request, caching
 // both the canonical identity and the full spec for GetSymbolSpecification.
+// AssetClass comes from domain.AssetClassOf's curated catalog (TICKET-103)
+// where the canonical code is a known instrument, falling back to a
+// best-effort FX-if-6-letters guess otherwise.
 func (a *Adapter) ResolveSymbol(ctx context.Context, brokerSymbol string) (domain.NormalizedSymbol, error) {
-	canonical := normalizeSymbolName(brokerSymbol)
+	canonical := domain.NormalizeSymbolName(brokerSymbol)
 	if cached, ok := a.symbols.get(canonical); ok {
 		return cached.normalized, nil
 	}
@@ -91,7 +67,7 @@ func (a *Adapter) ResolveSymbol(ctx context.Context, brokerSymbol string) (domai
 		return domain.NormalizedSymbol{}, fmt.Errorf("mtadapter(%s): resolve symbol %q: %w", a.brokerType, brokerSymbol, err)
 	}
 
-	normalized := domain.NormalizedSymbol{CanonicalCode: canonical, AssetClass: guessAssetClass(canonical)}
+	normalized := domain.NormalizedSymbol{CanonicalCode: canonical, AssetClass: domain.AssetClassOf(canonical)}
 	spec := domain.SymbolSpec{
 		Symbol:           normalized,
 		BrokerSymbolName: result.BrokerSymbolName,

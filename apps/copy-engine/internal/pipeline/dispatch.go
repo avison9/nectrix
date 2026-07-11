@@ -101,6 +101,18 @@ func (p *Pipeline) doDispatchOrder(ctx context.Context, rel relationship, signal
 	// directly gives the identical collision behavior without an unneeded hash step.
 	idempotencyKey := signalID.String()
 
+	// TICKET-103, appendix-a-copy-engine-pseudocode.md's handleOpen: the
+	// unmapped-symbol check is the FIRST step, before sizing/PlaceOrder --
+	// never guess a mapping. A symbol with no CONFIRMED symbol_mappings row
+	// on the follower's account is skipped and flagged, not attempted.
+	mapped, err := p.hasConfirmedSymbolMapping(ctx, rel.followerBrokerAccountID, event.Position.Symbol.CanonicalCode)
+	if err != nil {
+		return fmt.Errorf("check symbol_mappings: %w", err)
+	}
+	if !mapped {
+		return p.recordUnmappedSymbolFailure(ctx, rel, signalID, idempotencyKey, event)
+	}
+
 	orderRequest := domain.NormalizedOrderRequest{
 		IdempotencyKey:          idempotencyKey,
 		FollowerBrokerAccountID: rel.followerBrokerAccountID.String(),
@@ -150,6 +162,93 @@ func (p *Pipeline) doDispatchOrder(ctx context.Context, rel relationship, signal
 	}
 
 	return p.publishCopiedTradeOpened(ctx, rel.id, result, event)
+}
+
+// hasConfirmedSymbolMapping is TICKET-103's real gate: a symbol is only
+// ever copied to a follower once a user/admin has explicitly confirmed the
+// mapping (nectrix_plan/docs/08-copy-trading-engine.md §8.4) -- an
+// auto-suggested-but-unconfirmed row (is_confirmed = FALSE) does not count.
+func (p *Pipeline) hasConfirmedSymbolMapping(ctx context.Context, followerBrokerAccountID uuid.UUID, canonicalSymbol string) (bool, error) {
+	var exists bool
+	err := p.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM symbol_mappings
+			WHERE broker_account_id = $1 AND canonical_symbol = $2 AND is_confirmed = TRUE
+		)`, followerBrokerAccountID, canonicalSymbol).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("query symbol_mappings: %w", err)
+	}
+	return exists, nil
+}
+
+// recordUnmappedSymbolFailure is appendix-a-copy-engine-pseudocode.md's
+// handleOpen: "return recordCopiedTrade(relationship, event, status=FAILED,
+// reason='UNMAPPED_SYMBOL')" -- never calls PlaceOrder. Same idempotency-key
+// convention as the real dispatch path (ON CONFLICT DO NOTHING), so a
+// redelivered signal doesn't record (or publish) the same failure twice.
+func (p *Pipeline) recordUnmappedSymbolFailure(ctx context.Context, rel relationship, signalID uuid.UUID, idempotencyKey string, event domain.NormalizedTradeEvent) error {
+	const rejectReason = "UNMAPPED_SYMBOL"
+
+	sizingSnapshot, err := json.Marshal(map[string]any{"method": "UNMAPPED_SYMBOL_SKIPPED"})
+	if err != nil {
+		return fmt.Errorf("marshal sizing_method_snapshot: %w", err)
+	}
+
+	var copiedTradeID uuid.UUID
+	err = p.pool.QueryRow(ctx, `
+		INSERT INTO copied_trades (
+			copy_relationship_id, trade_signal_id, idempotency_key,
+			status, computed_volume_lots, sizing_method_snapshot, reject_reason
+		) VALUES ($1,$2,$3,'FAILED',$4,$5,$6)
+		ON CONFLICT (copy_relationship_id, idempotency_key) DO NOTHING
+		RETURNING id`,
+		rel.id, signalID, idempotencyKey, event.Position.VolumeLots, sizingSnapshot, rejectReason,
+	).Scan(&copiedTradeID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// ON CONFLICT DO NOTHING: already recorded for this signal+relationship.
+			return nil
+		}
+		return fmt.Errorf("insert copied_trades (unmapped symbol): %w", err)
+	}
+
+	return p.publishCopiedTradeFailed(ctx, rel.id, rejectReason, event)
+}
+
+// publishCopiedTradeFailed is the real TICKET-115 integration point the
+// ticket's own acceptance criterion describes ("a corresponding follower
+// notification") -- this publish to the same copied-trades Kafka topic
+// publishCopiedTradeOpened uses is the complete, testable deliverable here;
+// a downstream Notification Service actually consuming CopiedTradeEventType
+// FAILED and delivering an in-app/push notification is TICKET-115's own
+// separate, not-yet-built responsibility.
+func (p *Pipeline) publishCopiedTradeFailed(ctx context.Context, relationshipID uuid.UUID, rejectReason string, event domain.NormalizedTradeEvent) error {
+	_, span := observability.Tracer().Start(ctx, "pipeline.publish")
+	err := p.doPublishCopiedTradeFailed(ctx, relationshipID, rejectReason, event)
+	finishSpan(span, err)
+	return err
+}
+
+func (p *Pipeline) doPublishCopiedTradeFailed(ctx context.Context, relationshipID uuid.UUID, rejectReason string, event domain.NormalizedTradeEvent) error {
+	msg := &eventsv1.CopiedTradeEvent{
+		Envelope: &eventsv1.EventEnvelope{
+			EventId:       uuid.NewString(),
+			OccurredAt:    time.Now().UTC().Format(time.RFC3339),
+			SchemaVersion: "v1",
+		},
+		CopyRelationshipId: relationshipID.String(),
+		EventType:          eventsv1.CopiedTradeEventType_COPIED_TRADE_EVENT_TYPE_FAILED,
+		Symbol: &eventsv1.NormalizedSymbol{
+			CanonicalCode: event.Position.Symbol.CanonicalCode,
+			AssetClass:    toProtoAssetClass(event.Position.Symbol.AssetClass),
+		},
+		RejectReason: &rejectReason,
+	}
+	value, err := proto.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("marshal CopiedTradeEvent: %w", err)
+	}
+	return p.kafkaWriter.WriteMessages(ctx, kafka.Message{Key: []byte(relationshipID.String()), Value: value})
 }
 
 func (p *Pipeline) publishCopiedTradeOpened(ctx context.Context, relationshipID uuid.UUID, result domain.NormalizedOrderResult, event domain.NormalizedTradeEvent) error {

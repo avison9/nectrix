@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	domain "github.com/avison9/nectrix/go-domain"
 	"github.com/avison9/nectrix/mt5-bridge-gateway/internal/coreappclient"
 	"github.com/avison9/nectrix/mt5-bridge-gateway/internal/dedupadapter"
 	"github.com/avison9/nectrix/mt5-bridge-gateway/internal/eabridge"
@@ -67,10 +68,18 @@ func main() {
 	// service is a WebSocket SERVER that real MT5/MT4 EAs dial INTO — the
 	// eabridge.Server IS the connection lifecycle: publisher.OnEvent is
 	// wired as every session's Kafka-publish subscriber the moment an EA
-	// pairs, and pairing.NewStatusHandler reports CONNECTED/DISCONNECTED to
-	// Core App the moment a session is established/lost, reusing the exact
+	// pairs, and statusHandler reports CONNECTED/DISCONNECTED to Core App
+	// the moment a session is established/lost, reusing the exact
 	// StatusReporter contract + endpoint TICKET-101 built.
-	eaServer := eabridge.NewServer(publisher.OnEvent, pairing.NewStatusHandler(coreApp, logger), logger)
+	//
+	// statusHandler is built before eaServer (which needs it) and before
+	// the adapters (which eaServer needs) — TICKET-103's
+	// SetSymbolResolvers call below needs both eaServer AND the adapters to
+	// already exist, which would otherwise be a circular construction
+	// dependency; building statusHandler first and wiring its resolvers in
+	// after the adapters exist breaks that cycle.
+	statusHandler := pairing.NewStatusHandler(coreApp, coreApp, logger)
+	eaServer := eabridge.NewServer(publisher.OnEvent, statusHandler, logger)
 
 	pairingLoop := pairing.New(coreApp, coreApp, eaServer, pairingInterval, logger)
 	go pairingLoop.Run(ctx)
@@ -81,10 +90,20 @@ func main() {
 	// own cross-service routing to broker-adapters/mt5-bridge-gateway is a
 	// separate, not-yet-built concern — see internal/mtadapter's package
 	// doc; internal/ctrader's own PlaceOrder is equally not yet reachable
-	// from outside apps/broker-adapters today).
+	// from outside apps/broker-adapters today). Both also satisfy
+	// domain.SymbolResolver for free (dedupadapter.Adapter embeds
+	// domain.BrokerAdapter, promoting ResolveSymbol/GetSymbolSpecification).
 	mt5Adapter := dedupadapter.New(mtadapter.NewMT5(eaServer), deduper)
 	mt4Adapter := dedupadapter.New(mtadapter.NewMT4(eaServer), deduper)
 	logger.Info("mt5-bridge-gateway: adapters ready", "platforms", []string{string(mt5Adapter.BrokerType()), string(mt4Adapter.BrokerType())})
+
+	// Must happen before eaServer.Handler() is registered on the mux below
+	// — i.e. before any real EA traffic can arrive and trigger
+	// OnSessionEstablished.
+	statusHandler.SetSymbolResolvers(map[domain.BrokerType]domain.SymbolResolver{
+		domain.BrokerTypeMT5: mt5Adapter,
+		domain.BrokerTypeMT4: mt4Adapter,
+	})
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
