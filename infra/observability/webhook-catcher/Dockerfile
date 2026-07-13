@@ -3,7 +3,7 @@
 # Standalone module (stdlib only, not part of the repo's go.work workspace)
 # — this is local dev/CI test tooling, not a deployable app.
 
-FROM golang:1.26.4-bookworm AS build
+FROM golang:1.26.5-bookworm AS build
 WORKDIR /workspace
 COPY go.mod main.go ./
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/webhook-catcher .

@@ -14,7 +14,7 @@
 # apps/mt-terminal-host/terminal-image/Dockerfile.
 
 # ---- Build stage ----
-FROM golang:1.26.4-bookworm AS build
+FROM golang:1.26.5-bookworm AS build
 WORKDIR /workspace
 
 COPY go.work go.work.sum ./
