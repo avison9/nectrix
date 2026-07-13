@@ -39,6 +39,14 @@ FROM debian:bookworm-slim AS wine-base
 # MetaQuotes installers below.
 RUN dpkg --add-architecture i386 \
     && apt-get update \
+    # Trivy caught real HIGH/CRITICAL CVEs (libcurl4, libgl1-mesa-dri,
+    # libpython3.11*, libxfont2, python3.11* — all transitive deps of
+    # wine/x11-apps, not directly listed below) already patched upstream in
+    # Debian's own repos but not yet in this base image's layer — `apt-get
+    # install` alone only versions NEW packages against the freshly updated
+    # index, it does not also upgrade packages the base image already
+    # shipped. An explicit upgrade closes that gap.
+    && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
        wine wine32 wine64 xvfb xauth x11-apps imagemagick winbind cabextract wget ca-certificates \
     && rm -rf /var/lib/apt/lists/*
