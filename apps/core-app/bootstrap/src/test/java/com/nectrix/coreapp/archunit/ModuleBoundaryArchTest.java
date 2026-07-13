@@ -16,7 +16,7 @@ class ModuleBoundaryArchTest {
 
   private static final String BASE = "com.nectrix.coreapp";
   private static final String[] MODULES = {
-    "auth", "invitations", "social", "billing", "admin", "analytics", "notifications"
+    "auth", "invitations", "social", "billing", "admin", "analytics", "notifications", "trading"
   };
 
   @Test

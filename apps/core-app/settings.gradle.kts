@@ -18,4 +18,5 @@ include(
     "modules:admin",
     "modules:analytics",
     "modules:notifications",
+    "modules:trading",
 )
