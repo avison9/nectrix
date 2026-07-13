@@ -59,6 +59,7 @@ dependencies {
     implementation(project(":modules:admin"))
     implementation(project(":modules:analytics"))
     implementation(project(":modules:notifications"))
+    implementation(project(":modules:trading"))
 
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("com.tngtech.archunit:archunit-junit5:1.4.2")
