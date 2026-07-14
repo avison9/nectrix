@@ -31,6 +31,11 @@ type relationship struct {
 	moneyManagementProfileID uuid.UUID
 	riskProfileID            uuid.UUID
 	copyDirection            string // "SAME" | "REVERSE"
+	// createdAt (TICKET-108) is only populated by loadActiveRelationshipsForDrawdownCheck
+	// (drawdown.go) -- matchRelationships' own SELECT/Scan below is
+	// untouched, leaving this zero-valued for the event-driven dispatch path,
+	// which never reads it.
+	createdAt time.Time
 }
 
 // processSignalForAllRelationships is the Relationship Matcher (Appendix
@@ -385,21 +390,26 @@ func (p *Pipeline) loadMoneyManagementProfile(ctx context.Context, id uuid.UUID)
 
 // dispatchRiskProfile bundles moneymgmt.RiskProfile (the caps ApplyRiskGuard
 // reads) with max_slippage_pips (which ApplyRiskGuard itself has no use for
-// but the order request does) and PinFollowerSLTP -- TICKET-107 / FR-3.7:
-// when true, handleModify logs/publishes a master SL/TP change but never
-// calls ModifyPosition against the follower's own position.
+// but the order request does), PinFollowerSLTP -- TICKET-107 / FR-3.7: when
+// true, handleModify logs/publishes a master SL/TP change but never calls
+// ModifyPosition against the follower's own position -- and
+// DrawdownPausePct/DrawdownCloseAllPct -- TICKET-108 / docs/09 §9.7's
+// two-tier drawdown model, both independently nullable (either, both, or
+// neither may be configured for a given relationship).
 type dispatchRiskProfile struct {
 	moneymgmt.RiskProfile
-	MaxSlippagePips float64
-	PinFollowerSLTP bool
+	MaxSlippagePips     float64
+	PinFollowerSLTP     bool
+	DrawdownPausePct    *float64
+	DrawdownCloseAllPct *float64
 }
 
 func (p *Pipeline) loadRiskProfile(ctx context.Context, id uuid.UUID) (dispatchRiskProfile, error) {
 	var profile dispatchRiskProfile
 	err := p.pool.QueryRow(ctx, `
-		SELECT max_lot_per_trade, max_open_positions, max_exposure_per_symbol_lots, max_total_exposure_lots, max_slippage_pips, pin_follower_sl_tp
+		SELECT max_lot_per_trade, max_open_positions, max_exposure_per_symbol_lots, max_total_exposure_lots, max_slippage_pips, pin_follower_sl_tp, drawdown_pause_pct, drawdown_close_all_pct
 		FROM risk_profiles WHERE id = $1`, id,
-	).Scan(&profile.MaxLotPerTrade, &profile.MaxOpenPositions, &profile.MaxExposurePerSymbolLots, &profile.MaxTotalExposureLots, &profile.MaxSlippagePips, &profile.PinFollowerSLTP)
+	).Scan(&profile.MaxLotPerTrade, &profile.MaxOpenPositions, &profile.MaxExposurePerSymbolLots, &profile.MaxTotalExposureLots, &profile.MaxSlippagePips, &profile.PinFollowerSLTP, &profile.DrawdownPausePct, &profile.DrawdownCloseAllPct)
 	if err != nil {
 		return dispatchRiskProfile{}, fmt.Errorf("query risk_profiles: %w", err)
 	}

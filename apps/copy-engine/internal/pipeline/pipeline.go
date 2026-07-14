@@ -50,10 +50,25 @@ type Pipeline struct {
 	router      *remoteadapter.Router
 	fx          moneymgmt.FXRateProvider
 	kafkaWriter *kafka.Writer
+	// riskEventWriter/copyRelationshipEventWriter (TICKET-108) are separate
+	// kafka.Writer instances for the "risk" and "copy-relationships" topics
+	// -- this codebase's established convention is one Writer per topic
+	// (mirrors main.go's own kafkaWriter/tradeSignalsDLQWriter pair), never a
+	// shared multi-topic writer.
+	riskEventWriter             *kafka.Writer
+	copyRelationshipEventWriter *kafka.Writer
 }
 
-func New(pool *pgxpool.Pool, deduper domain.Deduper, router *remoteadapter.Router, fx moneymgmt.FXRateProvider, kafkaWriter *kafka.Writer) *Pipeline {
-	return &Pipeline{pool: pool, deduper: deduper, router: router, fx: fx, kafkaWriter: kafkaWriter}
+func New(pool *pgxpool.Pool, deduper domain.Deduper, router *remoteadapter.Router, fx moneymgmt.FXRateProvider, kafkaWriter *kafka.Writer, riskEventWriter *kafka.Writer, copyRelationshipEventWriter *kafka.Writer) *Pipeline {
+	return &Pipeline{
+		pool:                        pool,
+		deduper:                     deduper,
+		router:                      router,
+		fx:                          fx,
+		kafkaWriter:                 kafkaWriter,
+		riskEventWriter:             riskEventWriter,
+		copyRelationshipEventWriter: copyRelationshipEventWriter,
+	}
 }
 
 // HandleEvent is the onEvent callback registered via

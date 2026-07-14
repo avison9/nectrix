@@ -32,7 +32,14 @@ const (
 	shutdownWait              = 5 * time.Second
 	dedupTTL                  = 5 * time.Minute
 	copiedTradesTopic         = "copied-trades"
+	riskTopic                 = "risk"
+	copyRelationshipsTopic    = "copy-relationships"
 	tradeSignalsConsumerGroup = "copy-engine"
+
+	// drawdownCheckInterval (TICKET-108) mirrors apps/broker-adapters'
+	// reconcile.Loop's own periodic-poll cadence style -- a literal const,
+	// not an env var, matching that service's precedent.
+	drawdownCheckInterval = 30 * time.Second
 
 	// Default matches apps/core-app/db's 014-seed-dev-data.sql (context:dev,
 	// `make db-seed-dev`) so local manual QA works out of the box: curl the
@@ -79,6 +86,23 @@ func main() {
 	}
 	defer func() { _ = kafkaWriter.Close() }()
 
+	// TICKET-108: separate Writer per topic, matching this codebase's
+	// established one-writer-per-topic convention (kafkaWriter/
+	// tradeSignalsDLQWriter above are the existing precedent) -- never a
+	// shared multi-topic writer.
+	riskEventWriter := &kafka.Writer{
+		Addr:     kafka.TCP(kafkaAddr),
+		Topic:    riskTopic,
+		Balancer: &kafka.Hash{},
+	}
+	defer func() { _ = riskEventWriter.Close() }()
+	copyRelationshipEventWriter := &kafka.Writer{
+		Addr:     kafka.TCP(kafkaAddr),
+		Topic:    copyRelationshipsTopic,
+		Balancer: &kafka.Hash{},
+	}
+	defer func() { _ = copyRelationshipEventWriter.Close() }()
+
 	internalServiceToken := os.Getenv("INTERNAL_SERVICE_TOKEN")
 	if internalServiceToken == "" {
 		log.Fatalf("%s: INTERNAL_SERVICE_TOKEN is required", serviceName)
@@ -98,7 +122,7 @@ func main() {
 	})
 	fx := moneymgmt.NewFrankfurterClient(nil, nil)
 
-	pl := pipeline.New(pool, deduper, router, fx, kafkaWriter)
+	pl := pipeline.New(pool, deduper, router, fx, kafkaWriter, riskEventWriter, copyRelationshipEventWriter)
 
 	// --- Existing stub-adapter path, unchanged in spirit:
 	// /test/inject-trade-event and the in-process StreamTradeEvents
@@ -170,6 +194,12 @@ func main() {
 			log.Printf("%s: trade-signals consumer stopped: %v", serviceName, err)
 		}
 	}()
+
+	// TICKET-108: periodic per-relationship drawdown monitor -- runs
+	// independently of any master's own trade signals, since a follower's
+	// account can drift into drawdown purely from market movement on
+	// already-open positions.
+	go pl.RunDrawdownMonitor(ctx, drawdownCheckInterval)
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)

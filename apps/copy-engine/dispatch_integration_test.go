@@ -581,7 +581,7 @@ func buildDispatchTestServer(t *testing.T, ctx context.Context, pool *pgxpool.Po
 		t.Fatalf("connect master handle: %v", err)
 	}
 
-	pl := pipeline.New(pool, deduper, router, moneymgmt.NewFrankfurterClient(nil, nil), kafkaWriter)
+	pl := pipeline.New(pool, deduper, router, moneymgmt.NewFrankfurterClient(nil, nil), kafkaWriter, nil, nil)
 
 	sub, err := adapter.StreamTradeEvents(ctx, masterHandle, pl.HandleEvent)
 	if err != nil {

@@ -67,6 +67,61 @@ func (RiskEventType) EnumDescriptor() ([]byte, []int) {
 	return file_nectrix_events_v1_risk_event_proto_rawDescGZIP(), []int{0}
 }
 
+// TICKET-108: docs/09-money-management-risk-formulas.md §9.7's two-tier
+// model -- PAUSE (drawdown_pause_pct) leaves positions open, FORCE_CLOSE
+// (drawdown_close_all_pct, a stricter threshold) closes everything. Both are
+// the SAME RiskEventType (drawdown.threshold_breached); severity is what
+// distinguishes them, matching the ticket text's own literal phrasing
+// ("emit drawdown.threshold_breached (severity=PAUSE/FORCE_CLOSE)").
+type RiskEventSeverity int32
+
+const (
+	RiskEventSeverity_RISK_EVENT_SEVERITY_UNSPECIFIED RiskEventSeverity = 0
+	RiskEventSeverity_RISK_EVENT_SEVERITY_PAUSE       RiskEventSeverity = 1
+	RiskEventSeverity_RISK_EVENT_SEVERITY_FORCE_CLOSE RiskEventSeverity = 2
+)
+
+// Enum value maps for RiskEventSeverity.
+var (
+	RiskEventSeverity_name = map[int32]string{
+		0: "RISK_EVENT_SEVERITY_UNSPECIFIED",
+		1: "RISK_EVENT_SEVERITY_PAUSE",
+		2: "RISK_EVENT_SEVERITY_FORCE_CLOSE",
+	}
+	RiskEventSeverity_value = map[string]int32{
+		"RISK_EVENT_SEVERITY_UNSPECIFIED": 0,
+		"RISK_EVENT_SEVERITY_PAUSE":       1,
+		"RISK_EVENT_SEVERITY_FORCE_CLOSE": 2,
+	}
+)
+
+func (x RiskEventSeverity) Enum() *RiskEventSeverity {
+	p := new(RiskEventSeverity)
+	*p = x
+	return p
+}
+
+func (x RiskEventSeverity) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (RiskEventSeverity) Descriptor() protoreflect.EnumDescriptor {
+	return file_nectrix_events_v1_risk_event_proto_enumTypes[1].Descriptor()
+}
+
+func (RiskEventSeverity) Type() protoreflect.EnumType {
+	return &file_nectrix_events_v1_risk_event_proto_enumTypes[1]
+}
+
+func (x RiskEventSeverity) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use RiskEventSeverity.Descriptor instead.
+func (RiskEventSeverity) EnumDescriptor() ([]byte, []int) {
+	return file_nectrix_events_v1_risk_event_proto_rawDescGZIP(), []int{1}
+}
+
 type RiskEvent struct {
 	state              protoimpl.MessageState `protogen:"open.v1"`
 	Envelope           *EventEnvelope         `protobuf:"bytes,1,opt,name=envelope,proto3" json:"envelope,omitempty"`
@@ -74,6 +129,7 @@ type RiskEvent struct {
 	EventType          RiskEventType          `protobuf:"varint,3,opt,name=event_type,json=eventType,proto3,enum=nectrix.events.v1.RiskEventType" json:"event_type,omitempty"`
 	DrawdownPct        float64                `protobuf:"fixed64,4,opt,name=drawdown_pct,json=drawdownPct,proto3" json:"drawdown_pct,omitempty"`
 	ThresholdPct       float64                `protobuf:"fixed64,5,opt,name=threshold_pct,json=thresholdPct,proto3" json:"threshold_pct,omitempty"`
+	Severity           RiskEventSeverity      `protobuf:"varint,6,opt,name=severity,proto3,enum=nectrix.events.v1.RiskEventSeverity" json:"severity,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -143,21 +199,33 @@ func (x *RiskEvent) GetThresholdPct() float64 {
 	return 0
 }
 
+func (x *RiskEvent) GetSeverity() RiskEventSeverity {
+	if x != nil {
+		return x.Severity
+	}
+	return RiskEventSeverity_RISK_EVENT_SEVERITY_UNSPECIFIED
+}
+
 var File_nectrix_events_v1_risk_event_proto protoreflect.FileDescriptor
 
 const file_nectrix_events_v1_risk_event_proto_rawDesc = "" +
 	"\n" +
-	"\"nectrix/events/v1/risk_event.proto\x12\x11nectrix.events.v1\x1a nectrix/events/v1/envelope.proto\"\x84\x02\n" +
+	"\"nectrix/events/v1/risk_event.proto\x12\x11nectrix.events.v1\x1a nectrix/events/v1/envelope.proto\"\xc6\x02\n" +
 	"\tRiskEvent\x12<\n" +
 	"\benvelope\x18\x01 \x01(\v2 .nectrix.events.v1.EventEnvelopeR\benvelope\x120\n" +
 	"\x14copy_relationship_id\x18\x02 \x01(\tR\x12copyRelationshipId\x12?\n" +
 	"\n" +
 	"event_type\x18\x03 \x01(\x0e2 .nectrix.events.v1.RiskEventTypeR\teventType\x12!\n" +
 	"\fdrawdown_pct\x18\x04 \x01(\x01R\vdrawdownPct\x12#\n" +
-	"\rthreshold_pct\x18\x05 \x01(\x01R\fthresholdPct*a\n" +
+	"\rthreshold_pct\x18\x05 \x01(\x01R\fthresholdPct\x12@\n" +
+	"\bseverity\x18\x06 \x01(\x0e2$.nectrix.events.v1.RiskEventSeverityR\bseverity*a\n" +
 	"\rRiskEventType\x12\x1f\n" +
 	"\x1bRISK_EVENT_TYPE_UNSPECIFIED\x10\x00\x12/\n" +
-	"+RISK_EVENT_TYPE_DRAWDOWN_THRESHOLD_BREACHED\x10\x01Bg\n" +
+	"+RISK_EVENT_TYPE_DRAWDOWN_THRESHOLD_BREACHED\x10\x01*|\n" +
+	"\x11RiskEventSeverity\x12#\n" +
+	"\x1fRISK_EVENT_SEVERITY_UNSPECIFIED\x10\x00\x12\x1d\n" +
+	"\x19RISK_EVENT_SEVERITY_PAUSE\x10\x01\x12#\n" +
+	"\x1fRISK_EVENT_SEVERITY_FORCE_CLOSE\x10\x02Bg\n" +
 	"\x15com.nectrix.events.v1P\x01ZLgithub.com/avison9/nectrix/event-contracts/go/gen/nectrix/events/v1;eventsv1b\x06proto3"
 
 var (
@@ -172,21 +240,23 @@ func file_nectrix_events_v1_risk_event_proto_rawDescGZIP() []byte {
 	return file_nectrix_events_v1_risk_event_proto_rawDescData
 }
 
-var file_nectrix_events_v1_risk_event_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_nectrix_events_v1_risk_event_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
 var file_nectrix_events_v1_risk_event_proto_msgTypes = make([]protoimpl.MessageInfo, 1)
 var file_nectrix_events_v1_risk_event_proto_goTypes = []any{
-	(RiskEventType)(0),    // 0: nectrix.events.v1.RiskEventType
-	(*RiskEvent)(nil),     // 1: nectrix.events.v1.RiskEvent
-	(*EventEnvelope)(nil), // 2: nectrix.events.v1.EventEnvelope
+	(RiskEventType)(0),     // 0: nectrix.events.v1.RiskEventType
+	(RiskEventSeverity)(0), // 1: nectrix.events.v1.RiskEventSeverity
+	(*RiskEvent)(nil),      // 2: nectrix.events.v1.RiskEvent
+	(*EventEnvelope)(nil),  // 3: nectrix.events.v1.EventEnvelope
 }
 var file_nectrix_events_v1_risk_event_proto_depIdxs = []int32{
-	2, // 0: nectrix.events.v1.RiskEvent.envelope:type_name -> nectrix.events.v1.EventEnvelope
+	3, // 0: nectrix.events.v1.RiskEvent.envelope:type_name -> nectrix.events.v1.EventEnvelope
 	0, // 1: nectrix.events.v1.RiskEvent.event_type:type_name -> nectrix.events.v1.RiskEventType
-	2, // [2:2] is the sub-list for method output_type
-	2, // [2:2] is the sub-list for method input_type
-	2, // [2:2] is the sub-list for extension type_name
-	2, // [2:2] is the sub-list for extension extendee
-	0, // [0:2] is the sub-list for field type_name
+	1, // 2: nectrix.events.v1.RiskEvent.severity:type_name -> nectrix.events.v1.RiskEventSeverity
+	3, // [3:3] is the sub-list for method output_type
+	3, // [3:3] is the sub-list for method input_type
+	3, // [3:3] is the sub-list for extension type_name
+	3, // [3:3] is the sub-list for extension extendee
+	0, // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_nectrix_events_v1_risk_event_proto_init() }
@@ -200,7 +270,7 @@ func file_nectrix_events_v1_risk_event_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_nectrix_events_v1_risk_event_proto_rawDesc), len(file_nectrix_events_v1_risk_event_proto_rawDesc)),
-			NumEnums:      1,
+			NumEnums:      2,
 			NumMessages:   1,
 			NumExtensions: 0,
 			NumServices:   0,
