@@ -6,11 +6,15 @@ import com.nectrix.coreapp.auth.api.UserProvisioningApi;
 import com.nectrix.coreapp.crypto.api.EncryptedField;
 import com.nectrix.coreapp.crypto.api.EnvelopeEncryptionService;
 import com.nectrix.coreapp.invitations.service.BrokerLinkingService;
+import dev.samstevens.totp.code.CodeGenerator;
+import dev.samstevens.totp.code.DefaultCodeGenerator;
+import dev.samstevens.totp.code.HashingAlgorithm;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -98,10 +102,17 @@ class BrokerAccountOAuthIntegrationTest {
     }
   }
 
-  private String loginNewUser() {
-    String email = "ctrader-oauth-" + UUID.randomUUID() + "@example.com";
-    userProvisioningApi.createUser(
-        email, "correct horse battery staple", "Test User", null, null, null, "US");
+  private final CodeGenerator codeGenerator = new DefaultCodeGenerator(HashingAlgorithm.SHA1);
+
+  private String generateTotpCode(String secret) {
+    try {
+      return codeGenerator.generate(secret, Instant.now().getEpochSecond() / 30);
+    } catch (Exception e) {
+      throw new IllegalStateException(e);
+    }
+  }
+
+  private String loginAs(String email) {
     HttpResult login =
         request(
             "POST",
@@ -109,6 +120,52 @@ class BrokerAccountOAuthIntegrationTest {
             Map.of("email", email, "password", "correct horse battery staple"),
             null);
     return (String) login.body().get("access_token");
+  }
+
+  /** Once 2FA is enabled, a bare email+password login is challenged (401 totp_required). */
+  private String loginAsWithTotp(String email, String secret) {
+    HttpResult login =
+        request(
+            "POST",
+            "/api/v1/auth/login",
+            Map.of(
+                "email",
+                email,
+                "password",
+                "correct horse battery staple",
+                "totp_code",
+                generateTotpCode(secret)),
+            null);
+    return (String) login.body().get("access_token");
+  }
+
+  private String loginNewUserWithoutTwoFactor() {
+    String email = "ctrader-oauth-" + UUID.randomUUID() + "@example.com";
+    userProvisioningApi.createUser(
+        email, "correct horse battery staple", "Test User", null, null, null, "US");
+    return loginAs(email);
+  }
+
+  /**
+   * TICKET-110 AC1 — {@code /broker/ctrader/link} now requires 2FA, so this shared setup enrolls it
+   * for real (enable -> generate a valid TOTP code -> verify) then re-logs-in for a fresh access
+   * token carrying two_factor_enabled=true (a pre-enrollment token would still read false).
+   */
+  private String loginNewUser() {
+    String email = "ctrader-oauth-" + UUID.randomUUID() + "@example.com";
+    userProvisioningApi.createUser(
+        email, "correct horse battery staple", "Test User", null, null, null, "US");
+    String preEnrollmentToken = loginAs(email);
+
+    HttpResult enable = request("POST", "/api/v1/auth/2fa/enable", Map.of(), preEnrollmentToken);
+    String secret = (String) enable.body().get("secret");
+    request(
+        "POST",
+        "/api/v1/auth/2fa/verify",
+        Map.of("totp_code", generateTotpCode(secret)),
+        preEnrollmentToken);
+
+    return loginAsWithTotp(email, secret);
   }
 
   // TICKET-101 task #120 — regression test for a real bug caught by hand during this ticket:
@@ -183,6 +240,21 @@ class BrokerAccountOAuthIntegrationTest {
             Map.of("link_session_id", "irrelevant", "ctid_trader_account_id", 1, "is_live", false),
             null);
     assertThat(response.status()).isEqualTo(401);
+  }
+
+  @Test
+  void link_withoutTwoFactorEnabled_isRejected() {
+    String accessToken = loginNewUserWithoutTwoFactor();
+
+    HttpResult response =
+        request(
+            "POST",
+            "/api/v1/broker/ctrader/link",
+            Map.of("link_session_id", "irrelevant", "ctid_trader_account_id", 1, "is_live", false),
+            accessToken);
+
+    assertThat(response.status()).isEqualTo(403);
+    assertThat(response.body().get("error")).isEqualTo("two_factor_required");
   }
 
   @Test

@@ -3,10 +3,14 @@ package com.nectrix.coreapp.bootstrap.invitations;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.nectrix.coreapp.auth.api.UserProvisioningApi;
+import dev.samstevens.totp.code.CodeGenerator;
+import dev.samstevens.totp.code.DefaultCodeGenerator;
+import dev.samstevens.totp.code.HashingAlgorithm;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Tag;
@@ -97,10 +101,30 @@ class BrokerAccountMtIntegrationTest {
     }
   }
 
-  private String loginNewUser() {
+  private final CodeGenerator codeGenerator = new DefaultCodeGenerator(HashingAlgorithm.SHA1);
+
+  private String generateTotpCode(String secret) {
+    try {
+      return codeGenerator.generate(secret, Instant.now().getEpochSecond() / 30);
+    } catch (Exception e) {
+      throw new IllegalStateException(e);
+    }
+  }
+
+  /**
+   * TICKET-110 AC1 — every linking-finalize endpoint now requires 2FA, so the shared test setup
+   * enrolls it for real (enable -> generate a valid TOTP code -> verify) then re-logs-in for a
+   * fresh access token carrying two_factor_enabled=true (JwtService's own claim is a snapshot as of
+   * token-issue time, so the pre-enrollment token would still read false).
+   */
+  private String loginNewUserWithoutTwoFactor() {
     String email = "mt-link-" + UUID.randomUUID() + "@example.com";
     userProvisioningApi.createUser(
         email, "correct horse battery staple", "Test User", null, null, null, "US");
+    return loginAs(email);
+  }
+
+  private String loginAs(String email) {
     HttpResult login =
         request(
             "POST",
@@ -108,6 +132,40 @@ class BrokerAccountMtIntegrationTest {
             Map.of("email", email, "password", "correct horse battery staple"),
             null);
     return (String) login.body().get("access_token");
+  }
+
+  /** Once 2FA is enabled, a bare email+password login is challenged (401 totp_required). */
+  private String loginAsWithTotp(String email, String secret) {
+    HttpResult login =
+        request(
+            "POST",
+            "/api/v1/auth/login",
+            Map.of(
+                "email",
+                email,
+                "password",
+                "correct horse battery staple",
+                "totp_code",
+                generateTotpCode(secret)),
+            null);
+    return (String) login.body().get("access_token");
+  }
+
+  private String loginNewUser() {
+    String email = "mt-link-" + UUID.randomUUID() + "@example.com";
+    userProvisioningApi.createUser(
+        email, "correct horse battery staple", "Test User", null, null, null, "US");
+    String preEnrollmentToken = loginAs(email);
+
+    HttpResult enable = request("POST", "/api/v1/auth/2fa/enable", Map.of(), preEnrollmentToken);
+    String secret = (String) enable.body().get("secret");
+    request(
+        "POST",
+        "/api/v1/auth/2fa/verify",
+        Map.of("totp_code", generateTotpCode(secret)),
+        preEnrollmentToken);
+
+    return loginAsWithTotp(email, secret);
   }
 
   private Map<String, Object> mt5LinkBody(String login) {
@@ -131,6 +189,28 @@ class BrokerAccountMtIntegrationTest {
     HttpResult response =
         request("POST", "/api/v1/broker-accounts/mt4", mt5LinkBody("500002"), null);
     assertThat(response.status()).isEqualTo(401);
+  }
+
+  @Test
+  void linkMt5_withoutTwoFactorEnabled_isRejected() {
+    String accessToken = loginNewUserWithoutTwoFactor();
+
+    HttpResult response =
+        request("POST", "/api/v1/broker-accounts/mt5", mt5LinkBody("500099"), accessToken);
+
+    assertThat(response.status()).isEqualTo(403);
+    assertThat(response.body().get("error")).isEqualTo("two_factor_required");
+  }
+
+  @Test
+  void linkMt4_withoutTwoFactorEnabled_isRejected() {
+    String accessToken = loginNewUserWithoutTwoFactor();
+
+    HttpResult response =
+        request("POST", "/api/v1/broker-accounts/mt4", mt5LinkBody("500098"), accessToken);
+
+    assertThat(response.status()).isEqualTo(403);
+    assertThat(response.body().get("error")).isEqualTo("two_factor_required");
   }
 
   @Test

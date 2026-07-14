@@ -3,6 +3,7 @@ package com.nectrix.coreapp.invitations.web;
 import com.nectrix.coreapp.invitations.client.BrokerAdaptersInternalClient;
 import com.nectrix.coreapp.invitations.domain.BrokerAccount;
 import com.nectrix.coreapp.invitations.service.BrokerLinkingService;
+import com.nectrix.coreapp.invitations.service.TwoFactorRequiredException;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -59,17 +60,30 @@ public class BrokerAccountOAuthController {
 
   @PostMapping("/api/v1/broker/ctrader/link")
   public BrokerAccount link(@AuthenticationPrincipal Jwt jwt, @RequestBody LinkRequest request) {
+    requireTwoFactor(jwt);
     UUID userId = currentUserId(jwt);
     return linkingService.linkAccount(
         userId,
         request.linkSessionId(),
         request.ctidTraderAccountId(),
         request.isLive(),
-        request.displayLabel());
+        request.displayLabel(),
+        request.connectionRole(),
+        request.openedViaIbLinkId());
   }
 
   private UUID currentUserId(Jwt jwt) {
     return UUID.fromString(jwt.getSubject());
+  }
+
+  /**
+   * AC1 — mandatory 2FA gate, applied unconditionally (see TwoFactorRequiredException's Javadoc).
+   */
+  private void requireTwoFactor(Jwt jwt) {
+    Boolean twoFactorEnabled = jwt.getClaimAsBoolean("two_factor_enabled");
+    if (twoFactorEnabled == null || !twoFactorEnabled) {
+      throw new TwoFactorRequiredException();
+    }
   }
 
   public record AuthorizeUrlResponse(String authorizeUrl) {}
@@ -90,5 +104,10 @@ public class BrokerAccountOAuthController {
   }
 
   public record LinkRequest(
-      String linkSessionId, long ctidTraderAccountId, boolean isLive, String displayLabel) {}
+      String linkSessionId,
+      long ctidTraderAccountId,
+      boolean isLive,
+      String displayLabel,
+      String connectionRole,
+      UUID openedViaIbLinkId) {}
 }

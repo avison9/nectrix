@@ -1,6 +1,7 @@
 package com.nectrix.coreapp.invitations.repository;
 
 import com.nectrix.coreapp.invitations.domain.BrokerAccount;
+import java.sql.Timestamp;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -22,16 +23,22 @@ import org.springframework.stereotype.Repository;
 public class BrokerAccountRepository {
 
   private static final RowMapper<BrokerAccount> ROW_MAPPER =
-      (rs, rowNum) ->
-          new BrokerAccount(
-              UUID.fromString(rs.getString("id")),
-              UUID.fromString(rs.getString("user_id")),
-              rs.getString("broker_type"),
-              rs.getString("broker_account_login"),
-              rs.getString("display_label"),
-              rs.getBoolean("is_demo"),
-              rs.getString("currency"),
-              rs.getString("connection_status"));
+      (rs, rowNum) -> {
+        String openedViaIbLinkId = rs.getString("opened_via_ib_link_id");
+        Timestamp lastHealthCheckAt = rs.getTimestamp("last_health_check_at");
+        return new BrokerAccount(
+            UUID.fromString(rs.getString("id")),
+            UUID.fromString(rs.getString("user_id")),
+            rs.getString("broker_type"),
+            rs.getString("broker_account_login"),
+            rs.getString("display_label"),
+            rs.getBoolean("is_demo"),
+            rs.getString("currency"),
+            rs.getString("connection_role"),
+            openedViaIbLinkId != null ? UUID.fromString(openedViaIbLinkId) : null,
+            rs.getString("connection_status"),
+            lastHealthCheckAt != null ? lastHealthCheckAt.toInstant() : null);
+      };
 
   private final JdbcTemplate jdbcTemplate;
 
@@ -60,6 +67,10 @@ public class BrokerAccountRepository {
    * apps/broker-adapters reports the first real GetAccountSnapshot; correcting it is a documented
    * follow-up (see this ticket's live-verification runbook), not silently wrong data left in place
    * forever.
+   *
+   * <p>Convenience delegate kept for callers that don't yet have a connection_role/IB-link decision
+   * to make — defaults to {@code FOLLOWER_ONLY} (docs/07 §7.5's own default for invite-created
+   * accounts) and no IB link.
    */
   public UUID insert(
       UUID userId,
@@ -69,12 +80,35 @@ public class BrokerAccountRepository {
       boolean isDemo,
       byte[] credentialsCiphertext,
       short credentialsKeyVersion) {
+    return insert(
+        userId,
+        brokerType,
+        brokerAccountLogin,
+        displayLabel,
+        isDemo,
+        credentialsCiphertext,
+        credentialsKeyVersion,
+        "FOLLOWER_ONLY",
+        null);
+  }
+
+  /** TICKET-110 — threads connection_role/opened_via_ib_link_id through at link time. */
+  public UUID insert(
+      UUID userId,
+      String brokerType,
+      String brokerAccountLogin,
+      String displayLabel,
+      boolean isDemo,
+      byte[] credentialsCiphertext,
+      short credentialsKeyVersion,
+      String connectionRole,
+      UUID openedViaIbLinkId) {
     return jdbcTemplate.queryForObject(
         """
         INSERT INTO broker_accounts
           (user_id, broker_type, broker_account_login, display_label, is_demo, currency,
-           credentials_ciphertext, credentials_key_version)
-        VALUES (?, ?, ?, ?, ?, 'USD', ?, ?)
+           credentials_ciphertext, credentials_key_version, connection_role, opened_via_ib_link_id)
+        VALUES (?, ?, ?, ?, ?, 'USD', ?, ?, ?, ?)
         RETURNING id
         """,
         UUID.class,
@@ -84,7 +118,39 @@ public class BrokerAccountRepository {
         displayLabel,
         isDemo,
         credentialsCiphertext,
-        credentialsKeyVersion);
+        credentialsKeyVersion,
+        connectionRole,
+        openedViaIbLinkId);
+  }
+
+  /** TICKET-110 — list endpoint's own query, scoped to the caller (never a bare findAll). */
+  public List<BrokerAccount> findAllForUser(UUID userId) {
+    return jdbcTemplate.query(
+        "SELECT * FROM broker_accounts WHERE user_id = ? ORDER BY created_at DESC",
+        ROW_MAPPER,
+        userId);
+  }
+
+  /**
+   * TICKET-110 — PATCH's write path; both params are the already-resolved (existing-if-absent)
+   * values.
+   */
+  public void updateDisplayLabelAndRole(UUID id, String displayLabel, String connectionRole) {
+    jdbcTemplate.update(
+        "UPDATE broker_accounts SET display_label = ?, connection_role = ?, updated_at = now() WHERE id = ?",
+        displayLabel,
+        connectionRole,
+        id);
+  }
+
+  /**
+   * TICKET-110 — DELETE's write path. broker_accounts has no ON DELETE CASCADE from
+   * copy_relationships (unlike account_snapshots/symbol_mappings) — a still-referenced row throws
+   * DataIntegrityViolationException, translated to a 409 by the caller, never silently orphaning a
+   * future relationship row.
+   */
+  public void delete(UUID id) {
+    jdbcTemplate.update("DELETE FROM broker_accounts WHERE id = ?", id);
   }
 
   /** Row shape for the internal listing endpoint (task #119) — deliberately no credentials. */

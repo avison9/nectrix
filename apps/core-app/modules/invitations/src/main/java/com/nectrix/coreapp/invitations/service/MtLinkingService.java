@@ -4,6 +4,7 @@ import com.nectrix.coreapp.crypto.api.EncryptedField;
 import com.nectrix.coreapp.crypto.api.EnvelopeEncryptionService;
 import com.nectrix.coreapp.invitations.config.InvitationsProperties;
 import com.nectrix.coreapp.invitations.repository.BrokerAccountRepository;
+import com.nectrix.coreapp.invitations.repository.BrokerIbLinkRepository;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.util.Base64;
@@ -31,6 +32,7 @@ public class MtLinkingService {
   private static final int PAIRING_TOKEN_BYTES = 32;
 
   private final BrokerAccountRepository repository;
+  private final BrokerIbLinkRepository ibLinkRepository;
   private final EnvelopeEncryptionService envelopeEncryptionService;
   private final ObjectMapper objectMapper;
   private final String gatewayUrl;
@@ -38,10 +40,12 @@ public class MtLinkingService {
 
   public MtLinkingService(
       BrokerAccountRepository repository,
+      BrokerIbLinkRepository ibLinkRepository,
       EnvelopeEncryptionService envelopeEncryptionService,
       ObjectMapper objectMapper,
       InvitationsProperties properties) {
     this.repository = repository;
+    this.ibLinkRepository = ibLinkRepository;
     this.envelopeEncryptionService = envelopeEncryptionService;
     this.objectMapper = objectMapper;
     this.gatewayUrl = properties.mtBridge().gatewayUrl();
@@ -58,6 +62,12 @@ public class MtLinkingService {
   private LinkResult link(UUID userId, String brokerType, LinkRequest request) {
     if (repository.existsForUser(userId, brokerType, request.login())) {
       throw new BrokerAccountAlreadyLinkedException();
+    }
+
+    String resolvedRole = ConnectionRoles.resolveOrDefault(request.connectionRole());
+    UUID openedViaIbLinkId = request.openedViaIbLinkId();
+    if (openedViaIbLinkId != null && !ibLinkRepository.existsActiveById(openedViaIbLinkId)) {
+      throw new InvalidIbLinkException();
     }
 
     String pairingToken = generatePairingToken();
@@ -78,7 +88,9 @@ public class MtLinkingService {
             request.displayLabel(),
             request.isDemo(),
             encrypted.ciphertext().getBytes(StandardCharsets.UTF_8),
-            encrypted.keyVersion());
+            encrypted.keyVersion(),
+            resolvedRole,
+            openedViaIbLinkId);
 
     return new LinkResult(brokerAccountId, pairingToken, gatewayUrl);
   }
@@ -90,7 +102,13 @@ public class MtLinkingService {
   }
 
   public record LinkRequest(
-      String login, String password, String server, boolean isDemo, String displayLabel) {}
+      String login,
+      String password,
+      String server,
+      boolean isDemo,
+      String displayLabel,
+      String connectionRole,
+      UUID openedViaIbLinkId) {}
 
   public record LinkResult(UUID brokerAccountId, String pairingToken, String gatewayUrl) {}
 

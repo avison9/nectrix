@@ -166,7 +166,8 @@ public class AuthService {
     Instant expiresAt = Instant.now().plus(REFRESH_TOKEN_TTL_DAYS, ChronoUnit.DAYS);
     sessionRepository.create(user.id(), hash, deviceInfoJson, ipAddress, expiresAt);
     List<String> roles = userRepository.findRoleNames(user.id());
-    String accessToken = jwtService.issueAccessToken(user.id(), user.email(), roles);
+    String accessToken =
+        jwtService.issueAccessToken(user.id(), user.email(), roles, user.twoFactorEnabled());
     return new TokenPair(accessToken, refreshToken, JwtService.ACCESS_TOKEN_TTL_SECONDS);
   }
 

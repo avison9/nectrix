@@ -102,3 +102,7 @@ nectrix:
     # must be reachable from outside the cluster, unlike broker-adapters.internal-base-url above.
     mt-bridge:
       gateway-url: ${MT_BRIDGE_GATEWAY_URL:ws://localhost:8092/ea/ws}
+      # TICKET-110 — cluster-internal snapshot/positions passthrough, mirrors
+      # broker-adapters.internal-base-url above.
+      internal-base-url: ${MT5_BRIDGE_GATEWAY_INTERNAL_BASE_URL:http://localhost:8092}
+      service-token: ${INTERNAL_SERVICE_TOKEN}

@@ -1,11 +1,13 @@
 package com.nectrix.coreapp.invitations.domain;
 
+import java.time.Instant;
 import java.util.UUID;
 
 /**
- * Mirrors the `broker_accounts` table (docs/06-database-schema.md) — read-only for now (TICKET-006
- * only needs enough to demonstrate the object-ownership authorization pattern; real broker linking
- * is Phase 1, docs/07-auth-onboarding-broker-linking.md §7.4).
+ * Mirrors the `broker_accounts` table (docs/06-database-schema.md). TICKET-110 widens this from
+ * TICKET-006's original read-only demo record to carry every column the API/UI layer needs: {@code
+ * connectionRole} (MASTER_ONLY/FOLLOWER_ONLY/BOTH) and {@code openedViaIbLinkId} both already
+ * existed in the DB schema since TICKET-004 but were never modeled in Java until now.
  */
 public record BrokerAccount(
     UUID id,
@@ -15,4 +17,7 @@ public record BrokerAccount(
     String displayLabel,
     boolean isDemo,
     String currency,
-    String connectionStatus) {}
+    String connectionRole,
+    UUID openedViaIbLinkId,
+    String connectionStatus,
+    Instant lastHealthCheckAt) {}

@@ -6,6 +6,7 @@ import com.nectrix.coreapp.invitations.client.BrokerAdaptersInternalClient;
 import com.nectrix.coreapp.invitations.client.CTraderOAuthClient;
 import com.nectrix.coreapp.invitations.domain.BrokerAccount;
 import com.nectrix.coreapp.invitations.repository.BrokerAccountRepository;
+import com.nectrix.coreapp.invitations.repository.BrokerIbLinkRepository;
 import com.nectrix.coreapp.invitations.service.oauth.OAuthLinkStateStore;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -33,6 +34,7 @@ public class BrokerLinkingService {
   private final CTraderOAuthClient oauthClient;
   private final BrokerAdaptersInternalClient brokerAdaptersClient;
   private final BrokerAccountRepository repository;
+  private final BrokerIbLinkRepository ibLinkRepository;
   private final EnvelopeEncryptionService envelopeEncryptionService;
   private final ObjectMapper objectMapper;
 
@@ -41,12 +43,14 @@ public class BrokerLinkingService {
       CTraderOAuthClient oauthClient,
       BrokerAdaptersInternalClient brokerAdaptersClient,
       BrokerAccountRepository repository,
+      BrokerIbLinkRepository ibLinkRepository,
       EnvelopeEncryptionService envelopeEncryptionService,
       ObjectMapper objectMapper) {
     this.stateStore = stateStore;
     this.oauthClient = oauthClient;
     this.brokerAdaptersClient = brokerAdaptersClient;
     this.repository = repository;
+    this.ibLinkRepository = ibLinkRepository;
     this.envelopeEncryptionService = envelopeEncryptionService;
     this.objectMapper = objectMapper;
   }
@@ -96,7 +100,9 @@ public class BrokerLinkingService {
       String linkSessionId,
       long ctidTraderAccountId,
       boolean isLive,
-      String displayLabel) {
+      String displayLabel,
+      String connectionRole,
+      UUID openedViaIbLinkId) {
     OAuthLinkStateStore.LinkSession session =
         stateStore.consumeLinkSession(linkSessionId).orElseThrow(InvalidLinkSessionException::new);
     if (!session.userId().equals(callerUserId)) {
@@ -106,6 +112,11 @@ public class BrokerLinkingService {
     String brokerAccountLogin = Long.toString(ctidTraderAccountId);
     if (repository.existsForUser(callerUserId, BROKER_TYPE, brokerAccountLogin)) {
       throw new BrokerAccountAlreadyLinkedException();
+    }
+
+    String resolvedRole = ConnectionRoles.resolveOrDefault(connectionRole);
+    if (openedViaIbLinkId != null && !ibLinkRepository.existsActiveById(openedViaIbLinkId)) {
+      throw new InvalidIbLinkException();
     }
 
     // Jackson 3's writeValueAsString is unchecked (JacksonException extends
@@ -124,7 +135,9 @@ public class BrokerLinkingService {
             displayLabel,
             !isLive,
             encrypted.ciphertext().getBytes(StandardCharsets.UTF_8),
-            encrypted.keyVersion());
+            encrypted.keyVersion(),
+            resolvedRole,
+            openedViaIbLinkId);
     return repository.findById(brokerAccountId).orElseThrow(BrokerAccountNotFoundException::new);
   }
 

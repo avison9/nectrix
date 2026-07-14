@@ -32,9 +32,11 @@ public record InvitationsProperties(
    * TICKET-102 — the MT5/MT4 EA-bridge gateway (apps/mt5-bridge-gateway). {@code gatewayUrl} is the
    * WebSocket URL returned to the user at link time for them to paste into their EA's own input
    * parameters — a public-facing address (the user's own terminal must be able to reach it), unlike
-   * {@code brokerAdapters.internalBaseUrl} above, which is cluster-internal only.
+   * {@code internalBaseUrl}/{@code serviceToken} below (TICKET-110 — cluster-internal snapshot/
+   * positions passthrough, same shape as {@code brokerAdapters} above, matching apps/copy-engine's
+   * own MT5_BRIDGE_GATEWAY_INTERNAL_BASE_URL env var precedent).
    */
-  public record MtBridge(String gatewayUrl) {}
+  public record MtBridge(String gatewayUrl, String internalBaseUrl, String serviceToken) {}
 
   /**
    * TICKET-101 task #120 — TokenRefreshJob's own poll cadence and "nearing expiry" threshold.

@@ -2,7 +2,9 @@ package com.nectrix.coreapp.invitations.service;
 
 import com.nectrix.coreapp.invitations.domain.BrokerAccount;
 import com.nectrix.coreapp.invitations.repository.BrokerAccountRepository;
+import java.util.List;
 import java.util.UUID;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.access.prepost.PostAuthorize;
 import org.springframework.stereotype.Service;
 
@@ -13,9 +15,12 @@ import org.springframework.stereotype.Service;
  * <p>{@code @PostAuthorize} runs only after this method returns normally, so the 404 (not-found)
  * and 403 (not-yours) cases can never collide: an absent row throws before the SpEL check ever
  * runs. This pattern (declarative {@code @PostAuthorize} + a shared named bean referenced by SpEL)
- * is for reads only — a hypothetical future write endpoint should use an explicit
- * fetch-then-check-then-mutate guard call instead, since {@code @PostAuthorize} runs after the
- * method body and its ordering relative to {@code @Transactional} isn't guaranteed.
+ * is for reads only. TICKET-110's {@link #updateBrokerAccount}/{@link #deleteBrokerAccount} are
+ * writes, so they deliberately carry NO {@code @PostAuthorize} of their own (Spring AOP proxies
+ * don't intercept self-invocation, so a same-class call from here wouldn't even fire it) — callers
+ * (see {@code BrokerAccountController}) must call {@link #getBrokerAccount} FIRST as an explicit
+ * fetch-then-check-then-mutate guard, a genuine cross-bean call that the proxy does intercept,
+ * before ever calling either mutating method.
  */
 @Service
 public class BrokerAccountService {
@@ -29,5 +34,37 @@ public class BrokerAccountService {
   @PostAuthorize("@perms.isOwnerOrStaff(authentication, returnObject.userId())")
   public BrokerAccount getBrokerAccount(UUID id) {
     return repository.findById(id).orElseThrow(BrokerAccountNotFoundException::new);
+  }
+
+  /** List endpoint's own query is scoped to the caller at the SQL layer — never a bare findAll. */
+  public List<BrokerAccount> listForUser(UUID userId) {
+    return repository.findAllForUser(userId);
+  }
+
+  /**
+   * {@code existing} must already have passed {@link #getBrokerAccount}'s ownership check — see
+   * this class's own Javadoc for why that can't happen inside this method itself.
+   */
+  public BrokerAccount updateBrokerAccount(
+      BrokerAccount existing, String displayLabel, String connectionRole) {
+    String resolvedLabel = displayLabel != null ? displayLabel : existing.displayLabel();
+    String resolvedRole =
+        ConnectionRoles.resolveOrDefault(
+            connectionRole != null ? connectionRole : existing.connectionRole());
+    repository.updateDisplayLabelAndRole(existing.id(), resolvedLabel, resolvedRole);
+    return repository.findById(existing.id()).orElseThrow(BrokerAccountNotFoundException::new);
+  }
+
+  /**
+   * {@code existing} must already have passed {@link #getBrokerAccount}'s ownership check.
+   * broker_accounts has no ON DELETE CASCADE from copy_relationships — a still-referenced row's
+   * DataIntegrityViolationException is translated to a clean 409, never a raw 500.
+   */
+  public void deleteBrokerAccount(BrokerAccount existing) {
+    try {
+      repository.delete(existing.id());
+    } catch (DataIntegrityViolationException e) {
+      throw new BrokerAccountInUseException();
+    }
   }
 }
