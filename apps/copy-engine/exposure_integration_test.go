@@ -41,7 +41,7 @@ func seedCopiedTrade(t *testing.T, ctx context.Context, pool *pgxpool.Pool, mast
 // are nil since SumOpenVolumeForSymbol/SumOpenVolumeAllSymbols/
 // CountOpenPositions touch only p.pool internally.
 func newExposurePipeline(pool *pgxpool.Pool) *pipeline.Pipeline {
-	return pipeline.New(pool, nil, nil, nil, nil, nil, nil)
+	return pipeline.New(pool, nil, nil, nil, nil, nil, nil, nil)
 }
 
 // TICKET-105 AC4: "A close/partial-close signal is never blocked by any

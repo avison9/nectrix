@@ -60,6 +60,10 @@ type fakeBrokerAdapter struct {
 	gotCloseHandle domain.ConnectionHandle
 	gotClosePosID  string
 	gotCloseVolume *float64
+
+	positions          []domain.NormalizedPosition
+	positionsErr       error
+	gotPositionsHandle domain.ConnectionHandle
 }
 
 func (f *fakeBrokerAdapter) BrokerType() domain.BrokerType { return domain.BrokerTypeCTrader }
@@ -77,7 +81,8 @@ func (f *fakeBrokerAdapter) GetAccountSnapshot(ctx context.Context, handle domai
 	return f.snapshot, f.snapshotErr
 }
 func (f *fakeBrokerAdapter) GetOpenPositions(ctx context.Context, handle domain.ConnectionHandle) ([]domain.NormalizedPosition, error) {
-	return nil, errors.New("not implemented")
+	f.gotPositionsHandle = handle
+	return f.positions, f.positionsErr
 }
 func (f *fakeBrokerAdapter) StreamTradeEvents(ctx context.Context, handle domain.ConnectionHandle, onEvent func(context.Context, domain.NormalizedTradeEvent) error) (domain.Subscription, error) {
 	return nil, errors.New("not implemented")
@@ -456,5 +461,60 @@ func TestClosePosition_AdapterError_BadGateway(t *testing.T) {
 	rec := doPathRequest(t, mux, http.MethodPost, "/internal/ctrader/accounts/acct-1/positions/pos-1/close", sharedSecret, `{}`)
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("status = %d, want 502", rec.Code)
+	}
+}
+
+// --- TICKET-109: GET .../positions ---
+
+func TestGetOpenPositions_Success(t *testing.T) {
+	handle := domain.ConnectionHandle{ID: "h1", BrokerType: domain.BrokerTypeCTrader, AccountID: "acct-1"}
+	adapter := &fakeBrokerAdapter{positions: []domain.NormalizedPosition{
+		{BrokerPositionID: "pos-1", Symbol: domain.NormalizedSymbol{CanonicalCode: "EURUSD", AssetClass: domain.AssetClassFX}, Direction: domain.TradeDirectionBuy, VolumeLots: 1.5, OpenPrice: 1.2000},
+	}}
+	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, adapter, sharedSecret, nil)
+
+	rec := doPathRequest(t, mux, http.MethodGet, "/internal/ctrader/accounts/acct-1/positions", sharedSecret, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body=%s", rec.Code, rec.Body.String())
+	}
+	if adapter.gotPositionsHandle != handle {
+		t.Fatalf("GetOpenPositions called with handle %+v, want %+v", adapter.gotPositionsHandle, handle)
+	}
+
+	var got []domain.NormalizedPosition
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if len(got) != 1 || got[0].BrokerPositionID != "pos-1" || got[0].VolumeLots != 1.5 {
+		t.Fatalf("got positions %+v, want one position pos-1/1.5 lots", got)
+	}
+}
+
+func TestGetOpenPositions_UnknownAccount_NotFound(t *testing.T) {
+	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{}, &fakeBrokerAdapter{}, sharedSecret, nil)
+
+	rec := doPathRequest(t, mux, http.MethodGet, "/internal/ctrader/accounts/unknown/positions", sharedSecret, "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+func TestGetOpenPositions_AdapterError_BadGateway(t *testing.T) {
+	handle := domain.ConnectionHandle{AccountID: "acct-1"}
+	adapter := &fakeBrokerAdapter{positionsErr: errors.New("ctrader: connection dropped")}
+	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, adapter, sharedSecret, nil)
+
+	rec := doPathRequest(t, mux, http.MethodGet, "/internal/ctrader/accounts/acct-1/positions", sharedSecret, "")
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", rec.Code)
+	}
+}
+
+func TestGetOpenPositions_MissingToken_Unauthorized(t *testing.T) {
+	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{}, &fakeBrokerAdapter{}, sharedSecret, nil)
+
+	rec := doPathRequest(t, mux, http.MethodGet, "/internal/ctrader/accounts/acct-1/positions", "", "")
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
 	}
 }

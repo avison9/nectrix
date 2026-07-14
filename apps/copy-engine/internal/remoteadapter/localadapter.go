@@ -62,3 +62,11 @@ func (l *LocalAdapter) ClosePosition(ctx context.Context, brokerAccountID, posit
 	}
 	return l.adapter.ClosePosition(ctx, handle, positionID, volume)
 }
+
+func (l *LocalAdapter) GetOpenPositions(ctx context.Context, brokerAccountID string) ([]domain.NormalizedPosition, error) {
+	handle, err := l.handleFor(brokerAccountID)
+	if err != nil {
+		return nil, err
+	}
+	return l.adapter.GetOpenPositions(ctx, handle)
+}

@@ -34,12 +34,16 @@ const (
 	copiedTradesTopic         = "copied-trades"
 	riskTopic                 = "risk"
 	copyRelationshipsTopic    = "copy-relationships"
+	reconciliationTopic       = "reconciliation"
 	tradeSignalsConsumerGroup = "copy-engine"
 
 	// drawdownCheckInterval (TICKET-108) mirrors apps/broker-adapters'
 	// reconcile.Loop's own periodic-poll cadence style -- a literal const,
 	// not an env var, matching that service's precedent.
 	drawdownCheckInterval = 30 * time.Second
+	// reconciliationCheckInterval (TICKET-109) -- docs/08-copy-trading-
+	// engine.md §8.9's own recommended "every 30-60s" cadence.
+	reconciliationCheckInterval = 30 * time.Second
 
 	// Default matches apps/core-app/db's 014-seed-dev-data.sql (context:dev,
 	// `make db-seed-dev`) so local manual QA works out of the box: curl the
@@ -102,6 +106,12 @@ func main() {
 		Balancer: &kafka.Hash{},
 	}
 	defer func() { _ = copyRelationshipEventWriter.Close() }()
+	reconciliationEventWriter := &kafka.Writer{
+		Addr:     kafka.TCP(kafkaAddr),
+		Topic:    reconciliationTopic,
+		Balancer: &kafka.Hash{},
+	}
+	defer func() { _ = reconciliationEventWriter.Close() }()
 
 	internalServiceToken := os.Getenv("INTERNAL_SERVICE_TOKEN")
 	if internalServiceToken == "" {
@@ -122,7 +132,7 @@ func main() {
 	})
 	fx := moneymgmt.NewFrankfurterClient(nil, nil)
 
-	pl := pipeline.New(pool, deduper, router, fx, kafkaWriter, riskEventWriter, copyRelationshipEventWriter)
+	pl := pipeline.New(pool, deduper, router, fx, kafkaWriter, riskEventWriter, copyRelationshipEventWriter, reconciliationEventWriter)
 
 	// --- Existing stub-adapter path, unchanged in spirit:
 	// /test/inject-trade-event and the in-process StreamTradeEvents
@@ -200,6 +210,11 @@ func main() {
 	// account can drift into drawdown purely from market movement on
 	// already-open positions.
 	go pl.RunDrawdownMonitor(ctx, drawdownCheckInterval)
+
+	// TICKET-109: periodic per-account reconciliation -- self-heals a
+	// dropped stream event by diffing actual broker positions against
+	// platform-believed state, independently of any live signal.
+	go pl.RunReconciliation(ctx, reconciliationCheckInterval)
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)

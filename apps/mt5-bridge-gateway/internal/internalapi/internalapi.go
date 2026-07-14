@@ -18,8 +18,8 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/avison9/nectrix/mt5-bridge-gateway/internal/eabridge"
 	domain "github.com/avison9/nectrix/go-domain"
+	"github.com/avison9/nectrix/mt5-bridge-gateway/internal/eabridge"
 )
 
 // PlatformAdapters is this service's two dedup-wrapped domain.BrokerAdapter
@@ -105,6 +105,9 @@ func NewMux(adapters PlatformAdapters, sharedSecret string, logger *slog.Logger)
 	})
 	mux.HandleFunc("POST /internal/mt/accounts/{brokerAccountId}/positions/{positionId}/close", func(w http.ResponseWriter, r *http.Request) {
 		handleClosePosition(w, r, adapters, logger)
+	})
+	mux.HandleFunc("GET /internal/mt/accounts/{brokerAccountId}/positions", func(w http.ResponseWriter, r *http.Request) {
+		handleGetOpenPositions(w, r, adapters, logger)
 	})
 	return requireSharedSecret(sharedSecret, mux)
 }
@@ -223,6 +226,35 @@ func handleModifyPosition(w http.ResponseWriter, r *http.Request, adapters Platf
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(toOrderResultWire(result))
+}
+
+// handleGetOpenPositions is TICKET-109's reconciliation ground truth --
+// docs/08-copy-trading-engine.md §8.9. Mirrors handleGetAccountSnapshot's
+// own platform-resolution/errors.Is(eabridge.ErrNoSession) shape exactly.
+func handleGetOpenPositions(w http.ResponseWriter, r *http.Request, adapters PlatformAdapters, logger *slog.Logger) {
+	brokerAccountID := r.PathValue("brokerAccountId")
+	platform := r.URL.Query().Get("platform")
+
+	adapter, err := adapters.forPlatform(platform)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	handle := domain.ConnectionHandle{AccountID: brokerAccountID}
+	positions, err := adapter.GetOpenPositions(r.Context(), handle)
+	if err != nil {
+		if errors.Is(err, eabridge.ErrNoSession) {
+			http.Error(w, "no connected handle for broker account "+brokerAccountID, http.StatusNotFound)
+			return
+		}
+		logger.Error("internalapi: get open positions failed", "brokerAccountId", brokerAccountID, "platform", platform, "error", err)
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(positions)
 }
 
 // handleClosePosition closes all (volumeLots omitted) or part (volumeLots

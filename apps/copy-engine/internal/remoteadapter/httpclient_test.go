@@ -219,3 +219,57 @@ func TestHTTPClient_ClosePosition_NonOKStatus_ReturnsError(t *testing.T) {
 		t.Fatal("expected an error for a non-200 response")
 	}
 }
+
+func TestHTTPClient_GetOpenPositions_RealWireFormat(t *testing.T) {
+	var gotPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]domain.NormalizedPosition{
+			{BrokerPositionID: "pos-1", Symbol: domain.NormalizedSymbol{CanonicalCode: "EURUSD", AssetClass: domain.AssetClassFX}, Direction: domain.TradeDirectionBuy, VolumeLots: 1.5, OpenPrice: 1.2000},
+		})
+	}))
+	defer server.Close()
+
+	client := remoteadapter.NewCTraderHTTPClient(server.URL, "shared-secret", nil)
+	positions, err := client.GetOpenPositions(context.Background(), "acct-1")
+	if err != nil {
+		t.Fatalf("GetOpenPositions returned error: %v", err)
+	}
+	if gotPath != "/internal/ctrader/accounts/acct-1/positions" {
+		t.Fatalf("request path = %q, want /internal/ctrader/accounts/acct-1/positions", gotPath)
+	}
+	if len(positions) != 1 || positions[0].BrokerPositionID != "pos-1" || positions[0].VolumeLots != 1.5 {
+		t.Fatalf("got positions %+v, want one position pos-1/1.5 lots", positions)
+	}
+}
+
+func TestHTTPClient_MT_GetOpenPositions_IncludesPlatformQueryParam(t *testing.T) {
+	var gotQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]domain.NormalizedPosition{})
+	}))
+	defer server.Close()
+
+	client := remoteadapter.NewMTHTTPClient(server.URL, "shared-secret", "MT4", nil)
+	if _, err := client.GetOpenPositions(context.Background(), "acct-2"); err != nil {
+		t.Fatalf("GetOpenPositions returned error: %v", err)
+	}
+	if gotQuery != "platform=MT4" {
+		t.Fatalf("query = %q, want platform=MT4", gotQuery)
+	}
+}
+
+func TestHTTPClient_GetOpenPositions_NonOKStatus_ReturnsError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal error", http.StatusBadGateway)
+	}))
+	defer server.Close()
+
+	client := remoteadapter.NewCTraderHTTPClient(server.URL, "shared-secret", nil)
+	if _, err := client.GetOpenPositions(context.Background(), "acct-1"); err == nil {
+		t.Fatal("expected an error for a non-200 response")
+	}
+}

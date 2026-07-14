@@ -226,6 +226,39 @@ func (c *HTTPClient) ClosePosition(ctx context.Context, brokerAccountID, positio
 	}, nil
 }
 
+// GetOpenPositions is reconciliation's ground truth -- TICKET-109,
+// docs/08-copy-trading-engine.md §8.9. domain.NormalizedPosition has no
+// RawBrokerResponse-shaped field needing a wire-safe subset (already a clean
+// DTO), so the response is decoded directly.
+func (c *HTTPClient) GetOpenPositions(ctx context.Context, brokerAccountID string) ([]domain.NormalizedPosition, error) {
+	url := fmt.Sprintf("%s%s/accounts/%s/positions", c.baseURL, c.pathPrefix, brokerAccountID)
+	if c.platform != "" {
+		url += "?platform=" + c.platform
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("remoteadapter: build positions request: %w", err)
+	}
+	req.Header.Set("X-Internal-Service-Token", c.sharedSecret)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("remoteadapter: positions request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("remoteadapter: positions request for %s: %w", brokerAccountID, wireStatusError(resp))
+	}
+
+	var positions []domain.NormalizedPosition
+	if err := json.NewDecoder(resp.Body).Decode(&positions); err != nil {
+		return nil, fmt.Errorf("remoteadapter: decode positions response: %w", err)
+	}
+	return positions, nil
+}
+
 func wireStatusError(resp *http.Response) error {
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 	return fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))

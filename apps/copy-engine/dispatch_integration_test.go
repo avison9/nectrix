@@ -387,21 +387,42 @@ type fakeCloseCall struct {
 // PlaceOrder call it receives, keyed by brokerAccountID, so AC3/AC4 can
 // assert against real recorded HTTP calls, not an in-process stub.
 type fakeBrokerService struct {
-	mu                  sync.Mutex
-	snapshots           map[string]domain.AccountSnapshot
-	filledPriceByAcct   map[string]float64
-	placeOrderCalls     map[string][]domain.NormalizedOrderRequest
-	modifyPositionCalls map[string][]fakeModifyCall
-	closePositionCalls  map[string][]fakeCloseCall
+	mu                    sync.Mutex
+	snapshots             map[string]domain.AccountSnapshot
+	filledPriceByAcct     map[string]float64
+	placeOrderCalls       map[string][]domain.NormalizedOrderRequest
+	modifyPositionCalls   map[string][]fakeModifyCall
+	closePositionCalls    map[string][]fakeCloseCall
+	openPositions         map[string][]domain.NormalizedPosition
+	getOpenPositionsCalls map[string]int
+	// autoPositions/openPositionsOverridden (TICKET-109): GetOpenPositions
+	// defaults to reflecting whatever PlaceOrder/ModifyPosition/ClosePosition
+	// calls this fake has actually received for an account -- a real
+	// broker's open positions naturally track what was actually placed
+	// against it. Without this, a position reconciliation itself just
+	// opened (master-side synthesize-and-replay, still within the SAME
+	// CheckReconciliationOnce call before the follower-side sweep runs)
+	// would have no predictable ID a test could pre-register via
+	// setOpenPositions, and the follower-side sweep would see "believed
+	// open, actual empty" and wrongly correct it straight back to CLOSED.
+	// setOpenPositions overrides this per account when a test needs to
+	// simulate real drift (a position the fake's own call history doesn't
+	// know about, or a position that vanished from the broker's side).
+	autoPositions            map[string]map[string]domain.NormalizedPosition
+	openPositionsOverridden  map[string]bool
 }
 
 func newFakeBrokerService() *fakeBrokerService {
 	return &fakeBrokerService{
-		snapshots:           make(map[string]domain.AccountSnapshot),
-		filledPriceByAcct:   make(map[string]float64),
-		placeOrderCalls:     make(map[string][]domain.NormalizedOrderRequest),
-		modifyPositionCalls: make(map[string][]fakeModifyCall),
-		closePositionCalls:  make(map[string][]fakeCloseCall),
+		snapshots:               make(map[string]domain.AccountSnapshot),
+		filledPriceByAcct:       make(map[string]float64),
+		placeOrderCalls:         make(map[string][]domain.NormalizedOrderRequest),
+		modifyPositionCalls:     make(map[string][]fakeModifyCall),
+		closePositionCalls:      make(map[string][]fakeCloseCall),
+		openPositions:           make(map[string][]domain.NormalizedPosition),
+		getOpenPositionsCalls:   make(map[string]int),
+		autoPositions:           make(map[string]map[string]domain.NormalizedPosition),
+		openPositionsOverridden: make(map[string]bool),
 	}
 }
 
@@ -453,6 +474,23 @@ func (f *fakeBrokerService) closePositionCallsFor(brokerAccountID string) []fake
 	return append([]fakeCloseCall(nil), f.closePositionCalls[brokerAccountID]...)
 }
 
+// setOpenPositions (TICKET-109) configures what GetOpenPositions reports
+// for brokerAccountID as ground truth -- reconciliation tests simulate a
+// "dropped event" simply by setting a position here that was NEVER also
+// sent via postInjectEvent, no real stream-disable/re-enable needed.
+func (f *fakeBrokerService) setOpenPositions(brokerAccountID string, positions []domain.NormalizedPosition) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.openPositions[brokerAccountID] = positions
+	f.openPositionsOverridden[brokerAccountID] = true
+}
+
+func (f *fakeBrokerService) getOpenPositionsCallCount(brokerAccountID string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.getOpenPositionsCalls[brokerAccountID]
+}
+
 const fakeDefaultFilledPrice = 1.10000
 
 func (f *fakeBrokerService) handler() http.Handler {
@@ -461,10 +499,12 @@ func (f *fakeBrokerService) handler() http.Handler {
 	mux.HandleFunc("POST /internal/ctrader/accounts/{id}/orders", f.handlePlaceOrder)
 	mux.HandleFunc("POST /internal/ctrader/accounts/{id}/positions/{positionId}/modify", f.handleModifyPosition)
 	mux.HandleFunc("POST /internal/ctrader/accounts/{id}/positions/{positionId}/close", f.handleClosePosition)
+	mux.HandleFunc("GET /internal/ctrader/accounts/{id}/positions", f.handleGetOpenPositions)
 	mux.HandleFunc("GET /internal/mt/accounts/{id}/snapshot", f.handleSnapshot)
 	mux.HandleFunc("POST /internal/mt/accounts/{id}/orders", f.handlePlaceOrder)
 	mux.HandleFunc("POST /internal/mt/accounts/{id}/positions/{positionId}/modify", f.handleModifyPosition)
 	mux.HandleFunc("POST /internal/mt/accounts/{id}/positions/{positionId}/close", f.handleClosePosition)
+	mux.HandleFunc("GET /internal/mt/accounts/{id}/positions", f.handleGetOpenPositions)
 	return f.requireToken(mux)
 }
 
@@ -491,6 +531,27 @@ func (f *fakeBrokerService) handleSnapshot(w http.ResponseWriter, r *http.Reques
 	_ = json.NewEncoder(w).Encode(snapshot)
 }
 
+func (f *fakeBrokerService) handleGetOpenPositions(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	f.mu.Lock()
+	f.getOpenPositionsCalls[id]++
+	var positions []domain.NormalizedPosition
+	if f.openPositionsOverridden[id] {
+		positions = f.openPositions[id]
+	} else {
+		for _, pos := range f.autoPositions[id] {
+			positions = append(positions, pos)
+		}
+	}
+	f.mu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	if positions == nil {
+		positions = []domain.NormalizedPosition{}
+	}
+	_ = json.NewEncoder(w).Encode(positions)
+}
+
 func (f *fakeBrokerService) handlePlaceOrder(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var wire fakePlaceOrderWireRequest
@@ -499,17 +560,32 @@ func (f *fakeBrokerService) handlePlaceOrder(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	brokerPositionID := "fake-position-" + uuid.NewString()
+
 	f.mu.Lock()
 	f.placeOrderCalls[id] = append(f.placeOrderCalls[id], wire.Order)
 	filledPrice, hasOverride := f.filledPriceByAcct[id]
-	f.mu.Unlock()
-
 	if !hasOverride {
 		filledPrice = fakeDefaultFilledPrice
 	}
+	if f.autoPositions[id] == nil {
+		f.autoPositions[id] = make(map[string]domain.NormalizedPosition)
+	}
+	f.autoPositions[id][brokerPositionID] = domain.NormalizedPosition{
+		BrokerPositionID: brokerPositionID,
+		Symbol:           wire.Order.Symbol,
+		Direction:        wire.Order.Direction,
+		VolumeLots:       wire.Order.VolumeLots,
+		OpenPrice:        filledPrice,
+		CurrentSLPrice:   wire.Order.SLPrice,
+		CurrentTPPrice:   wire.Order.TPPrice,
+		OpenedAt:         time.Now().UTC().Format(time.RFC3339),
+	}
+	f.mu.Unlock()
+
 	result := fakePlaceOrderWireResult{
 		Success:          true,
-		BrokerPositionID: "fake-position-" + uuid.NewString(),
+		BrokerPositionID: brokerPositionID,
 		FilledPrice:      &filledPrice,
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -527,6 +603,11 @@ func (f *fakeBrokerService) handleModifyPosition(w http.ResponseWriter, r *http.
 
 	f.mu.Lock()
 	f.modifyPositionCalls[id] = append(f.modifyPositionCalls[id], fakeModifyCall{PositionID: positionID, SLPrice: wire.SLPrice, TPPrice: wire.TPPrice})
+	if pos, ok := f.autoPositions[id][positionID]; ok {
+		pos.CurrentSLPrice = wire.SLPrice
+		pos.CurrentTPPrice = wire.TPPrice
+		f.autoPositions[id][positionID] = pos
+	}
 	f.mu.Unlock()
 
 	result := fakePlaceOrderWireResult{Success: true, BrokerPositionID: positionID}
@@ -545,6 +626,12 @@ func (f *fakeBrokerService) handleClosePosition(w http.ResponseWriter, r *http.R
 
 	f.mu.Lock()
 	f.closePositionCalls[id] = append(f.closePositionCalls[id], fakeCloseCall{PositionID: positionID, VolumeLots: wire.VolumeLots})
+	if wire.VolumeLots == nil {
+		delete(f.autoPositions[id], positionID)
+	} else if pos, ok := f.autoPositions[id][positionID]; ok {
+		pos.VolumeLots -= *wire.VolumeLots
+		f.autoPositions[id][positionID] = pos
+	}
 	f.mu.Unlock()
 
 	result := fakePlaceOrderWireResult{Success: true, BrokerPositionID: positionID}
@@ -581,7 +668,7 @@ func buildDispatchTestServer(t *testing.T, ctx context.Context, pool *pgxpool.Po
 		t.Fatalf("connect master handle: %v", err)
 	}
 
-	pl := pipeline.New(pool, deduper, router, moneymgmt.NewFrankfurterClient(nil, nil), kafkaWriter, nil, nil)
+	pl := pipeline.New(pool, deduper, router, moneymgmt.NewFrankfurterClient(nil, nil), kafkaWriter, nil, nil, nil)
 
 	sub, err := adapter.StreamTradeEvents(ctx, masterHandle, pl.HandleEvent)
 	if err != nil {

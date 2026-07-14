@@ -1,0 +1,52 @@
+syntax = "proto3";
+
+package nectrix.events.v1;
+
+import "nectrix/events/v1/envelope.proto";
+
+option go_package = "github.com/avison9/nectrix/event-contracts/go/gen/nectrix/events/v1;eventsv1";
+option java_package = "com.nectrix.events.v1";
+option java_multiple_files = true;
+
+// Topic: reconciliation (TICKET-109 -- a genuine gap in
+// docs/15-event-driven-architecture.md §15.3's own topic catalog table,
+// which never listed this topic despite docs/08-copy-trading-engine.md
+// §8.9 describing the "reconciliation.drift_detected" event by name).
+// Partition key: broker_account_id.
+
+enum ReconciliationDriftType {
+  RECONCILIATION_DRIFT_TYPE_UNSPECIFIED = 0;
+  // Master-side: an actual open position has no corresponding open
+  // trade_signals record -- a real event (most likely POSITION_OPENED) was
+  // dropped and has now been synthesized + replayed through the normal
+  // pipeline.
+  RECONCILIATION_DRIFT_TYPE_MISSED_OPEN = 1;
+  RECONCILIATION_DRIFT_TYPE_MISSED_PARTIAL_CLOSE = 2;
+  RECONCILIATION_DRIFT_TYPE_MISSED_CLOSE = 3;
+  RECONCILIATION_DRIFT_TYPE_MISSED_MODIFY = 4;
+  // Detected, never auto-corrected -- domain.TradeEventType has no
+  // "increased" value.
+  RECONCILIATION_DRIFT_TYPE_UNSUPPORTED_VOLUME_INCREASE = 5;
+  // Follower-side: copied_trades corrected directly to match the broker's
+  // real state (no synthetic event -- see reconcile.go's own doc comment
+  // for why).
+  RECONCILIATION_DRIFT_TYPE_FOLLOWER_LEDGER_CORRECTED = 6;
+  // A PENDING copied_trades row with no matching actual position, older
+  // than the timeout window -- TICKET-106's "crash before finalize, and the
+  // order never actually placed" edge case.
+  RECONCILIATION_DRIFT_TYPE_FOLLOWER_PENDING_TIMEOUT = 7;
+  // An actual follower position matches neither a believed row nor a
+  // stuck-PENDING row uniquely -- no automated action taken, manual
+  // investigation required.
+  RECONCILIATION_DRIFT_TYPE_UNRECONCILABLE_FOLLOWER_POSITION = 8;
+}
+
+message ReconciliationDriftDetected {
+  EventEnvelope envelope = 1;
+  string broker_account_id = 2; // partition key
+  string broker_position_id = 3;
+  ReconciliationDriftType drift_type = 4;
+  // Human-readable, e.g. "actual volume 1.50 vs ledger volume 2.00" --
+  // AC3's own "enough detail to distinguish stream drop from adapter bug".
+  string detail = 5;
+}

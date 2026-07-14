@@ -116,6 +116,9 @@ func NewMux(lister AccountLister, handles HandleProvider, adapter domain.BrokerA
 	mux.HandleFunc("POST /internal/ctrader/accounts/{brokerAccountId}/positions/{positionId}/close", func(w http.ResponseWriter, r *http.Request) {
 		handleClosePosition(w, r, handles, adapter, logger)
 	})
+	mux.HandleFunc("GET /internal/ctrader/accounts/{brokerAccountId}/positions", func(w http.ResponseWriter, r *http.Request) {
+		handleGetOpenPositions(w, r, handles, adapter, logger)
+	})
 	return requireSharedSecret(sharedSecret, mux)
 }
 
@@ -251,6 +254,29 @@ func handleModifyPosition(w http.ResponseWriter, r *http.Request, handles Handle
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(toOrderResultWire(result))
+}
+
+// handleGetOpenPositions is TICKET-109's reconciliation ground truth --
+// docs/08-copy-trading-engine.md §8.9. Mirrors handleGetAccountSnapshot
+// exactly; domain.NormalizedPosition has no RawBrokerResponse-shaped field
+// needing a wire-safe subset, so the response is encoded directly.
+func handleGetOpenPositions(w http.ResponseWriter, r *http.Request, handles HandleProvider, adapter domain.BrokerAdapter, logger *slog.Logger) {
+	brokerAccountID := r.PathValue("brokerAccountId")
+	handle, ok := handles.HandleFor(brokerAccountID)
+	if !ok {
+		http.Error(w, "no connected handle for broker account "+brokerAccountID, http.StatusNotFound)
+		return
+	}
+
+	positions, err := adapter.GetOpenPositions(r.Context(), handle)
+	if err != nil {
+		logger.Error("internalapi: get open positions failed", "brokerAccountId", brokerAccountID, "error", err)
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(positions)
 }
 
 // handleClosePosition closes all (volumeLots omitted) or part (volumeLots

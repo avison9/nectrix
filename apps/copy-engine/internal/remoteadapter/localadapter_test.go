@@ -123,3 +123,26 @@ func TestLocalAdapter_ClosePosition_UnknownAccount_ReturnsError(t *testing.T) {
 		t.Fatal("expected an error for an account with no registered handle")
 	}
 }
+
+func TestLocalAdapter_GetOpenPositions_UsesRegisteredHandle(t *testing.T) {
+	ctx := context.Background()
+	adapter := stubadapter.New()
+	handle, err := adapter.Connect(ctx, domain.BrokerCredentials{BrokerType: adapter.BrokerType(), AccountID: "acct-1"})
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+
+	local := remoteadapter.NewLocalAdapter(adapter, map[string]domain.ConnectionHandle{"acct-1": handle})
+
+	if _, err := local.GetOpenPositions(ctx, "acct-1"); err != nil {
+		t.Fatalf("GetOpenPositions returned error: %v", err)
+	}
+}
+
+func TestLocalAdapter_GetOpenPositions_UnknownAccount_ReturnsError(t *testing.T) {
+	local := remoteadapter.NewLocalAdapter(stubadapter.New(), map[string]domain.ConnectionHandle{})
+
+	if _, err := local.GetOpenPositions(context.Background(), "unknown"); err == nil {
+		t.Fatal("expected an error for an account with no registered handle")
+	}
+}

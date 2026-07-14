@@ -42,6 +42,21 @@ type relationship struct {
 // A.2) -- "stub" only in that it skips the Redis-cache-with-invalidation
 // refinement docs/08 §8.2 point 3 describes; this direct query is real,
 // not a hardcoded fake, and is honest about the ACTIVE-only fan-out.
+//
+// Known limitation, flagged not fixed (TICKET-109): the loop below aborts
+// on the FIRST relationship's error. If a master has 3 followers and
+// dispatch errors transiently for follower #2 (e.g. a network blip calling
+// PlaceOrder/ClosePosition), follower #3 is never attempted for this
+// event -- live or reconciliation-replayed alike. Once this event's
+// trade_signals row is committed (already done, before this function is
+// even called -- see dedupStage), master-side reconciliation can never
+// re-detect it as missing (the master's own belief is already correct),
+// and follower-side reconciliation won't catch it either (no actual
+// position exists for relationship #3 to diff against, no believed row
+// either -- both sides agree on "nothing"). This is a real blind spot
+// neither side of TICKET-109's reconciliation design touches, since it's a
+// partial-fan-out failure, not a broker-vs-ledger diff. A future ticket's
+// job (continue-on-error + aggregate), not this one's.
 func (p *Pipeline) processSignalForAllRelationships(ctx context.Context, masterAccountID uuid.UUID, signalID uuid.UUID, event domain.NormalizedTradeEvent) error {
 	ctx, span := observability.Tracer().Start(ctx, "pipeline.relationship_match")
 	relationships, err := p.matchRelationships(ctx, masterAccountID)

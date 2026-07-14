@@ -40,6 +40,10 @@ type fakeBrokerAdapter struct {
 	gotCloseHandle domain.ConnectionHandle
 	gotClosePosID  string
 	gotCloseVolume *float64
+
+	positions          []domain.NormalizedPosition
+	positionsErr       error
+	gotPositionsHandle domain.ConnectionHandle
 }
 
 func (f *fakeBrokerAdapter) BrokerType() domain.BrokerType { return f.brokerType }
@@ -57,7 +61,8 @@ func (f *fakeBrokerAdapter) GetAccountSnapshot(ctx context.Context, handle domai
 	return f.snapshot, f.snapshotErr
 }
 func (f *fakeBrokerAdapter) GetOpenPositions(ctx context.Context, handle domain.ConnectionHandle) ([]domain.NormalizedPosition, error) {
-	return nil, errors.New("not implemented")
+	f.gotPositionsHandle = handle
+	return f.positions, f.positionsErr
 }
 func (f *fakeBrokerAdapter) StreamTradeEvents(ctx context.Context, handle domain.ConnectionHandle, onEvent func(context.Context, domain.NormalizedTradeEvent) error) (domain.Subscription, error) {
 	return nil, errors.New("not implemented")
@@ -434,6 +439,81 @@ func TestClosePosition_OtherAdapterError_BadGateway(t *testing.T) {
 	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: &fakeBrokerAdapter{}}, sharedSecret, nil)
 
 	rec := doRequest(t, mux, http.MethodPost, "/internal/mt/accounts/acct-1/positions/pos-1/close", sharedSecret, `{"platform":"MT5"}`)
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", rec.Code)
+	}
+}
+
+// --- TICKET-109: GET .../positions ---
+
+func TestGetOpenPositions_MT5_Success(t *testing.T) {
+	mt5 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT5, positions: []domain.NormalizedPosition{
+		{BrokerPositionID: "pos-1", Symbol: domain.NormalizedSymbol{CanonicalCode: "EURUSD", AssetClass: domain.AssetClassFX}, Direction: domain.TradeDirectionBuy, VolumeLots: 1.5, OpenPrice: 1.2000},
+	}}
+	mt4 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT4}
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: mt4}, sharedSecret, nil)
+
+	rec := doRequest(t, mux, http.MethodGet, "/internal/mt/accounts/acct-1/positions?platform=MT5", sharedSecret, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body=%s", rec.Code, rec.Body.String())
+	}
+	if mt5.gotPositionsHandle.AccountID != "acct-1" {
+		t.Fatalf("MT5 adapter called with handle %+v, want AccountID=acct-1", mt5.gotPositionsHandle)
+	}
+	if mt4.gotPositionsHandle != (domain.ConnectionHandle{}) {
+		t.Fatalf("MT4 adapter must not have been called")
+	}
+
+	var got []domain.NormalizedPosition
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if len(got) != 1 || got[0].BrokerPositionID != "pos-1" {
+		t.Fatalf("got positions %+v, want one position pos-1", got)
+	}
+}
+
+func TestGetOpenPositions_MT4_RoutesToMT4Adapter(t *testing.T) {
+	mt5 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT5}
+	mt4 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT4, positions: []domain.NormalizedPosition{{BrokerPositionID: "pos-2"}}}
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: mt4}, sharedSecret, nil)
+
+	rec := doRequest(t, mux, http.MethodGet, "/internal/mt/accounts/acct-2/positions?platform=MT4", sharedSecret, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body=%s", rec.Code, rec.Body.String())
+	}
+	if mt4.gotPositionsHandle.AccountID != "acct-2" {
+		t.Fatalf("MT4 adapter called with handle %+v, want AccountID=acct-2", mt4.gotPositionsHandle)
+	}
+	if mt5.gotPositionsHandle != (domain.ConnectionHandle{}) {
+		t.Fatalf("MT5 adapter must not have been called")
+	}
+}
+
+func TestGetOpenPositions_UnrecognizedPlatform_BadRequest(t *testing.T) {
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: &fakeBrokerAdapter{}, MT4: &fakeBrokerAdapter{}}, sharedSecret, nil)
+
+	rec := doRequest(t, mux, http.MethodGet, "/internal/mt/accounts/acct-1/positions?platform=CTRADER", sharedSecret, "")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestGetOpenPositions_NoSession_NotFound(t *testing.T) {
+	mt5 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT5, positionsErr: fmt.Errorf("mtadapter(MT5): no live EA session for broker account acct-1: %w", eabridge.ErrNoSession)}
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: &fakeBrokerAdapter{}}, sharedSecret, nil)
+
+	rec := doRequest(t, mux, http.MethodGet, "/internal/mt/accounts/acct-1/positions?platform=MT5", sharedSecret, "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+func TestGetOpenPositions_OtherAdapterError_BadGateway(t *testing.T) {
+	mt5 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT5, positionsErr: errors.New("eabridge: request timed out")}
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: &fakeBrokerAdapter{}}, sharedSecret, nil)
+
+	rec := doRequest(t, mux, http.MethodGet, "/internal/mt/accounts/acct-1/positions?platform=MT5", sharedSecret, "")
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("status = %d, want 502", rec.Code)
 	}

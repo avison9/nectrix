@@ -28,6 +28,10 @@ func (f *fakeRemoteAdapter) ClosePosition(ctx context.Context, brokerAccountID, 
 	return domain.NormalizedOrderResult{}, nil
 }
 
+func (f *fakeRemoteAdapter) GetOpenPositions(ctx context.Context, brokerAccountID string) ([]domain.NormalizedPosition, error) {
+	return nil, nil
+}
+
 func TestRouter_For_ReturnsRegisteredAdapter(t *testing.T) {
 	cTrader := &fakeRemoteAdapter{name: "ctrader"}
 	mt5 := &fakeRemoteAdapter{name: "mt5"}

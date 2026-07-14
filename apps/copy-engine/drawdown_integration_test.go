@@ -32,7 +32,7 @@ import (
 // writers -- this file's own tests need to read back what gets published to
 // them, unlike every other test in this package.
 func buildDrawdownTestPipeline(pool *pgxpool.Pool, deduper domain.Deduper, router *remoteadapter.Router, kafkaWriter, riskWriter, copyRelWriter *kafka.Writer) *pipeline.Pipeline {
-	return pipeline.New(pool, deduper, router, moneymgmt.NewFrankfurterClient(nil, nil), kafkaWriter, riskWriter, copyRelWriter)
+	return pipeline.New(pool, deduper, router, moneymgmt.NewFrankfurterClient(nil, nil), kafkaWriter, riskWriter, copyRelWriter, nil)
 }
 
 // readRiskEvent skips any message that doesn't unmarshal into a RiskEvent

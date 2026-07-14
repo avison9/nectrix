@@ -252,7 +252,7 @@ func buildTestServer(t *testing.T, ctx context.Context, pool *pgxpool.Pool, dedu
 	router := remoteadapter.NewRouter(map[domain.BrokerType]remoteadapter.RemoteAdapter{
 		adapter.BrokerType(): local,
 	})
-	pl := pipeline.New(pool, deduper, router, moneymgmt.NewFrankfurterClient(nil, nil), kafkaWriter, nil, nil)
+	pl := pipeline.New(pool, deduper, router, moneymgmt.NewFrankfurterClient(nil, nil), kafkaWriter, nil, nil, nil)
 
 	sub, err := adapter.StreamTradeEvents(ctx, masterHandle, pl.HandleEvent)
 	if err != nil {
