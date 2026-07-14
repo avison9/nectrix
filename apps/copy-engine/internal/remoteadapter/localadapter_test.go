@@ -67,3 +67,59 @@ func TestLocalAdapter_PlaceOrder_UnknownAccount_ReturnsError(t *testing.T) {
 		t.Fatal("expected an error for an account with no registered handle")
 	}
 }
+
+func TestLocalAdapter_ModifyPosition_UsesRegisteredHandle(t *testing.T) {
+	ctx := context.Background()
+	adapter := stubadapter.New()
+	handle, err := adapter.Connect(ctx, domain.BrokerCredentials{BrokerType: adapter.BrokerType(), AccountID: "acct-1"})
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+
+	local := remoteadapter.NewLocalAdapter(adapter, map[string]domain.ConnectionHandle{"acct-1": handle})
+
+	sl := 1.0950
+	result, err := local.ModifyPosition(ctx, "acct-1", "pos-1", domain.SLTPChange{SLPrice: &sl})
+	if err != nil {
+		t.Fatalf("ModifyPosition returned error: %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("expected a successful stub modify, got %+v", result)
+	}
+}
+
+func TestLocalAdapter_ModifyPosition_UnknownAccount_ReturnsError(t *testing.T) {
+	local := remoteadapter.NewLocalAdapter(stubadapter.New(), map[string]domain.ConnectionHandle{})
+
+	if _, err := local.ModifyPosition(context.Background(), "unknown", "pos-1", domain.SLTPChange{}); err == nil {
+		t.Fatal("expected an error for an account with no registered handle")
+	}
+}
+
+func TestLocalAdapter_ClosePosition_UsesRegisteredHandle(t *testing.T) {
+	ctx := context.Background()
+	adapter := stubadapter.New()
+	handle, err := adapter.Connect(ctx, domain.BrokerCredentials{BrokerType: adapter.BrokerType(), AccountID: "acct-1"})
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+
+	local := remoteadapter.NewLocalAdapter(adapter, map[string]domain.ConnectionHandle{"acct-1": handle})
+
+	volume := 0.5
+	result, err := local.ClosePosition(ctx, "acct-1", "pos-1", &volume)
+	if err != nil {
+		t.Fatalf("ClosePosition returned error: %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("expected a successful stub close, got %+v", result)
+	}
+}
+
+func TestLocalAdapter_ClosePosition_UnknownAccount_ReturnsError(t *testing.T) {
+	local := remoteadapter.NewLocalAdapter(stubadapter.New(), map[string]domain.ConnectionHandle{})
+
+	if _, err := local.ClosePosition(context.Background(), "unknown", "pos-1", nil); err == nil {
+		t.Fatal("expected an error for an account with no registered handle")
+	}
+}

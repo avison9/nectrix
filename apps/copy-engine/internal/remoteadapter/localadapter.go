@@ -46,3 +46,19 @@ func (l *LocalAdapter) PlaceOrder(ctx context.Context, brokerAccountID string, o
 	}
 	return l.adapter.PlaceOrder(ctx, handle, order)
 }
+
+func (l *LocalAdapter) ModifyPosition(ctx context.Context, brokerAccountID, positionID string, changes domain.SLTPChange) (domain.NormalizedOrderResult, error) {
+	handle, err := l.handleFor(brokerAccountID)
+	if err != nil {
+		return domain.NormalizedOrderResult{}, err
+	}
+	return l.adapter.ModifyPosition(ctx, handle, positionID, changes)
+}
+
+func (l *LocalAdapter) ClosePosition(ctx context.Context, brokerAccountID, positionID string, volume *float64) (domain.NormalizedOrderResult, error) {
+	handle, err := l.handleFor(brokerAccountID)
+	if err != nil {
+		return domain.NormalizedOrderResult{}, err
+	}
+	return l.adapter.ClosePosition(ctx, handle, positionID, volume)
+}

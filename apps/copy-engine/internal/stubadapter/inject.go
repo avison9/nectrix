@@ -25,6 +25,16 @@ type InjectEventParams struct {
 	VolumeLots       float64 `json:"volumeLots"`
 	OpenPrice        float64 `json:"openPrice"`
 	ServerTimestamp  string  `json:"serverTimestamp"`
+
+	// ClosedVolumeLots (TICKET-107) — for POSITION_PARTIALLY_CLOSED/
+	// POSITION_CLOSED events: the volume just closed in this event.
+	// VolumeLots doubles as the master's REMAINING volume after this close,
+	// per domain.NormalizedTradeEvent's own adapter contract.
+	ClosedVolumeLots *float64 `json:"closedVolumeLots,omitempty"`
+	// CurrentSLPrice/CurrentTPPrice (TICKET-107) — for POSITION_MODIFIED
+	// events: the master's new SL/TP after the change.
+	CurrentSLPrice *float64 `json:"currentSlPrice,omitempty"`
+	CurrentTPPrice *float64 `json:"currentTpPrice,omitempty"`
 }
 
 // Injectable is the test-only affordance both stub adapters expose (via
@@ -98,7 +108,10 @@ func buildEvent(handle domain.ConnectionHandle, p InjectEventParams) domain.Norm
 			VolumeLots:       volumeLots,
 			OpenPrice:        openPrice,
 			OpenedAt:         time.Now().UTC().Format(time.RFC3339),
+			CurrentSLPrice:   p.CurrentSLPrice,
+			CurrentTPPrice:   p.CurrentTPPrice,
 		},
+		ClosedVolumeLots:  p.ClosedVolumeLots,
 		ServerTimestamp:   serverTimestamp,
 		ReceivedAtGateway: time.Now().UTC().Format(time.RFC3339),
 	}

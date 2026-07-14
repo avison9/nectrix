@@ -11,12 +11,14 @@ import (
 	domain "github.com/avison9/nectrix/go-domain"
 )
 
-// placeOrderWireResult mirrors the wire-safe result shape both
+// orderResultWire mirrors the wire-safe result shape both
 // apps/broker-adapters/internal/internalapi and
-// apps/mt5-bridge-gateway/internal/internalapi return -- deliberately
-// missing domain.NormalizedOrderResult's RawBrokerResponse (never parsed
-// upstream, fragile to depend on across a network hop).
-type placeOrderWireResult struct {
+// apps/mt5-bridge-gateway/internal/internalapi return for PlaceOrder,
+// ModifyPosition, and ClosePosition alike (TICKET-107 widened this from
+// PlaceOrder-only) -- deliberately missing domain.NormalizedOrderResult's
+// RawBrokerResponse (never parsed upstream, fragile to depend on across a
+// network hop).
+type orderResultWire struct {
 	Success          bool     `json:"success"`
 	BrokerPositionID string   `json:"brokerPositionId,omitempty"`
 	FilledPrice      *float64 `json:"filledPrice,omitempty"`
@@ -26,6 +28,21 @@ type placeOrderWireResult struct {
 type placeOrderWireRequest struct {
 	Platform string                        `json:"platform"`
 	Order    domain.NormalizedOrderRequest `json:"order"`
+}
+
+// modifyPositionWireRequest mirrors domain.SLTPChange, plus platform (only
+// meaningful for mt5-bridge-gateway's two-platforms-one-process design).
+type modifyPositionWireRequest struct {
+	Platform string   `json:"platform"`
+	SLPrice  *float64 `json:"slPrice"`
+	TPPrice  *float64 `json:"tpPrice"`
+}
+
+// closePositionWireRequest: VolumeLots nil/omitted means "close the entire
+// remaining position" -- domain.BrokerAdapter.ClosePosition's own contract.
+type closePositionWireRequest struct {
+	Platform   string   `json:"platform"`
+	VolumeLots *float64 `json:"volumeLots,omitempty"`
 }
 
 // HTTPClient implements RemoteAdapter over broker-adapters' or
@@ -118,9 +135,88 @@ func (c *HTTPClient) PlaceOrder(ctx context.Context, brokerAccountID string, ord
 		return domain.NormalizedOrderResult{}, fmt.Errorf("remoteadapter: order request for %s: %w", brokerAccountID, wireStatusError(resp))
 	}
 
-	var wire placeOrderWireResult
+	var wire orderResultWire
 	if err := json.NewDecoder(resp.Body).Decode(&wire); err != nil {
 		return domain.NormalizedOrderResult{}, fmt.Errorf("remoteadapter: decode order response: %w", err)
+	}
+	return domain.NormalizedOrderResult{
+		Success:          wire.Success,
+		BrokerPositionID: wire.BrokerPositionID,
+		FilledPrice:      wire.FilledPrice,
+		RejectReason:     wire.RejectReason,
+	}, nil
+}
+
+// ModifyPosition changes a follower position's SL/TP -- TICKET-107,
+// docs/08-copy-trading-engine.md §8.7.
+func (c *HTTPClient) ModifyPosition(ctx context.Context, brokerAccountID, positionID string, changes domain.SLTPChange) (domain.NormalizedOrderResult, error) {
+	url := fmt.Sprintf("%s%s/accounts/%s/positions/%s/modify", c.baseURL, c.pathPrefix, brokerAccountID, positionID)
+
+	body, err := json.Marshal(modifyPositionWireRequest{Platform: c.platform, SLPrice: changes.SLPrice, TPPrice: changes.TPPrice})
+	if err != nil {
+		return domain.NormalizedOrderResult{}, fmt.Errorf("remoteadapter: marshal modify request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return domain.NormalizedOrderResult{}, fmt.Errorf("remoteadapter: build modify request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Internal-Service-Token", c.sharedSecret)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return domain.NormalizedOrderResult{}, fmt.Errorf("remoteadapter: modify request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return domain.NormalizedOrderResult{}, fmt.Errorf("remoteadapter: modify request for %s/%s: %w", brokerAccountID, positionID, wireStatusError(resp))
+	}
+
+	var wire orderResultWire
+	if err := json.NewDecoder(resp.Body).Decode(&wire); err != nil {
+		return domain.NormalizedOrderResult{}, fmt.Errorf("remoteadapter: decode modify response: %w", err)
+	}
+	return domain.NormalizedOrderResult{
+		Success:          wire.Success,
+		BrokerPositionID: wire.BrokerPositionID,
+		FilledPrice:      wire.FilledPrice,
+		RejectReason:     wire.RejectReason,
+	}, nil
+}
+
+// ClosePosition closes all (volume nil) or part (volume non-nil) of a
+// follower position -- TICKET-107, docs/09-money-management-risk-formulas.md
+// §9.5.
+func (c *HTTPClient) ClosePosition(ctx context.Context, brokerAccountID, positionID string, volume *float64) (domain.NormalizedOrderResult, error) {
+	url := fmt.Sprintf("%s%s/accounts/%s/positions/%s/close", c.baseURL, c.pathPrefix, brokerAccountID, positionID)
+
+	body, err := json.Marshal(closePositionWireRequest{Platform: c.platform, VolumeLots: volume})
+	if err != nil {
+		return domain.NormalizedOrderResult{}, fmt.Errorf("remoteadapter: marshal close request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return domain.NormalizedOrderResult{}, fmt.Errorf("remoteadapter: build close request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Internal-Service-Token", c.sharedSecret)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return domain.NormalizedOrderResult{}, fmt.Errorf("remoteadapter: close request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return domain.NormalizedOrderResult{}, fmt.Errorf("remoteadapter: close request for %s/%s: %w", brokerAccountID, positionID, wireStatusError(resp))
+	}
+
+	var wire orderResultWire
+	if err := json.NewDecoder(resp.Body).Decode(&wire); err != nil {
+		return domain.NormalizedOrderResult{}, fmt.Errorf("remoteadapter: decode close response: %w", err)
 	}
 	return domain.NormalizedOrderResult{
 		Success:          wire.Success,

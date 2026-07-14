@@ -18,11 +18,17 @@ import (
 )
 
 // RemoteAdapter is what dispatch.go needs per broker type: a live
-// GetAccountSnapshot (both master and follower sides) and a live PlaceOrder
-// (follower side only -- no ModifyPosition/ClosePosition, TICKET-107's job).
+// GetAccountSnapshot (both master and follower sides), a live PlaceOrder
+// (follower side only), and -- TICKET-107 -- live ModifyPosition/
+// ClosePosition (follower side only, for SL/TP sync and partial/full close).
 type RemoteAdapter interface {
 	GetAccountSnapshot(ctx context.Context, brokerAccountID string) (domain.AccountSnapshot, error)
 	PlaceOrder(ctx context.Context, brokerAccountID string, order domain.NormalizedOrderRequest) (domain.NormalizedOrderResult, error)
+	// ModifyPosition changes a follower's own SL/TP -- docs/08-copy-trading-engine.md §8.7.
+	ModifyPosition(ctx context.Context, brokerAccountID, positionID string, changes domain.SLTPChange) (domain.NormalizedOrderResult, error)
+	// ClosePosition closes all (volume == nil) or part (volume != nil) of a
+	// follower's position -- docs/09-money-management-risk-formulas.md §9.5.
+	ClosePosition(ctx context.Context, brokerAccountID, positionID string, volume *float64) (domain.NormalizedOrderResult, error)
 }
 
 // Router picks the RemoteAdapter for a domain.BrokerType -- master and

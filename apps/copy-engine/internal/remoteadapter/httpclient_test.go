@@ -118,3 +118,104 @@ func TestHTTPClient_PlaceOrder_NonOKStatus_ReturnsError(t *testing.T) {
 		t.Fatal("expected an error for a non-200 response")
 	}
 }
+
+func TestHTTPClient_ModifyPosition_RealWireFormat(t *testing.T) {
+	var gotPath string
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "brokerPositionId": "pos-1"})
+	}))
+	defer server.Close()
+
+	client := remoteadapter.NewMTHTTPClient(server.URL, "shared-secret", "MT5", nil)
+	sl, tp := 1.0950, 1.1050
+	result, err := client.ModifyPosition(context.Background(), "acct-1", "pos-1", domain.SLTPChange{SLPrice: &sl, TPPrice: &tp})
+	if err != nil {
+		t.Fatalf("ModifyPosition returned error: %v", err)
+	}
+	if gotPath != "/internal/mt/accounts/acct-1/positions/pos-1/modify" {
+		t.Fatalf("request path = %q, want /internal/mt/accounts/acct-1/positions/pos-1/modify", gotPath)
+	}
+	if gotBody["platform"] != "MT5" {
+		t.Fatalf("request body platform = %v, want MT5", gotBody["platform"])
+	}
+	if gotBody["slPrice"].(float64) != sl || gotBody["tpPrice"].(float64) != tp {
+		t.Fatalf("request body sl/tp = %v/%v, want %v/%v", gotBody["slPrice"], gotBody["tpPrice"], sl, tp)
+	}
+	if !result.Success || result.BrokerPositionID != "pos-1" {
+		t.Fatalf("got result %+v, want Success=true BrokerPositionID=pos-1", result)
+	}
+}
+
+func TestHTTPClient_ModifyPosition_NonOKStatus_ReturnsError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal error", http.StatusBadGateway)
+	}))
+	defer server.Close()
+
+	client := remoteadapter.NewCTraderHTTPClient(server.URL, "shared-secret", nil)
+	if _, err := client.ModifyPosition(context.Background(), "acct-1", "pos-1", domain.SLTPChange{}); err == nil {
+		t.Fatal("expected an error for a non-200 response")
+	}
+}
+
+func TestHTTPClient_ClosePosition_RealWireFormat_FullClose_OmitsVolume(t *testing.T) {
+	var gotPath string
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "brokerPositionId": "pos-1"})
+	}))
+	defer server.Close()
+
+	client := remoteadapter.NewCTraderHTTPClient(server.URL, "shared-secret", nil)
+	result, err := client.ClosePosition(context.Background(), "acct-1", "pos-1", nil)
+	if err != nil {
+		t.Fatalf("ClosePosition returned error: %v", err)
+	}
+	if gotPath != "/internal/ctrader/accounts/acct-1/positions/pos-1/close" {
+		t.Fatalf("request path = %q, want /internal/ctrader/accounts/acct-1/positions/pos-1/close", gotPath)
+	}
+	if _, present := gotBody["volumeLots"]; present {
+		t.Fatalf("expected volumeLots to be omitted for a full close, got %v", gotBody["volumeLots"])
+	}
+	if !result.Success {
+		t.Fatalf("got result %+v, want Success=true", result)
+	}
+}
+
+func TestHTTPClient_ClosePosition_RealWireFormat_PartialClose_IncludesVolume(t *testing.T) {
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
+	}))
+	defer server.Close()
+
+	client := remoteadapter.NewCTraderHTTPClient(server.URL, "shared-secret", nil)
+	volume := 0.75
+	if _, err := client.ClosePosition(context.Background(), "acct-1", "pos-1", &volume); err != nil {
+		t.Fatalf("ClosePosition returned error: %v", err)
+	}
+	if gotBody["volumeLots"].(float64) != 0.75 {
+		t.Fatalf("request body volumeLots = %v, want 0.75", gotBody["volumeLots"])
+	}
+}
+
+func TestHTTPClient_ClosePosition_NonOKStatus_ReturnsError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal error", http.StatusBadGateway)
+	}))
+	defer server.Close()
+
+	client := remoteadapter.NewCTraderHTTPClient(server.URL, "shared-secret", nil)
+	if _, err := client.ClosePosition(context.Background(), "acct-1", "pos-1", nil); err == nil {
+		t.Fatal("expected an error for a non-200 response")
+	}
+}

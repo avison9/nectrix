@@ -10,9 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	domain "github.com/avison9/nectrix/go-domain"
 	"github.com/avison9/nectrix/mt5-bridge-gateway/internal/eabridge"
 	"github.com/avison9/nectrix/mt5-bridge-gateway/internal/internalapi"
-	domain "github.com/avison9/nectrix/go-domain"
 )
 
 // fakeBrokerAdapter implements the full domain.BrokerAdapter interface;
@@ -28,6 +28,18 @@ type fakeBrokerAdapter struct {
 	orderErr       error
 	gotOrder       domain.NormalizedOrderRequest
 	gotOrderHandle domain.ConnectionHandle
+
+	modifyResult     domain.NormalizedOrderResult
+	modifyErr        error
+	gotModifyHandle  domain.ConnectionHandle
+	gotModifyPosID   string
+	gotModifyChanges domain.SLTPChange
+
+	closeResult    domain.NormalizedOrderResult
+	closeErr       error
+	gotCloseHandle domain.ConnectionHandle
+	gotClosePosID  string
+	gotCloseVolume *float64
 }
 
 func (f *fakeBrokerAdapter) BrokerType() domain.BrokerType { return f.brokerType }
@@ -56,10 +68,16 @@ func (f *fakeBrokerAdapter) PlaceOrder(ctx context.Context, handle domain.Connec
 	return f.orderResult, f.orderErr
 }
 func (f *fakeBrokerAdapter) ModifyPosition(ctx context.Context, handle domain.ConnectionHandle, positionID string, changes domain.SLTPChange) (domain.NormalizedOrderResult, error) {
-	return domain.NormalizedOrderResult{}, errors.New("not implemented")
+	f.gotModifyHandle = handle
+	f.gotModifyPosID = positionID
+	f.gotModifyChanges = changes
+	return f.modifyResult, f.modifyErr
 }
 func (f *fakeBrokerAdapter) ClosePosition(ctx context.Context, handle domain.ConnectionHandle, positionID string, volume *float64) (domain.NormalizedOrderResult, error) {
-	return domain.NormalizedOrderResult{}, errors.New("not implemented")
+	f.gotCloseHandle = handle
+	f.gotClosePosID = positionID
+	f.gotCloseVolume = volume
+	return f.closeResult, f.closeErr
 }
 func (f *fakeBrokerAdapter) ResolveSymbol(ctx context.Context, brokerSymbol string) (domain.NormalizedSymbol, error) {
 	return domain.NormalizedSymbol{}, errors.New("not implemented")
@@ -268,6 +286,154 @@ func TestPlaceOrder_OtherAdapterError_BadGateway(t *testing.T) {
 	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: &fakeBrokerAdapter{}}, sharedSecret, nil)
 
 	rec := doRequest(t, mux, http.MethodPost, "/internal/mt/accounts/acct-1/orders", sharedSecret, `{"platform":"MT5","order":{}}`)
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", rec.Code)
+	}
+}
+
+// --- TICKET-107: POST .../positions/{positionId}/modify ---
+
+func TestModifyPosition_MT5_Success(t *testing.T) {
+	mt5 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT5, modifyResult: domain.NormalizedOrderResult{Success: true, BrokerPositionID: "pos-1"}}
+	mt4 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT4}
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: mt4}, sharedSecret, nil)
+
+	body := `{"platform":"MT5","slPrice":1.0950,"tpPrice":1.1050}`
+	rec := doRequest(t, mux, http.MethodPost, "/internal/mt/accounts/acct-1/positions/pos-1/modify", sharedSecret, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body=%s", rec.Code, rec.Body.String())
+	}
+	if mt5.gotModifyHandle.AccountID != "acct-1" || mt5.gotModifyPosID != "pos-1" {
+		t.Fatalf("MT5 adapter called with handle=%+v positionID=%q, want AccountID=acct-1 positionID=pos-1", mt5.gotModifyHandle, mt5.gotModifyPosID)
+	}
+	if mt5.gotModifyChanges.SLPrice == nil || *mt5.gotModifyChanges.SLPrice != 1.0950 {
+		t.Fatalf("ModifyPosition called with SLPrice %v, want 1.0950", mt5.gotModifyChanges.SLPrice)
+	}
+	if mt4.gotModifyHandle != (domain.ConnectionHandle{}) {
+		t.Fatalf("MT4 adapter must not have been called")
+	}
+}
+
+func TestModifyPosition_MT4_RoutesToMT4Adapter(t *testing.T) {
+	mt5 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT5}
+	mt4 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT4, modifyResult: domain.NormalizedOrderResult{Success: true}}
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: mt4}, sharedSecret, nil)
+
+	rec := doRequest(t, mux, http.MethodPost, "/internal/mt/accounts/acct-2/positions/pos-2/modify", sharedSecret, `{"platform":"MT4"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body=%s", rec.Code, rec.Body.String())
+	}
+	if mt4.gotModifyHandle.AccountID != "acct-2" || mt4.gotModifyPosID != "pos-2" {
+		t.Fatalf("MT4 adapter called with handle=%+v positionID=%q, want AccountID=acct-2 positionID=pos-2", mt4.gotModifyHandle, mt4.gotModifyPosID)
+	}
+	if mt5.gotModifyHandle != (domain.ConnectionHandle{}) {
+		t.Fatalf("MT5 adapter must not have been called")
+	}
+}
+
+func TestModifyPosition_UnrecognizedPlatform_BadRequest(t *testing.T) {
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: &fakeBrokerAdapter{}, MT4: &fakeBrokerAdapter{}}, sharedSecret, nil)
+
+	rec := doRequest(t, mux, http.MethodPost, "/internal/mt/accounts/acct-1/positions/pos-1/modify", sharedSecret, `{"platform":"CTRADER"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestModifyPosition_InvalidJSON_BadRequest(t *testing.T) {
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: &fakeBrokerAdapter{}, MT4: &fakeBrokerAdapter{}}, sharedSecret, nil)
+
+	rec := doRequest(t, mux, http.MethodPost, "/internal/mt/accounts/acct-1/positions/pos-1/modify", sharedSecret, `not json`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestModifyPosition_NoSession_NotFound(t *testing.T) {
+	mt5 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT5, modifyErr: fmt.Errorf("mtadapter(MT5): no live EA session for broker account acct-1: %w", eabridge.ErrNoSession)}
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: &fakeBrokerAdapter{}}, sharedSecret, nil)
+
+	rec := doRequest(t, mux, http.MethodPost, "/internal/mt/accounts/acct-1/positions/pos-1/modify", sharedSecret, `{"platform":"MT5"}`)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+func TestModifyPosition_OtherAdapterError_BadGateway(t *testing.T) {
+	mt5 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT5, modifyErr: errors.New("eabridge: request timed out")}
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: &fakeBrokerAdapter{}}, sharedSecret, nil)
+
+	rec := doRequest(t, mux, http.MethodPost, "/internal/mt/accounts/acct-1/positions/pos-1/modify", sharedSecret, `{"platform":"MT5"}`)
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", rec.Code)
+	}
+}
+
+// --- TICKET-107: POST .../positions/{positionId}/close ---
+
+func TestClosePosition_MT5_FullClose_Success(t *testing.T) {
+	mt5 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT5, closeResult: domain.NormalizedOrderResult{Success: true, BrokerPositionID: "pos-1"}}
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: &fakeBrokerAdapter{}}, sharedSecret, nil)
+
+	rec := doRequest(t, mux, http.MethodPost, "/internal/mt/accounts/acct-1/positions/pos-1/close", sharedSecret, `{"platform":"MT5"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body=%s", rec.Code, rec.Body.String())
+	}
+	if mt5.gotCloseVolume != nil {
+		t.Fatalf("ClosePosition called with volume %v, want nil (full close)", *mt5.gotCloseVolume)
+	}
+}
+
+func TestClosePosition_MT4_RoutesToMT4Adapter_PartialClose(t *testing.T) {
+	mt5 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT5}
+	mt4 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT4, closeResult: domain.NormalizedOrderResult{Success: true}}
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: mt4}, sharedSecret, nil)
+
+	rec := doRequest(t, mux, http.MethodPost, "/internal/mt/accounts/acct-2/positions/pos-2/close", sharedSecret, `{"platform":"MT4","volumeLots":0.5}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body=%s", rec.Code, rec.Body.String())
+	}
+	if mt4.gotCloseVolume == nil || *mt4.gotCloseVolume != 0.5 {
+		t.Fatalf("ClosePosition called with volume %v, want 0.5", mt4.gotCloseVolume)
+	}
+	if mt5.gotCloseHandle != (domain.ConnectionHandle{}) {
+		t.Fatalf("MT5 adapter must not have been called")
+	}
+}
+
+func TestClosePosition_UnrecognizedPlatform_BadRequest(t *testing.T) {
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: &fakeBrokerAdapter{}, MT4: &fakeBrokerAdapter{}}, sharedSecret, nil)
+
+	rec := doRequest(t, mux, http.MethodPost, "/internal/mt/accounts/acct-1/positions/pos-1/close", sharedSecret, `{"platform":"CTRADER"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestClosePosition_InvalidJSON_BadRequest(t *testing.T) {
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: &fakeBrokerAdapter{}, MT4: &fakeBrokerAdapter{}}, sharedSecret, nil)
+
+	rec := doRequest(t, mux, http.MethodPost, "/internal/mt/accounts/acct-1/positions/pos-1/close", sharedSecret, `not json`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestClosePosition_NoSession_NotFound(t *testing.T) {
+	mt5 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT5, closeErr: fmt.Errorf("mtadapter(MT5): no live EA session for broker account acct-1: %w", eabridge.ErrNoSession)}
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: &fakeBrokerAdapter{}}, sharedSecret, nil)
+
+	rec := doRequest(t, mux, http.MethodPost, "/internal/mt/accounts/acct-1/positions/pos-1/close", sharedSecret, `{"platform":"MT5"}`)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+func TestClosePosition_OtherAdapterError_BadGateway(t *testing.T) {
+	mt5 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT5, closeErr: errors.New("eabridge: request timed out")}
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: &fakeBrokerAdapter{}}, sharedSecret, nil)
+
+	rec := doRequest(t, mux, http.MethodPost, "/internal/mt/accounts/acct-1/positions/pos-1/close", sharedSecret, `{"platform":"MT5"}`)
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("status = %d, want 502", rec.Code)
 	}

@@ -40,14 +40,26 @@ func (f *fakeHandleProvider) HandleFor(brokerAccountID string) (domain.Connectio
 // only GetAccountSnapshot/PlaceOrder are exercised by this package, the rest
 // are unused stubs.
 type fakeBrokerAdapter struct {
-	snapshot    domain.AccountSnapshot
-	snapshotErr error
+	snapshot          domain.AccountSnapshot
+	snapshotErr       error
 	gotSnapshotHandle domain.ConnectionHandle
 
-	orderResult domain.NormalizedOrderResult
-	orderErr    error
-	gotOrder    domain.NormalizedOrderRequest
+	orderResult    domain.NormalizedOrderResult
+	orderErr       error
+	gotOrder       domain.NormalizedOrderRequest
 	gotOrderHandle domain.ConnectionHandle
+
+	modifyResult     domain.NormalizedOrderResult
+	modifyErr        error
+	gotModifyHandle  domain.ConnectionHandle
+	gotModifyPosID   string
+	gotModifyChanges domain.SLTPChange
+
+	closeResult    domain.NormalizedOrderResult
+	closeErr       error
+	gotCloseHandle domain.ConnectionHandle
+	gotClosePosID  string
+	gotCloseVolume *float64
 }
 
 func (f *fakeBrokerAdapter) BrokerType() domain.BrokerType { return domain.BrokerTypeCTrader }
@@ -76,10 +88,16 @@ func (f *fakeBrokerAdapter) PlaceOrder(ctx context.Context, handle domain.Connec
 	return f.orderResult, f.orderErr
 }
 func (f *fakeBrokerAdapter) ModifyPosition(ctx context.Context, handle domain.ConnectionHandle, positionID string, changes domain.SLTPChange) (domain.NormalizedOrderResult, error) {
-	return domain.NormalizedOrderResult{}, errors.New("not implemented")
+	f.gotModifyHandle = handle
+	f.gotModifyPosID = positionID
+	f.gotModifyChanges = changes
+	return f.modifyResult, f.modifyErr
 }
 func (f *fakeBrokerAdapter) ClosePosition(ctx context.Context, handle domain.ConnectionHandle, positionID string, volume *float64) (domain.NormalizedOrderResult, error) {
-	return domain.NormalizedOrderResult{}, errors.New("not implemented")
+	f.gotCloseHandle = handle
+	f.gotClosePosID = positionID
+	f.gotCloseVolume = volume
+	return f.closeResult, f.closeErr
 }
 func (f *fakeBrokerAdapter) ResolveSymbol(ctx context.Context, brokerSymbol string) (domain.NormalizedSymbol, error) {
 	return domain.NormalizedSymbol{}, errors.New("not implemented")
@@ -314,6 +332,128 @@ func TestPlaceOrder_AdapterError_BadGateway(t *testing.T) {
 	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, adapter, sharedSecret, nil)
 
 	rec := doPathRequest(t, mux, http.MethodPost, "/internal/ctrader/accounts/acct-1/orders", sharedSecret, `{"order":{}}`)
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", rec.Code)
+	}
+}
+
+// --- TICKET-107: POST .../positions/{positionId}/modify ---
+
+func TestModifyPosition_Success(t *testing.T) {
+	handle := domain.ConnectionHandle{ID: "h1", BrokerType: domain.BrokerTypeCTrader, AccountID: "acct-1"}
+	adapter := &fakeBrokerAdapter{modifyResult: domain.NormalizedOrderResult{Success: true, BrokerPositionID: "pos-1"}}
+	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, adapter, sharedSecret, nil)
+
+	body := `{"platform":"","slPrice":1.0950,"tpPrice":1.1050}`
+	rec := doPathRequest(t, mux, http.MethodPost, "/internal/ctrader/accounts/acct-1/positions/pos-1/modify", sharedSecret, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body=%s", rec.Code, rec.Body.String())
+	}
+	if adapter.gotModifyHandle != handle {
+		t.Fatalf("ModifyPosition called with handle %+v, want %+v", adapter.gotModifyHandle, handle)
+	}
+	if adapter.gotModifyPosID != "pos-1" {
+		t.Fatalf("ModifyPosition called with positionID %q, want pos-1", adapter.gotModifyPosID)
+	}
+	if adapter.gotModifyChanges.SLPrice == nil || *adapter.gotModifyChanges.SLPrice != 1.0950 {
+		t.Fatalf("ModifyPosition called with SLPrice %v, want 1.0950", adapter.gotModifyChanges.SLPrice)
+	}
+	if adapter.gotModifyChanges.TPPrice == nil || *adapter.gotModifyChanges.TPPrice != 1.1050 {
+		t.Fatalf("ModifyPosition called with TPPrice %v, want 1.1050", adapter.gotModifyChanges.TPPrice)
+	}
+}
+
+func TestModifyPosition_UnknownAccount_NotFound(t *testing.T) {
+	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{}, &fakeBrokerAdapter{}, sharedSecret, nil)
+
+	rec := doPathRequest(t, mux, http.MethodPost, "/internal/ctrader/accounts/unknown/positions/pos-1/modify", sharedSecret, `{}`)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+func TestModifyPosition_InvalidJSON_BadRequest(t *testing.T) {
+	handle := domain.ConnectionHandle{AccountID: "acct-1"}
+	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, &fakeBrokerAdapter{}, sharedSecret, nil)
+
+	rec := doPathRequest(t, mux, http.MethodPost, "/internal/ctrader/accounts/acct-1/positions/pos-1/modify", sharedSecret, `not json`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestModifyPosition_AdapterError_BadGateway(t *testing.T) {
+	handle := domain.ConnectionHandle{AccountID: "acct-1"}
+	adapter := &fakeBrokerAdapter{modifyErr: errors.New("ctrader: request timed out")}
+	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, adapter, sharedSecret, nil)
+
+	rec := doPathRequest(t, mux, http.MethodPost, "/internal/ctrader/accounts/acct-1/positions/pos-1/modify", sharedSecret, `{}`)
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", rec.Code)
+	}
+}
+
+// --- TICKET-107: POST .../positions/{positionId}/close ---
+
+func TestClosePosition_FullClose_Success(t *testing.T) {
+	handle := domain.ConnectionHandle{ID: "h1", BrokerType: domain.BrokerTypeCTrader, AccountID: "acct-1"}
+	adapter := &fakeBrokerAdapter{closeResult: domain.NormalizedOrderResult{Success: true, BrokerPositionID: "pos-1"}}
+	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, adapter, sharedSecret, nil)
+
+	rec := doPathRequest(t, mux, http.MethodPost, "/internal/ctrader/accounts/acct-1/positions/pos-1/close", sharedSecret, `{"platform":""}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body=%s", rec.Code, rec.Body.String())
+	}
+	if adapter.gotCloseHandle != handle {
+		t.Fatalf("ClosePosition called with handle %+v, want %+v", adapter.gotCloseHandle, handle)
+	}
+	if adapter.gotClosePosID != "pos-1" {
+		t.Fatalf("ClosePosition called with positionID %q, want pos-1", adapter.gotClosePosID)
+	}
+	if adapter.gotCloseVolume != nil {
+		t.Fatalf("ClosePosition called with volume %v, want nil (full close)", *adapter.gotCloseVolume)
+	}
+}
+
+func TestClosePosition_PartialClose_PassesVolume(t *testing.T) {
+	handle := domain.ConnectionHandle{AccountID: "acct-1"}
+	adapter := &fakeBrokerAdapter{closeResult: domain.NormalizedOrderResult{Success: true}}
+	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, adapter, sharedSecret, nil)
+
+	rec := doPathRequest(t, mux, http.MethodPost, "/internal/ctrader/accounts/acct-1/positions/pos-1/close", sharedSecret, `{"volumeLots":0.75}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body=%s", rec.Code, rec.Body.String())
+	}
+	if adapter.gotCloseVolume == nil || *adapter.gotCloseVolume != 0.75 {
+		t.Fatalf("ClosePosition called with volume %v, want 0.75", adapter.gotCloseVolume)
+	}
+}
+
+func TestClosePosition_UnknownAccount_NotFound(t *testing.T) {
+	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{}, &fakeBrokerAdapter{}, sharedSecret, nil)
+
+	rec := doPathRequest(t, mux, http.MethodPost, "/internal/ctrader/accounts/unknown/positions/pos-1/close", sharedSecret, `{}`)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+func TestClosePosition_InvalidJSON_BadRequest(t *testing.T) {
+	handle := domain.ConnectionHandle{AccountID: "acct-1"}
+	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, &fakeBrokerAdapter{}, sharedSecret, nil)
+
+	rec := doPathRequest(t, mux, http.MethodPost, "/internal/ctrader/accounts/acct-1/positions/pos-1/close", sharedSecret, `not json`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestClosePosition_AdapterError_BadGateway(t *testing.T) {
+	handle := domain.ConnectionHandle{AccountID: "acct-1"}
+	adapter := &fakeBrokerAdapter{closeErr: errors.New("ctrader: request timed out")}
+	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, adapter, sharedSecret, nil)
+
+	rec := doPathRequest(t, mux, http.MethodPost, "/internal/ctrader/accounts/acct-1/positions/pos-1/close", sharedSecret, `{}`)
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("status = %d, want 502", rec.Code)
 	}

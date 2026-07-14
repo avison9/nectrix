@@ -83,14 +83,42 @@ func (p *Pipeline) matchRelationships(ctx context.Context, masterAccountID uuid.
 	return relationships, nil
 }
 
-// dispatchOrder is the Order Dispatcher (Appendix A.3's handleOpen).
+// dispatchOrder is the Order Dispatcher's entry point -- TICKET-107 fixed a
+// real, confirmed bug here: this used to call doDispatchOrder (Appendix
+// A.3's handleOpen) for EVERY event regardless of event.EventType, since
+// nothing in this package ever branched on it (grep confirmed EventType was
+// only read for tracing/dedup-key-building/DB storage). That meant a
+// PARTIALLY_CLOSED/CLOSED/MODIFIED event incorrectly re-ran the full
+// open-dispatch flow, including a second live PlaceOrder call. This switch
+// is the fix -- each event type now reaches the handler
+// appendix-a-copy-engine-pseudocode.md actually specifies for it (§A.3
+// handleOpen, §A.5 handlePartialClose, §A.6 handleClose, and handleModify
+// per docs/08-copy-trading-engine.md §8.7, which appendix-A itself doesn't
+// give separate pseudocode for).
 func (p *Pipeline) dispatchOrder(ctx context.Context, rel relationship, signalID uuid.UUID, event domain.NormalizedTradeEvent) error {
 	ctx, span := observability.Tracer().Start(ctx, "pipeline.dispatch_order", trace.WithAttributes(
 		attribute.String("nectrix.copy_relationship_id", rel.id.String()),
+		attribute.String("nectrix.event_type", string(event.EventType)),
 	))
 	var err error
 	defer func() { finishSpan(span, err) }()
-	err = p.doDispatchOrder(ctx, rel, signalID, event)
+
+	switch event.EventType {
+	case domain.TradeEventPositionOpened:
+		err = p.doDispatchOrder(ctx, rel, signalID, event)
+	case domain.TradeEventPositionPartiallyClosed:
+		err = p.handlePartialClose(ctx, rel, signalID, event)
+	case domain.TradeEventPositionClosed:
+		err = p.handleClose(ctx, rel, signalID, event)
+	case domain.TradeEventPositionModified:
+		err = p.handleModify(ctx, rel, signalID, event)
+	default:
+		// Includes the empty string tradesignals.FromProto maps an
+		// unrecognized proto enum value to -- never fatal for the whole
+		// signal, just nothing this relationship can act on.
+		slog.Default().Warn("pipeline: unrecognized event type, skipping dispatch",
+			"copyRelationshipId", rel.id, "eventType", event.EventType)
+	}
 	return err
 }
 
@@ -210,8 +238,13 @@ func (p *Pipeline) doDispatchOrder(ctx context.Context, rel relationship, signal
 	}
 
 	followerDirection := applyCopyDirection(event.Position.Direction, rel.copyDirection)
-	slPrice := translateSlTp(event.Position.CurrentSLPrice, event.Position.OpenPrice, event.Position.Direction, followerDirection, masterSpec.PipSize, followerSpec.PipSize, "SL")
-	tpPrice := translateSlTp(event.Position.CurrentTPPrice, event.Position.OpenPrice, event.Position.Direction, followerDirection, masterSpec.PipSize, followerSpec.PipSize, "TP")
+	// The follower's real fill price isn't known yet at this point (PlaceOrder
+	// hasn't been called) -- event.Position.OpenPrice (the master's own open
+	// price) is passed as the followerOpenPrice approximation, per this
+	// function's own doc comment. TICKET-107's handleModify passes the real,
+	// already-known follower fill price instead (stored in copied_trades.filled_price).
+	slPrice := translateSlTp(event.Position.CurrentSLPrice, event.Position.OpenPrice, event.Position.OpenPrice, event.Position.Direction, followerDirection, masterSpec.PipSize, followerSpec.PipSize, "SL")
+	tpPrice := translateSlTp(event.Position.CurrentTPPrice, event.Position.OpenPrice, event.Position.OpenPrice, event.Position.Direction, followerDirection, masterSpec.PipSize, followerSpec.PipSize, "TP")
 
 	snapshot, err := buildSizingMethodSnapshot(mmProfile, masterAccount, followerAccount, event.Position, followerSpec,
 		fxCapture.calls, sizingResult, guardResult, rel.copyDirection, followerDirection, masterSpec.PipSize, followerSpec.PipSize, slPrice, tpPrice)
@@ -263,11 +296,19 @@ func (p *Pipeline) doDispatchOrder(ctx context.Context, rel relationship, signal
 		sp := math.Abs(*result.FilledPrice-event.Position.OpenPrice) / followerSpec.PipSize
 		slippagePips = &sp
 	}
+	// current_open_volume_lots (TICKET-107) only matters once status=FILLED --
+	// a REJECTED row leaves it at the column's own DEFAULT 0, same as
+	// recordSizingFailure's FAILED path, since neither ever opens a real
+	// follower position.
+	currentOpenVolumeLots := 0.0
+	if status == "FILLED" {
+		currentOpenVolumeLots = guardResult.Volume
+	}
 	_, updateErr := p.pool.Exec(ctx, `
 		UPDATE copied_trades
-		SET status=$1, follower_broker_position_id=$2, filled_price=$3, slippage_pips=$4, reject_reason=$5, opened_at=$6
-		WHERE id=$7`,
-		status, nullIfEmpty(result.BrokerPositionID), result.FilledPrice, slippagePips, nullIfEmpty(result.RejectReason), time.Now().UTC(), copiedTradeID,
+		SET status=$1, follower_broker_position_id=$2, filled_price=$3, slippage_pips=$4, reject_reason=$5, opened_at=$6, current_open_volume_lots=$7
+		WHERE id=$8`,
+		status, nullIfEmpty(result.BrokerPositionID), result.FilledPrice, slippagePips, nullIfEmpty(result.RejectReason), time.Now().UTC(), currentOpenVolumeLots, copiedTradeID,
 	)
 	if placeErr != nil {
 		return fmt.Errorf("PlaceOrder: %w", placeErr)
@@ -343,19 +384,22 @@ func (p *Pipeline) loadMoneyManagementProfile(ctx context.Context, id uuid.UUID)
 }
 
 // dispatchRiskProfile bundles moneymgmt.RiskProfile (the caps ApplyRiskGuard
-// reads) with max_slippage_pips, which ApplyRiskGuard itself has no use for
-// but the order request does.
+// reads) with max_slippage_pips (which ApplyRiskGuard itself has no use for
+// but the order request does) and PinFollowerSLTP -- TICKET-107 / FR-3.7:
+// when true, handleModify logs/publishes a master SL/TP change but never
+// calls ModifyPosition against the follower's own position.
 type dispatchRiskProfile struct {
 	moneymgmt.RiskProfile
 	MaxSlippagePips float64
+	PinFollowerSLTP bool
 }
 
 func (p *Pipeline) loadRiskProfile(ctx context.Context, id uuid.UUID) (dispatchRiskProfile, error) {
 	var profile dispatchRiskProfile
 	err := p.pool.QueryRow(ctx, `
-		SELECT max_lot_per_trade, max_open_positions, max_exposure_per_symbol_lots, max_total_exposure_lots, max_slippage_pips
+		SELECT max_lot_per_trade, max_open_positions, max_exposure_per_symbol_lots, max_total_exposure_lots, max_slippage_pips, pin_follower_sl_tp
 		FROM risk_profiles WHERE id = $1`, id,
-	).Scan(&profile.MaxLotPerTrade, &profile.MaxOpenPositions, &profile.MaxExposurePerSymbolLots, &profile.MaxTotalExposureLots, &profile.MaxSlippagePips)
+	).Scan(&profile.MaxLotPerTrade, &profile.MaxOpenPositions, &profile.MaxExposurePerSymbolLots, &profile.MaxTotalExposureLots, &profile.MaxSlippagePips, &profile.PinFollowerSLTP)
 	if err != nil {
 		return dispatchRiskProfile{}, fmt.Errorf("query risk_profiles: %w", err)
 	}
@@ -383,24 +427,26 @@ func signOf(direction domain.TradeDirection) float64 {
 }
 
 // translateSlTp is docs/09-money-management-risk-formulas.md §9.6's SL/TP
-// pip-distance translation. Two real design decisions beyond the literal
-// doc text:
+// pip-distance translation. One real design decision beyond the literal doc
+// text:
 //
-//   - follower open price: a Market order's real fill price is only known
-//     AFTER PlaceOrder returns, but SL/TP must be submitted WITH the request
-//     (cTrader's StopLoss/TakeProfit are absolute prices set at request
-//     time). Appendix-A's own translateSlTp call passes no follower price at
-//     all -- confirming the intended approximation is the master's own
-//     OpenPrice as the stand-in for follower_open_price, consistent with
-//     Market mode's own philosophy (submit immediately, record actual
-//     divergence as slippage after the fact).
 //   - REVERSE relationships: uses the master's own direction to extract a
 //     directionless distance magnitude, but the follower's own
 //     (post-applyCopyDirection) direction to reconstruct the follower's
 //     SL/TP -- required so a REVERSE follower's stop lands on the correct
 //     side of its own (opposite) position. The doc doesn't address this;
 //     this is a considered extension, not a silent assumption.
-func translateSlTp(masterPrice *float64, masterOpenPrice float64, masterDirection, followerDirection domain.TradeDirection, masterPipSize, followerPipSize float64, side string) *float64 {
+//
+// followerOpenPrice is an explicit caller-supplied parameter (TICKET-107),
+// not an internal approximation -- at OPEN time (dispatch.go's
+// doDispatchOrder) the follower's real fill price isn't known yet (PlaceOrder
+// hasn't been called), so that call site passes the master's own OpenPrice
+// as an approximation, consistent with Market mode's own philosophy (submit
+// immediately, record actual divergence as slippage after the fact). At
+// MODIFY time (handleModify) the follower's real fill price IS already known
+// (copied_trades.filled_price, set by doDispatchOrder's own finalize step),
+// so that call site passes the real value instead of an approximation.
+func translateSlTp(masterPrice *float64, masterOpenPrice, followerOpenPrice float64, masterDirection, followerDirection domain.TradeDirection, masterPipSize, followerPipSize float64, side string) *float64 {
 	if masterPrice == nil || masterPipSize == 0 || followerPipSize == 0 {
 		return nil
 	}
@@ -415,12 +461,11 @@ func translateSlTp(masterPrice *float64, masterOpenPrice float64, masterDirectio
 	}
 	masterDistancePips := masterDistancePrice / masterPipSize
 
-	followerOpenPriceApprox := masterOpenPrice // see doc comment above
 	var followerPrice float64
 	if side == "SL" {
-		followerPrice = followerOpenPriceApprox - followerSign*(masterDistancePips*followerPipSize)
+		followerPrice = followerOpenPrice - followerSign*(masterDistancePips*followerPipSize)
 	} else {
-		followerPrice = followerOpenPriceApprox + followerSign*(masterDistancePips*followerPipSize)
+		followerPrice = followerOpenPrice + followerSign*(masterDistancePips*followerPipSize)
 	}
 	return &followerPrice
 }

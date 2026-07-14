@@ -353,6 +353,32 @@ type fakePlaceOrderWireResult struct {
 	RejectReason     string   `json:"rejectReason,omitempty"`
 }
 
+// fakeModifyRequest/fakeCloseRequest mirror remoteadapter.HTTPClient's
+// TICKET-107 wire shapes for ModifyPosition/ClosePosition.
+type fakeModifyRequest struct {
+	Platform string   `json:"platform"`
+	SLPrice  *float64 `json:"slPrice"`
+	TPPrice  *float64 `json:"tpPrice"`
+}
+
+type fakeCloseRequest struct {
+	Platform   string   `json:"platform"`
+	VolumeLots *float64 `json:"volumeLots,omitempty"`
+}
+
+// fakeModifyCall/fakeCloseCall record what a ModifyPosition/ClosePosition
+// call to the fake service actually carried, so tests can assert against it.
+type fakeModifyCall struct {
+	PositionID string
+	SLPrice    *float64
+	TPPrice    *float64
+}
+
+type fakeCloseCall struct {
+	PositionID string
+	VolumeLots *float64 // nil = full close
+}
+
 // fakeBrokerService stands in for BOTH apps/broker-adapters' and
 // apps/mt5-bridge-gateway's new internal PlaceOrder/GetAccountSnapshot
 // routes -- one fake server serves both /internal/ctrader and /internal/mt
@@ -361,17 +387,21 @@ type fakePlaceOrderWireResult struct {
 // PlaceOrder call it receives, keyed by brokerAccountID, so AC3/AC4 can
 // assert against real recorded HTTP calls, not an in-process stub.
 type fakeBrokerService struct {
-	mu                sync.Mutex
-	snapshots         map[string]domain.AccountSnapshot
-	filledPriceByAcct map[string]float64
-	placeOrderCalls   map[string][]domain.NormalizedOrderRequest
+	mu                  sync.Mutex
+	snapshots           map[string]domain.AccountSnapshot
+	filledPriceByAcct   map[string]float64
+	placeOrderCalls     map[string][]domain.NormalizedOrderRequest
+	modifyPositionCalls map[string][]fakeModifyCall
+	closePositionCalls  map[string][]fakeCloseCall
 }
 
 func newFakeBrokerService() *fakeBrokerService {
 	return &fakeBrokerService{
-		snapshots:         make(map[string]domain.AccountSnapshot),
-		filledPriceByAcct: make(map[string]float64),
-		placeOrderCalls:   make(map[string][]domain.NormalizedOrderRequest),
+		snapshots:           make(map[string]domain.AccountSnapshot),
+		filledPriceByAcct:   make(map[string]float64),
+		placeOrderCalls:     make(map[string][]domain.NormalizedOrderRequest),
+		modifyPositionCalls: make(map[string][]fakeModifyCall),
+		closePositionCalls:  make(map[string][]fakeCloseCall),
 	}
 }
 
@@ -399,14 +429,42 @@ func (f *fakeBrokerService) callsFor(brokerAccountID string) []domain.Normalized
 	return append([]domain.NormalizedOrderRequest(nil), f.placeOrderCalls[brokerAccountID]...)
 }
 
+func (f *fakeBrokerService) modifyPositionCallCount(brokerAccountID string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.modifyPositionCalls[brokerAccountID])
+}
+
+func (f *fakeBrokerService) modifyPositionCallsFor(brokerAccountID string) []fakeModifyCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]fakeModifyCall(nil), f.modifyPositionCalls[brokerAccountID]...)
+}
+
+func (f *fakeBrokerService) closePositionCallCount(brokerAccountID string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.closePositionCalls[brokerAccountID])
+}
+
+func (f *fakeBrokerService) closePositionCallsFor(brokerAccountID string) []fakeCloseCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]fakeCloseCall(nil), f.closePositionCalls[brokerAccountID]...)
+}
+
 const fakeDefaultFilledPrice = 1.10000
 
 func (f *fakeBrokerService) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /internal/ctrader/accounts/{id}/snapshot", f.handleSnapshot)
 	mux.HandleFunc("POST /internal/ctrader/accounts/{id}/orders", f.handlePlaceOrder)
+	mux.HandleFunc("POST /internal/ctrader/accounts/{id}/positions/{positionId}/modify", f.handleModifyPosition)
+	mux.HandleFunc("POST /internal/ctrader/accounts/{id}/positions/{positionId}/close", f.handleClosePosition)
 	mux.HandleFunc("GET /internal/mt/accounts/{id}/snapshot", f.handleSnapshot)
 	mux.HandleFunc("POST /internal/mt/accounts/{id}/orders", f.handlePlaceOrder)
+	mux.HandleFunc("POST /internal/mt/accounts/{id}/positions/{positionId}/modify", f.handleModifyPosition)
+	mux.HandleFunc("POST /internal/mt/accounts/{id}/positions/{positionId}/close", f.handleClosePosition)
 	return f.requireToken(mux)
 }
 
@@ -454,6 +512,42 @@ func (f *fakeBrokerService) handlePlaceOrder(w http.ResponseWriter, r *http.Requ
 		BrokerPositionID: "fake-position-" + uuid.NewString(),
 		FilledPrice:      &filledPrice,
 	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(result)
+}
+
+func (f *fakeBrokerService) handleModifyPosition(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	positionID := r.PathValue("positionId")
+	var wire fakeModifyRequest
+	if err := json.NewDecoder(r.Body).Decode(&wire); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	f.mu.Lock()
+	f.modifyPositionCalls[id] = append(f.modifyPositionCalls[id], fakeModifyCall{PositionID: positionID, SLPrice: wire.SLPrice, TPPrice: wire.TPPrice})
+	f.mu.Unlock()
+
+	result := fakePlaceOrderWireResult{Success: true, BrokerPositionID: positionID}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(result)
+}
+
+func (f *fakeBrokerService) handleClosePosition(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	positionID := r.PathValue("positionId")
+	var wire fakeCloseRequest
+	if err := json.NewDecoder(r.Body).Decode(&wire); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	f.mu.Lock()
+	f.closePositionCalls[id] = append(f.closePositionCalls[id], fakeCloseCall{PositionID: positionID, VolumeLots: wire.VolumeLots})
+	f.mu.Unlock()
+
+	result := fakePlaceOrderWireResult{Success: true, BrokerPositionID: positionID}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(result)
 }

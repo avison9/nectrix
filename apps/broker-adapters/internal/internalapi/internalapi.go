@@ -53,14 +53,40 @@ type placeOrderRequest struct {
 	Order    domain.NormalizedOrderRequest `json:"order"`
 }
 
-// placeOrderWireResult deliberately drops domain.NormalizedOrderResult's
+// modifyPositionRequest mirrors domain.SLTPChange, plus the same
+// ignored-here platform field placeOrderRequest already carries.
+type modifyPositionRequest struct {
+	Platform string   `json:"platform"`
+	SLPrice  *float64 `json:"slPrice"`
+	TPPrice  *float64 `json:"tpPrice"`
+}
+
+// closePositionRequest: VolumeLots nil/omitted means "close the entire
+// remaining position" — domain.BrokerAdapter.ClosePosition's own contract.
+type closePositionRequest struct {
+	Platform   string   `json:"platform"`
+	VolumeLots *float64 `json:"volumeLots,omitempty"`
+}
+
+// orderResultWire deliberately drops domain.NormalizedOrderResult's
 // RawBrokerResponse — never parsed by upstream logic, and an opaque
 // proto/broker-response struct is fragile to depend on across a network hop.
-type placeOrderWireResult struct {
+// TICKET-107 widened this from PlaceOrder-only to also cover
+// ModifyPosition/ClosePosition — all three return the same wire-safe shape.
+type orderResultWire struct {
 	Success          bool     `json:"success"`
 	BrokerPositionID string   `json:"brokerPositionId,omitempty"`
 	FilledPrice      *float64 `json:"filledPrice,omitempty"`
 	RejectReason     string   `json:"rejectReason,omitempty"`
+}
+
+func toOrderResultWire(result domain.NormalizedOrderResult) orderResultWire {
+	return orderResultWire{
+		Success:          result.Success,
+		BrokerPositionID: result.BrokerPositionID,
+		FilledPrice:      result.FilledPrice,
+		RejectReason:     result.RejectReason,
+	}
 }
 
 // NewMux builds the internal mux. sharedSecret must be non-empty in any real
@@ -83,6 +109,12 @@ func NewMux(lister AccountLister, handles HandleProvider, adapter domain.BrokerA
 	})
 	mux.HandleFunc("POST /internal/ctrader/accounts/{brokerAccountId}/orders", func(w http.ResponseWriter, r *http.Request) {
 		handlePlaceOrder(w, r, handles, adapter, logger)
+	})
+	mux.HandleFunc("POST /internal/ctrader/accounts/{brokerAccountId}/positions/{positionId}/modify", func(w http.ResponseWriter, r *http.Request) {
+		handleModifyPosition(w, r, handles, adapter, logger)
+	})
+	mux.HandleFunc("POST /internal/ctrader/accounts/{brokerAccountId}/positions/{positionId}/close", func(w http.ResponseWriter, r *http.Request) {
+		handleClosePosition(w, r, handles, adapter, logger)
 	})
 	return requireSharedSecret(sharedSecret, mux)
 }
@@ -185,10 +217,70 @@ func handlePlaceOrder(w http.ResponseWriter, r *http.Request, handles HandleProv
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(placeOrderWireResult{
-		Success:          result.Success,
-		BrokerPositionID: result.BrokerPositionID,
-		FilledPrice:      result.FilledPrice,
-		RejectReason:     result.RejectReason,
-	})
+	_ = json.NewEncoder(w).Encode(toOrderResultWire(result))
+}
+
+// handleModifyPosition changes a follower position's SL/TP — TICKET-107,
+// docs/08-copy-trading-engine.md §8.7. Mirrors handlePlaceOrder's
+// auth(-already-applied-by-mux)/decode/resolve-handle/call-adapter/
+// encode-wire-result shape exactly.
+func handleModifyPosition(w http.ResponseWriter, r *http.Request, handles HandleProvider, adapter domain.BrokerAdapter, logger *slog.Logger) {
+	defer func() { _ = r.Body.Close() }()
+
+	brokerAccountID := r.PathValue("brokerAccountId")
+	positionID := r.PathValue("positionId")
+
+	var req modifyPositionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	handle, ok := handles.HandleFor(brokerAccountID)
+	if !ok {
+		http.Error(w, "no connected handle for broker account "+brokerAccountID, http.StatusNotFound)
+		return
+	}
+
+	result, err := adapter.ModifyPosition(r.Context(), handle, positionID, domain.SLTPChange{SLPrice: req.SLPrice, TPPrice: req.TPPrice})
+	if err != nil {
+		logger.Error("internalapi: modify position failed", "brokerAccountId", brokerAccountID, "positionId", positionID, "error", err)
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(toOrderResultWire(result))
+}
+
+// handleClosePosition closes all (volumeLots omitted) or part (volumeLots
+// set) of a follower position — TICKET-107,
+// docs/09-money-management-risk-formulas.md §9.5.
+func handleClosePosition(w http.ResponseWriter, r *http.Request, handles HandleProvider, adapter domain.BrokerAdapter, logger *slog.Logger) {
+	defer func() { _ = r.Body.Close() }()
+
+	brokerAccountID := r.PathValue("brokerAccountId")
+	positionID := r.PathValue("positionId")
+
+	var req closePositionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	handle, ok := handles.HandleFor(brokerAccountID)
+	if !ok {
+		http.Error(w, "no connected handle for broker account "+brokerAccountID, http.StatusNotFound)
+		return
+	}
+
+	result, err := adapter.ClosePosition(r.Context(), handle, positionID, req.VolumeLots)
+	if err != nil {
+		logger.Error("internalapi: close position failed", "brokerAccountId", brokerAccountID, "positionId", positionID, "error", err)
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(toOrderResultWire(result))
 }

@@ -20,6 +20,14 @@ func (f *fakeRemoteAdapter) PlaceOrder(ctx context.Context, brokerAccountID stri
 	return domain.NormalizedOrderResult{}, nil
 }
 
+func (f *fakeRemoteAdapter) ModifyPosition(ctx context.Context, brokerAccountID, positionID string, changes domain.SLTPChange) (domain.NormalizedOrderResult, error) {
+	return domain.NormalizedOrderResult{}, nil
+}
+
+func (f *fakeRemoteAdapter) ClosePosition(ctx context.Context, brokerAccountID, positionID string, volume *float64) (domain.NormalizedOrderResult, error) {
+	return domain.NormalizedOrderResult{}, nil
+}
+
 func TestRouter_For_ReturnsRegisteredAdapter(t *testing.T) {
 	cTrader := &fakeRemoteAdapter{name: "ctrader"}
 	mt5 := &fakeRemoteAdapter{name: "mt5"}
