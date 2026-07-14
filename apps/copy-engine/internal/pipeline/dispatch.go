@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"math"
 	"time"
 
+	"github.com/avison9/nectrix/copy-engine/internal/moneymgmt"
 	"github.com/avison9/nectrix/copy-engine/internal/observability"
 	eventsv1 "github.com/avison9/nectrix/event-contracts/go/gen/nectrix/events/v1"
 	domain "github.com/avison9/nectrix/go-domain"
@@ -18,9 +21,16 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// relationship is TICKET-106's widened row shape -- money_management_profile_id/
+// risk_profile_id/copy_direction are all real, already-migrated
+// copy_relationships columns nothing selected until now.
 type relationship struct {
-	id                      uuid.UUID
-	followerBrokerAccountID uuid.UUID
+	id                       uuid.UUID
+	masterBrokerAccountID    uuid.UUID
+	followerBrokerAccountID  uuid.UUID
+	moneyManagementProfileID uuid.UUID
+	riskProfileID            uuid.UUID
+	copyDirection            string // "SAME" | "REVERSE"
 }
 
 // processSignalForAllRelationships is the Relationship Matcher (Appendix
@@ -50,7 +60,8 @@ func (p *Pipeline) processSignalForAllRelationships(ctx context.Context, masterA
 // hardcoded fake, and is honest about the ACTIVE-only fan-out.
 func (p *Pipeline) matchRelationships(ctx context.Context, masterAccountID uuid.UUID) ([]relationship, error) {
 	rows, err := p.pool.Query(ctx, `
-		SELECT id, follower_broker_account_id
+		SELECT id, master_broker_account_id, follower_broker_account_id,
+		       money_management_profile_id, risk_profile_id, copy_direction
 		FROM copy_relationships
 		WHERE master_broker_account_id = $1 AND status = 'ACTIVE'`, masterAccountID)
 	if err != nil {
@@ -61,7 +72,7 @@ func (p *Pipeline) matchRelationships(ctx context.Context, masterAccountID uuid.
 	var relationships []relationship
 	for rows.Next() {
 		var r relationship
-		if err := rows.Scan(&r.id, &r.followerBrokerAccountID); err != nil {
+		if err := rows.Scan(&r.id, &r.masterBrokerAccountID, &r.followerBrokerAccountID, &r.moneyManagementProfileID, &r.riskProfileID, &r.copyDirection); err != nil {
 			return nil, fmt.Errorf("scan copy_relationships row: %w", err)
 		}
 		relationships = append(relationships, r)
@@ -72,11 +83,7 @@ func (p *Pipeline) matchRelationships(ctx context.Context, masterAccountID uuid.
 	return relationships, nil
 }
 
-// dispatchOrder is the Order Dispatcher (Appendix A.3's handleOpen,
-// stubbed): no money-management/risk-guard formulas (Phase 1) -- volume is
-// a straight 1:1 copy of the master's VolumeLots. Calls the follower's
-// BrokerAdapter.PlaceOrder, persists one copied_trades row, and publishes
-// CopiedTradeEvent(OPENED) to the copied-trades Kafka topic.
+// dispatchOrder is the Order Dispatcher (Appendix A.3's handleOpen).
 func (p *Pipeline) dispatchOrder(ctx context.Context, rel relationship, signalID uuid.UUID, event domain.NormalizedTradeEvent) error {
 	ctx, span := observability.Tracer().Start(ctx, "pipeline.dispatch_order", trace.WithAttributes(
 		attribute.String("nectrix.copy_relationship_id", rel.id.String()),
@@ -87,98 +94,417 @@ func (p *Pipeline) dispatchOrder(ctx context.Context, rel relationship, signalID
 	return err
 }
 
+// doDispatchOrder is appendix-a-copy-engine-pseudocode.md §A.3's handleOpen,
+// in full: symbol mapping (both sides) -> account snapshots (both sides,
+// live remote calls) -> money-management sizing -> risk guard -> SL/TP
+// pip-distance translation -> a durable claim -> PlaceOrder -> finalize.
+//
+// TICKET-106: the claim (INSERT ... status='PENDING' ... ON CONFLICT DO
+// NOTHING RETURNING id) happens BEFORE PlaceOrder is ever called -- not
+// after, as the earlier STUB_1_TO_1_COPY version did. That earlier ordering
+// relied entirely on dedupadapter's Redis-backed dedup (TTL-limited) to
+// prevent a duplicate real broker-side order; a signal reprocessed after
+// that TTL expires would have placed a genuine second position, with the
+// Postgres unique constraint only ever catching the second bookkeeping row
+// afterward. Claiming first makes the Postgres constraint itself the
+// durable, non-expiring guard: if no row comes back, this signal was
+// already claimed/processed and PlaceOrder is never called at all. A crash
+// between claim and finalize leaves a row stuck at PENDING forever --
+// TICKET-109's Reconciliation Job (not yet built) is what eventually
+// catches and corrects that, not this function's job.
 func (p *Pipeline) doDispatchOrder(ctx context.Context, rel relationship, signalID uuid.UUID, event domain.NormalizedTradeEvent) error {
-	if rel.followerBrokerAccountID.String() != p.followerHandle.AccountID {
-		return fmt.Errorf(
-			"no connected BrokerAdapter handle for follower account %s (relationship %s) -- "+
-				"this stub Order Dispatcher only manages one pre-connected follower handle",
-			rel.followerBrokerAccountID, rel.id)
-	}
-
-	// docs/08-copy-trading-engine.md §8.3: idempotency_key = hash(trade_signal_id,
-	// copy_relationship_id). trade_signal_id is already unique per signal, and the
-	// DB constraint is UNIQUE(copy_relationship_id, idempotency_key) -- using it
-	// directly gives the identical collision behavior without an unneeded hash step.
 	idempotencyKey := signalID.String()
 
-	// TICKET-103, appendix-a-copy-engine-pseudocode.md's handleOpen: the
-	// unmapped-symbol check is the FIRST step, before sizing/PlaceOrder --
-	// never guess a mapping. A symbol with no CONFIRMED symbol_mappings row
-	// on the follower's account is skipped and flagged, not attempted.
-	mapped, err := p.hasConfirmedSymbolMapping(ctx, rel.followerBrokerAccountID, event.Position.Symbol.CanonicalCode)
+	// docs/08 §8.4 / TICKET-103: an unmapped symbol on EITHER side is
+	// skipped and flagged, never guessed. The master's own pip_size/
+	// contract_size are direct inputs to §9.6's SL/TP translation and to
+	// RISK_PERCENT sizing -- an unconfirmed auto-suggestion is exactly the
+	// "confidently wrong guess" TICKET-103's confirmation gate exists to
+	// prevent, on whichever side reads it.
+	masterSpec, masterMapped, err := p.loadConfirmedSymbolSpec(ctx, rel.masterBrokerAccountID, event.Position.Symbol)
 	if err != nil {
-		return fmt.Errorf("check symbol_mappings: %w", err)
+		return fmt.Errorf("load master symbol spec: %w", err)
 	}
-	if !mapped {
+	if !masterMapped {
+		return p.recordUnmappedSymbolFailure(ctx, rel, signalID, idempotencyKey, event)
+	}
+	followerSpec, followerMapped, err := p.loadConfirmedSymbolSpec(ctx, rel.followerBrokerAccountID, event.Position.Symbol)
+	if err != nil {
+		return fmt.Errorf("load follower symbol spec: %w", err)
+	}
+	if !followerMapped {
 		return p.recordUnmappedSymbolFailure(ctx, rel, signalID, idempotencyKey, event)
 	}
 
-	orderRequest := domain.NormalizedOrderRequest{
-		IdempotencyKey:          idempotencyKey,
-		FollowerBrokerAccountID: rel.followerBrokerAccountID.String(),
-		Symbol:                  event.Position.Symbol,
-		Direction:               event.Position.Direction,
-		VolumeLots:              event.Position.VolumeLots, // stub: 1:1 copy, no MM formula (Phase 1)
-		SLPrice:                 event.Position.CurrentSLPrice,
-		TPPrice:                 event.Position.CurrentTPPrice,
-		MaxSlippagePips:         5,
-		ClientOrderTag:          rel.id.String() + ":" + event.Position.BrokerPositionID,
-	}
-
-	result, err := p.adapter.PlaceOrder(ctx, p.followerHandle, orderRequest)
+	masterBrokerType, err := p.loadBrokerType(ctx, rel.masterBrokerAccountID)
 	if err != nil {
-		return fmt.Errorf("PlaceOrder: %w", err)
+		return fmt.Errorf("load master broker type: %w", err)
+	}
+	followerBrokerType, err := p.loadBrokerType(ctx, rel.followerBrokerAccountID)
+	if err != nil {
+		return fmt.Errorf("load follower broker type: %w", err)
+	}
+	masterRemote, err := p.router.For(masterBrokerType)
+	if err != nil {
+		return fmt.Errorf("resolve master remote adapter: %w", err)
+	}
+	followerRemote, err := p.router.For(followerBrokerType)
+	if err != nil {
+		return fmt.Errorf("resolve follower remote adapter: %w", err)
 	}
 
-	status := "FILLED"
-	if !result.Success {
-		status = "REJECTED"
+	masterAccount, err := masterRemote.GetAccountSnapshot(ctx, rel.masterBrokerAccountID.String())
+	if err != nil {
+		return fmt.Errorf("get master account snapshot: %w", err)
+	}
+	followerAccount, err := followerRemote.GetAccountSnapshot(ctx, rel.followerBrokerAccountID.String())
+	if err != nil {
+		return fmt.Errorf("get follower account snapshot: %w", err)
+	}
+	p.writeAccountSnapshotBestEffort(ctx, rel.masterBrokerAccountID, masterAccount)
+	p.writeAccountSnapshotBestEffort(ctx, rel.followerBrokerAccountID, followerAccount)
+
+	mmProfile, err := p.loadMoneyManagementProfile(ctx, rel.moneyManagementProfileID)
+	if err != nil {
+		return fmt.Errorf("load money management profile: %w", err)
+	}
+	riskProfile, err := p.loadRiskProfile(ctx, rel.riskProfileID)
+	if err != nil {
+		return fmt.Errorf("load risk profile: %w", err)
 	}
 
-	sizingSnapshot, err := json.Marshal(map[string]any{"method": "STUB_1_TO_1_COPY"})
+	fxCapture := &capturingFXRateProvider{inner: p.fx}
+	sizingResult, err := moneymgmt.ComputeLotSize(ctx, moneymgmt.Input{
+		Profile:         mmProfile,
+		MasterPosition:  event.Position,
+		MasterAccount:   masterAccount,
+		FollowerAccount: followerAccount,
+		SymbolSpec:      followerSpec,
+	}, fxCapture)
+	if err != nil {
+		return fmt.Errorf("compute lot size: %w", err)
+	}
+	if sizingResult.Rejected {
+		return p.recordSizingFailure(ctx, rel, signalID, idempotencyKey, sizingResult.RejectReason, event)
+	}
+
+	symbolExposure, err := p.SumOpenVolumeForSymbol(ctx, rel.id, event.Position.Symbol.CanonicalCode)
+	if err != nil {
+		return fmt.Errorf("sum open volume for symbol: %w", err)
+	}
+	totalExposure, err := p.SumOpenVolumeAllSymbols(ctx, rel.id)
+	if err != nil {
+		return fmt.Errorf("sum open volume all symbols: %w", err)
+	}
+	openCount, err := p.CountOpenPositions(ctx, rel.id)
+	if err != nil {
+		return fmt.Errorf("count open positions: %w", err)
+	}
+	guardResult := moneymgmt.ApplyRiskGuard(sizingResult.NormalizedLots, riskProfile.RiskProfile, followerSpec, moneymgmt.Exposure{
+		CurrentSymbolExposureLots: symbolExposure,
+		CurrentTotalExposureLots:  totalExposure,
+		OpenPositionCount:         openCount,
+	})
+	if guardResult.Rejected {
+		return p.recordSizingFailure(ctx, rel, signalID, idempotencyKey, guardResult.RejectReason, event)
+	}
+
+	followerDirection := applyCopyDirection(event.Position.Direction, rel.copyDirection)
+	slPrice := translateSlTp(event.Position.CurrentSLPrice, event.Position.OpenPrice, event.Position.Direction, followerDirection, masterSpec.PipSize, followerSpec.PipSize, "SL")
+	tpPrice := translateSlTp(event.Position.CurrentTPPrice, event.Position.OpenPrice, event.Position.Direction, followerDirection, masterSpec.PipSize, followerSpec.PipSize, "TP")
+
+	snapshot, err := buildSizingMethodSnapshot(mmProfile, masterAccount, followerAccount, event.Position, followerSpec,
+		fxCapture.calls, sizingResult, guardResult, rel.copyDirection, followerDirection, masterSpec.PipSize, followerSpec.PipSize, slPrice, tpPrice)
 	if err != nil {
 		return fmt.Errorf("marshal sizing_method_snapshot: %w", err)
 	}
 
+	// CLAIM -- durable, non-expiring guard, checked BEFORE any broker call.
 	var copiedTradeID uuid.UUID
 	err = p.pool.QueryRow(ctx, `
 		INSERT INTO copied_trades (
-			copy_relationship_id, trade_signal_id, idempotency_key, follower_broker_position_id,
-			status, computed_volume_lots, sizing_method_snapshot, requested_price, filled_price,
-			reject_reason, opened_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+			copy_relationship_id, trade_signal_id, idempotency_key, status,
+			computed_volume_lots, sizing_method_snapshot, requested_price
+		) VALUES ($1,$2,$3,'PENDING',$4,$5,$6)
 		ON CONFLICT (copy_relationship_id, idempotency_key) DO NOTHING
 		RETURNING id`,
-		rel.id, signalID, idempotencyKey, nullIfEmpty(result.BrokerPositionID),
-		status, orderRequest.VolumeLots, sizingSnapshot, event.Position.OpenPrice, result.FilledPrice,
-		nullIfEmpty(result.RejectReason), time.Now().UTC(),
+		rel.id, signalID, idempotencyKey, guardResult.Volume, snapshot, event.Position.OpenPrice,
 	).Scan(&copiedTradeID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			// ON CONFLICT DO NOTHING: already dispatched for this signal+relationship.
+			// Already claimed/processed for this signal+relationship --
+			// PlaceOrder must never be called.
 			return nil
 		}
-		return fmt.Errorf("insert copied_trades: %w", err)
+		return fmt.Errorf("claim copied_trades row: %w", err)
 	}
 
-	return p.publishCopiedTradeOpened(ctx, rel.id, result, event)
+	// PLACE -- only ever reached once, for this signal+relationship, ever.
+	orderRequest := domain.NormalizedOrderRequest{
+		IdempotencyKey:          idempotencyKey,
+		FollowerBrokerAccountID: rel.followerBrokerAccountID.String(),
+		Symbol:                  event.Position.Symbol,
+		Direction:               followerDirection,
+		VolumeLots:              guardResult.Volume,
+		SLPrice:                 slPrice,
+		TPPrice:                 tpPrice,
+		MaxSlippagePips:         riskProfile.MaxSlippagePips,
+		ClientOrderTag:          rel.id.String() + ":" + event.Position.BrokerPositionID,
+	}
+	result, placeErr := followerRemote.PlaceOrder(ctx, rel.followerBrokerAccountID.String(), orderRequest)
+
+	// FINALIZE.
+	status := "FILLED"
+	if placeErr != nil || !result.Success {
+		status = "REJECTED"
+	}
+	var slippagePips *float64
+	if placeErr == nil && result.Success && result.FilledPrice != nil && followerSpec.PipSize != 0 {
+		sp := math.Abs(*result.FilledPrice-event.Position.OpenPrice) / followerSpec.PipSize
+		slippagePips = &sp
+	}
+	_, updateErr := p.pool.Exec(ctx, `
+		UPDATE copied_trades
+		SET status=$1, follower_broker_position_id=$2, filled_price=$3, slippage_pips=$4, reject_reason=$5, opened_at=$6
+		WHERE id=$7`,
+		status, nullIfEmpty(result.BrokerPositionID), result.FilledPrice, slippagePips, nullIfEmpty(result.RejectReason), time.Now().UTC(), copiedTradeID,
+	)
+	if placeErr != nil {
+		return fmt.Errorf("PlaceOrder: %w", placeErr)
+	}
+	if updateErr != nil {
+		return fmt.Errorf("finalize copied_trades row: %w", updateErr)
+	}
+
+	if result.Success {
+		return p.publishCopiedTradeOpened(ctx, rel.id, result, event)
+	}
+	return p.publishCopiedTradeFailed(ctx, rel.id, result.RejectReason, event)
 }
 
-// hasConfirmedSymbolMapping is TICKET-103's real gate: a symbol is only
-// ever copied to a follower once a user/admin has explicitly confirmed the
-// mapping (nectrix_plan/docs/08-copy-trading-engine.md §8.4) -- an
-// auto-suggested-but-unconfirmed row (is_confirmed = FALSE) does not count.
-func (p *Pipeline) hasConfirmedSymbolMapping(ctx context.Context, followerBrokerAccountID uuid.UUID, canonicalSymbol string) (bool, error) {
-	var exists bool
+// loadConfirmedSymbolSpec widens the earlier hasConfirmedSymbolMapping into
+// a full SymbolSpec read, used identically for BOTH master and follower
+// accounts. symbol is passed in (not rebuilt from the row) since
+// symbol_mappings has no asset_class column -- rebuilding it from the DB row
+// would silently lose AssetClass; threading the event's own already-correct
+// NormalizedSymbol through avoids that.
+func (p *Pipeline) loadConfirmedSymbolSpec(ctx context.Context, brokerAccountID uuid.UUID, symbol domain.NormalizedSymbol) (domain.SymbolSpec, bool, error) {
+	spec := domain.SymbolSpec{Symbol: symbol}
 	err := p.pool.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1 FROM symbol_mappings
-			WHERE broker_account_id = $1 AND canonical_symbol = $2 AND is_confirmed = TRUE
-		)`, followerBrokerAccountID, canonicalSymbol).Scan(&exists)
-	if err != nil {
-		return false, fmt.Errorf("query symbol_mappings: %w", err)
+		SELECT broker_symbol_name, contract_size, lot_step, min_lot, max_lot, pip_size, digits, margin_currency
+		FROM symbol_mappings
+		WHERE broker_account_id = $1 AND canonical_symbol = $2 AND is_confirmed = TRUE`,
+		brokerAccountID, symbol.CanonicalCode,
+	).Scan(&spec.BrokerSymbolName, &spec.ContractSize, &spec.LotStep, &spec.MinLot, &spec.MaxLot, &spec.PipSize, &spec.Digits, &spec.MarginCurrency)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.SymbolSpec{}, false, nil
 	}
-	return exists, nil
+	if err != nil {
+		return domain.SymbolSpec{}, false, fmt.Errorf("query symbol_mappings: %w", err)
+	}
+	return spec, true, nil
+}
+
+// loadBrokerType resolves which real service (broker-adapters vs
+// mt5-bridge-gateway) a broker_accounts row lives on, so the Router knows
+// which RemoteAdapter to use.
+func (p *Pipeline) loadBrokerType(ctx context.Context, brokerAccountID uuid.UUID) (domain.BrokerType, error) {
+	var brokerType string
+	err := p.pool.QueryRow(ctx, `SELECT broker_type FROM broker_accounts WHERE id = $1`, brokerAccountID).Scan(&brokerType)
+	if err != nil {
+		return "", fmt.Errorf("query broker_accounts: %w", err)
+	}
+	return domain.BrokerType(brokerType), nil
+}
+
+// loadMoneyManagementProfile reads a money_management_profiles row directly
+// -- Copy Engine and Core App (Java) both read the same Postgres tables
+// independently, mirroring the established multi-language shared-database
+// pattern already used for symbol_mappings/copied_trades.
+func (p *Pipeline) loadMoneyManagementProfile(ctx context.Context, id uuid.UUID) (moneymgmt.Profile, error) {
+	var profile moneymgmt.Profile
+	var method, roundingMode string
+	var fixedLotSize, multiplier, riskPercent *float64
+	var customFormulaExpr *string
+	err := p.pool.QueryRow(ctx, `
+		SELECT method, fixed_lot_size, multiplier, risk_percent, custom_formula_expr, rounding_mode
+		FROM money_management_profiles WHERE id = $1`, id,
+	).Scan(&method, &fixedLotSize, &multiplier, &riskPercent, &customFormulaExpr, &roundingMode)
+	if err != nil {
+		return moneymgmt.Profile{}, fmt.Errorf("query money_management_profiles: %w", err)
+	}
+	profile.Method = moneymgmt.Method(method)
+	profile.FixedLotSize = fixedLotSize
+	profile.Multiplier = multiplier
+	profile.RiskPercent = riskPercent
+	profile.CustomFormulaExpr = customFormulaExpr
+	profile.RoundingMode = moneymgmt.RoundingMode(roundingMode)
+	return profile, nil
+}
+
+// dispatchRiskProfile bundles moneymgmt.RiskProfile (the caps ApplyRiskGuard
+// reads) with max_slippage_pips, which ApplyRiskGuard itself has no use for
+// but the order request does.
+type dispatchRiskProfile struct {
+	moneymgmt.RiskProfile
+	MaxSlippagePips float64
+}
+
+func (p *Pipeline) loadRiskProfile(ctx context.Context, id uuid.UUID) (dispatchRiskProfile, error) {
+	var profile dispatchRiskProfile
+	err := p.pool.QueryRow(ctx, `
+		SELECT max_lot_per_trade, max_open_positions, max_exposure_per_symbol_lots, max_total_exposure_lots, max_slippage_pips
+		FROM risk_profiles WHERE id = $1`, id,
+	).Scan(&profile.MaxLotPerTrade, &profile.MaxOpenPositions, &profile.MaxExposurePerSymbolLots, &profile.MaxTotalExposureLots, &profile.MaxSlippagePips)
+	if err != nil {
+		return dispatchRiskProfile{}, fmt.Errorf("query risk_profiles: %w", err)
+	}
+	return profile, nil
+}
+
+// applyCopyDirection is appendix-a's applyCopyDirection, using the real,
+// already-migrated copy_relationships.copy_direction column no code had
+// read until now.
+func applyCopyDirection(masterDirection domain.TradeDirection, copyDirection string) domain.TradeDirection {
+	if copyDirection != "REVERSE" {
+		return masterDirection
+	}
+	if masterDirection == domain.TradeDirectionBuy {
+		return domain.TradeDirectionSell
+	}
+	return domain.TradeDirectionBuy
+}
+
+func signOf(direction domain.TradeDirection) float64 {
+	if direction == domain.TradeDirectionSell {
+		return -1
+	}
+	return 1
+}
+
+// translateSlTp is docs/09-money-management-risk-formulas.md §9.6's SL/TP
+// pip-distance translation. Two real design decisions beyond the literal
+// doc text:
+//
+//   - follower open price: a Market order's real fill price is only known
+//     AFTER PlaceOrder returns, but SL/TP must be submitted WITH the request
+//     (cTrader's StopLoss/TakeProfit are absolute prices set at request
+//     time). Appendix-A's own translateSlTp call passes no follower price at
+//     all -- confirming the intended approximation is the master's own
+//     OpenPrice as the stand-in for follower_open_price, consistent with
+//     Market mode's own philosophy (submit immediately, record actual
+//     divergence as slippage after the fact).
+//   - REVERSE relationships: uses the master's own direction to extract a
+//     directionless distance magnitude, but the follower's own
+//     (post-applyCopyDirection) direction to reconstruct the follower's
+//     SL/TP -- required so a REVERSE follower's stop lands on the correct
+//     side of its own (opposite) position. The doc doesn't address this;
+//     this is a considered extension, not a silent assumption.
+func translateSlTp(masterPrice *float64, masterOpenPrice float64, masterDirection, followerDirection domain.TradeDirection, masterPipSize, followerPipSize float64, side string) *float64 {
+	if masterPrice == nil || masterPipSize == 0 || followerPipSize == 0 {
+		return nil
+	}
+	masterSign := signOf(masterDirection)
+	followerSign := signOf(followerDirection)
+
+	var masterDistancePrice float64
+	if side == "SL" {
+		masterDistancePrice = masterSign * (masterOpenPrice - *masterPrice)
+	} else {
+		masterDistancePrice = masterSign * (*masterPrice - masterOpenPrice)
+	}
+	masterDistancePips := masterDistancePrice / masterPipSize
+
+	followerOpenPriceApprox := masterOpenPrice // see doc comment above
+	var followerPrice float64
+	if side == "SL" {
+		followerPrice = followerOpenPriceApprox - followerSign*(masterDistancePips*followerPipSize)
+	} else {
+		followerPrice = followerOpenPriceApprox + followerSign*(masterDistancePips*followerPipSize)
+	}
+	return &followerPrice
+}
+
+// capturingFXRateProvider records every (from, to, rate) lookup
+// moneymgmt.ComputeLotSize actually makes, purely so sizing_method_snapshot
+// can include the real FX rate(s) used (AC2's "reproduce by hand" needs
+// this) -- a dispatch.go-local decorator, does not touch moneymgmt's own
+// already-committed public API.
+type fxRateCall struct {
+	From, To string
+	Rate     float64
+}
+
+type capturingFXRateProvider struct {
+	inner moneymgmt.FXRateProvider
+	calls []fxRateCall
+}
+
+func (c *capturingFXRateProvider) Rate(ctx context.Context, from, to string) (float64, error) {
+	rate, err := c.inner.Rate(ctx, from, to)
+	if err == nil {
+		c.calls = append(c.calls, fxRateCall{From: from, To: to, Rate: rate})
+	}
+	return rate, err
+}
+
+// buildSizingMethodSnapshot is TICKET-106 AC2's exact requirement: enough
+// detail to reproduce the computed volume by hand from the stored JSON
+// alone.
+func buildSizingMethodSnapshot(
+	profile moneymgmt.Profile,
+	masterAccount, followerAccount domain.AccountSnapshot,
+	masterPosition domain.NormalizedPosition,
+	followerSymbolSpec domain.SymbolSpec,
+	fxRatesUsed []fxRateCall,
+	sizingResult moneymgmt.Result,
+	guardResult moneymgmt.RiskGuardResult,
+	copyDirection string,
+	appliedDirection domain.TradeDirection,
+	masterPipSize, followerPipSize float64,
+	slPrice, tpPrice *float64,
+) ([]byte, error) {
+	snapshot := map[string]any{
+		"method":                  profile.Method,
+		"profile":                 profile,
+		"masterAccountSnapshot":   masterAccount,
+		"followerAccountSnapshot": followerAccount,
+		"masterPosition":          masterPosition,
+		"followerSymbolSpec":      followerSymbolSpec,
+		"fxRatesUsed":             fxRatesUsed,
+		"rawLots":                 sizingResult.RawLots,
+		"normalizedLots":          sizingResult.NormalizedLots,
+		"riskGuard": map[string]any{
+			"finalVolume":  guardResult.Volume,
+			"rejected":     guardResult.Rejected,
+			"rejectReason": guardResult.RejectReason,
+		},
+		"copyDirection":    copyDirection,
+		"appliedDirection": appliedDirection,
+		"slTpTranslation": map[string]any{
+			"masterPipSize":   masterPipSize,
+			"followerPipSize": followerPipSize,
+			"slPrice":         slPrice,
+			"tpPrice":         tpPrice,
+		},
+	}
+	return json.Marshal(snapshot)
+}
+
+// writeAccountSnapshotBestEffort gives account_snapshots (migrated since
+// TICKET-004, never written to by any code until now) a real writer -- free
+// reuse of data already fetched for sizing. Best-effort, logged on failure,
+// never blocks or reverses the dispatch outcome, mirroring
+// reconcile.Loop.reportStatus's own established precedent.
+func (p *Pipeline) writeAccountSnapshotBestEffort(ctx context.Context, brokerAccountID uuid.UUID, snapshot domain.AccountSnapshot) {
+	_, err := p.pool.Exec(ctx, `
+		INSERT INTO account_snapshots (broker_account_id, balance, equity, used_margin, free_margin, margin_level_pct, captured_at)
+		VALUES ($1,$2,$3,$4,$5,$6,now())`,
+		brokerAccountID, snapshot.Balance, snapshot.Equity, snapshot.UsedMargin, snapshot.FreeMargin, snapshot.MarginLevelPct,
+	)
+	if err != nil {
+		slog.Default().Error("pipeline: best-effort account_snapshots write failed", "brokerAccountId", brokerAccountID, "error", err)
+	}
 }
 
 // recordUnmappedSymbolFailure is appendix-a-copy-engine-pseudocode.md's
@@ -187,9 +513,14 @@ func (p *Pipeline) hasConfirmedSymbolMapping(ctx context.Context, followerBroker
 // convention as the real dispatch path (ON CONFLICT DO NOTHING), so a
 // redelivered signal doesn't record (or publish) the same failure twice.
 func (p *Pipeline) recordUnmappedSymbolFailure(ctx context.Context, rel relationship, signalID uuid.UUID, idempotencyKey string, event domain.NormalizedTradeEvent) error {
-	const rejectReason = "UNMAPPED_SYMBOL"
+	return p.recordSizingFailure(ctx, rel, signalID, idempotencyKey, "UNMAPPED_SYMBOL", event)
+}
 
-	sizingSnapshot, err := json.Marshal(map[string]any{"method": "UNMAPPED_SYMBOL_SKIPPED"})
+// recordSizingFailure is the shared "flag and skip" path for every
+// pre-PlaceOrder rejection (unmapped symbol, ComputeLotSize rejection,
+// ApplyRiskGuard rejection) -- never calls PlaceOrder.
+func (p *Pipeline) recordSizingFailure(ctx context.Context, rel relationship, signalID uuid.UUID, idempotencyKey string, rejectReason string, event domain.NormalizedTradeEvent) error {
+	sizingSnapshot, err := json.Marshal(map[string]any{"method": rejectReason})
 	if err != nil {
 		return fmt.Errorf("marshal sizing_method_snapshot: %w", err)
 	}
@@ -209,7 +540,7 @@ func (p *Pipeline) recordUnmappedSymbolFailure(ctx context.Context, rel relation
 			// ON CONFLICT DO NOTHING: already recorded for this signal+relationship.
 			return nil
 		}
-		return fmt.Errorf("insert copied_trades (unmapped symbol): %w", err)
+		return fmt.Errorf("insert copied_trades (%s): %w", rejectReason, err)
 	}
 
 	return p.publishCopiedTradeFailed(ctx, rel.id, rejectReason, event)

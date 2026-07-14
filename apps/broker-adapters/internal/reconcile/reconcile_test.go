@@ -451,3 +451,52 @@ func TestConnectLocked_SuggestsSymbolMappingsBeforeReportingConnected(t *testing
 		t.Fatalf("event order = %v, want [suggest connected]", events)
 	}
 }
+
+// TICKET-106: HandleFor is the only broker_accounts.id -> ConnectionHandle
+// registry this service has -- the new internal PlaceOrder/GetAccountSnapshot
+// HTTP routes depend on it to resolve a remote caller's account ID.
+func TestHandleFor_ReturnsConnectedHandle(t *testing.T) {
+	lister := &fakeLister{accounts: []reconcile.BrokerAccountRef{{ID: "acc-1"}}}
+	adapter := newFakeAdapter()
+	loop := reconcile.New(lister, newFakeCredentialFetcher(), newFakeStatusReporter(), nil, nil, adapter, noopOnEvent, time.Hour, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go loop.Run(ctx)
+	waitFor(t, func() bool { return adapter.isConnected("acc-1") })
+
+	handle, ok := loop.HandleFor("acc-1")
+	if !ok {
+		t.Fatal("HandleFor(\"acc-1\") returned ok=false, want a connected handle")
+	}
+	if handle.AccountID != "acc-1" || handle.BrokerType != domain.BrokerTypeCTrader {
+		t.Fatalf("HandleFor(\"acc-1\") = %+v, want AccountID=acc-1 BrokerType=CTRADER", handle)
+	}
+}
+
+func TestHandleFor_UnknownAccount_ReturnsFalse(t *testing.T) {
+	lister := &fakeLister{}
+	loop := reconcile.New(lister, newFakeCredentialFetcher(), newFakeStatusReporter(), nil, nil, newFakeAdapter(), noopOnEvent, time.Hour, nil)
+
+	if _, ok := loop.HandleFor("never-connected"); ok {
+		t.Fatal("HandleFor for an unknown account returned ok=true, want false")
+	}
+}
+
+func TestHandleFor_DisconnectedAccount_ReturnsFalse(t *testing.T) {
+	lister := &fakeLister{accounts: []reconcile.BrokerAccountRef{{ID: "acc-1"}}}
+	adapter := newFakeAdapter()
+	loop := reconcile.New(lister, newFakeCredentialFetcher(), newFakeStatusReporter(), nil, nil, adapter, noopOnEvent, 20*time.Millisecond, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go loop.Run(ctx)
+	waitFor(t, func() bool { return adapter.isConnected("acc-1") })
+
+	lister.setAccounts(nil)
+	waitFor(t, func() bool { return adapter.connectedCount() == 0 })
+
+	if _, ok := loop.HandleFor("acc-1"); ok {
+		t.Fatal("HandleFor for a since-disconnected account returned ok=true, want false")
+	}
+}

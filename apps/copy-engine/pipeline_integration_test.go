@@ -20,7 +20,9 @@ import (
 	"time"
 
 	"github.com/avison9/nectrix/copy-engine/internal/httpapi"
+	"github.com/avison9/nectrix/copy-engine/internal/moneymgmt"
 	"github.com/avison9/nectrix/copy-engine/internal/pipeline"
+	"github.com/avison9/nectrix/copy-engine/internal/remoteadapter"
 	"github.com/avison9/nectrix/copy-engine/internal/stubadapter"
 	eventsv1 "github.com/avison9/nectrix/event-contracts/go/gen/nectrix/events/v1"
 	domain "github.com/avison9/nectrix/go-domain"
@@ -134,6 +136,16 @@ func runAC4Case(t *testing.T, adapter domain.BrokerAdapter) {
 	t.Cleanup(func() { writer.Close() })
 
 	masterAccountID, followerAccountID, relationshipID := seedFixture(t, ctx, pool)
+	// TICKET-106: dispatch.go now reads broker_accounts.broker_type to pick
+	// which remoteadapter.RemoteAdapter to route through -- seedFixture
+	// always seeds 'CTRADER' (matching every OTHER test's actual adapter),
+	// so the StubBrokerAdapterVariant sub-test (BrokerType MT5) needs its
+	// fixture rows updated to match the adapter it's actually exercising,
+	// or routing would look for MT5 in a router keyed by whatever
+	// buildTestServer registers for adapter.BrokerType() while Postgres
+	// still says CTRADER.
+	mustExec(t, ctx, pool, `UPDATE broker_accounts SET broker_type = $1 WHERE id IN ($2, $3)`,
+		string(adapter.BrokerType()), masterAccountID, followerAccountID)
 	server := buildTestServer(t, ctx, pool, deduper, writer, adapter, masterAccountID, followerAccountID)
 
 	brokerPositionID := "ac4-pos-" + uuid.NewString()
@@ -227,7 +239,20 @@ func buildTestServer(t *testing.T, ctx context.Context, pool *pgxpool.Pool, dedu
 		t.Fatalf("connect follower handle: %v", err)
 	}
 
-	pl := pipeline.New(pool, deduper, adapter, followerHandle, kafkaWriter)
+	// TICKET-106: dispatch.go now routes every GetAccountSnapshot/PlaceOrder
+	// call through a remoteadapter.Router -- LocalAdapter wraps this exact
+	// adapter/handle pair as a RemoteAdapter, so these tests keep running
+	// the EXACT SAME dispatch.go code the real HTTP path runs, no network
+	// hop involved (both master and follower are on the same stub adapter/
+	// BrokerType in every fixture here).
+	local := remoteadapter.NewLocalAdapter(adapter, map[string]domain.ConnectionHandle{
+		masterAccountID:   masterHandle,
+		followerAccountID: followerHandle,
+	})
+	router := remoteadapter.NewRouter(map[domain.BrokerType]remoteadapter.RemoteAdapter{
+		adapter.BrokerType(): local,
+	})
+	pl := pipeline.New(pool, deduper, router, moneymgmt.NewFrankfurterClient(nil, nil), kafkaWriter)
 
 	sub, err := adapter.StreamTradeEvents(ctx, masterHandle, pl.HandleEvent)
 	if err != nil {
@@ -313,17 +338,29 @@ func seedFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (masterA
 		VALUES ($1,$2,$3,$4,$5,$6,$7,'ACTIVE',20.00,'BROKER_PARTNERSHIP',$8)`,
 		relationshipID, masterProfileID, masterAccountID, followerUserID, followerAccountID, mmProfileID, riskProfileID, followRequestID)
 
-	// TICKET-103: the dispatcher now gates every dispatch on a CONFIRMED
+	// TICKET-103: the dispatcher gates every dispatch on a CONFIRMED
 	// symbol_mappings row for the follower account — required, not just
 	// additive, since every existing test here injects a synthetic event
 	// via stubadapter.InjectEventParams, whose Symbol defaults to "EURUSD"
 	// (see internal/stubadapter/inject.go's buildEvent) when unset, as it
 	// always is here. Without this row, every AC test above would now dead-
 	// end at the new UNMAPPED_SYMBOL skip instead of reaching PlaceOrder.
+	//
+	// TICKET-106: the master's own account now needs an equally CONFIRMED
+	// mapping too — its pip_size/contract_size are direct inputs to §9.6's
+	// SL/TP translation and to RISK_PERCENT sizing, and an unconfirmed
+	// auto-suggestion is exactly the "confidently wrong guess" TICKET-103's
+	// confirmation gate exists to prevent, on whichever side reads it. This
+	// is a genuine, real onboarding gap this ticket surfaces: masters were
+	// never previously required to confirm their own mappings.
 	mustExec(t, ctx, pool, `
 		INSERT INTO symbol_mappings (broker_account_id, canonical_symbol, broker_symbol_name, contract_size, lot_step, min_lot, max_lot, pip_size, digits, margin_currency, is_confirmed)
 		VALUES ($1,'EURUSD','EURUSD',100000,0.01,0.01,100,0.0001,5,'USD',TRUE)`,
 		followerAccountID)
+	mustExec(t, ctx, pool, `
+		INSERT INTO symbol_mappings (broker_account_id, canonical_symbol, broker_symbol_name, contract_size, lot_step, min_lot, max_lot, pip_size, digits, margin_currency, is_confirmed)
+		VALUES ($1,'EURUSD','EURUSD',100000,0.01,0.01,100,0.0001,5,'USD',TRUE)`,
+		masterAccountID)
 
 	return masterAccountID, followerAccountID, relationshipID
 }

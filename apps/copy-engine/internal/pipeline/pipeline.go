@@ -1,10 +1,9 @@
-// Package pipeline is TICKET-009's minimal Copy Engine pipeline shape:
-// Normalizer -> Dedup Filter -> Relationship Matcher -> Order Dispatcher ->
-// publish, built directly off docs/08-copy-trading-engine.md §8.2 and
-// Appendix A.1-A.3's pseudocode. Money-management/risk-guard formulas are
-// genuinely out of scope (Phase 1, docs/09-money-management-risk-formulas.md)
-// -- the Order Dispatcher here does a straight 1:1 volume copy instead of
-// running a real sizing formula.
+// Package pipeline is the Copy Engine pipeline: Normalizer -> Dedup Filter ->
+// Relationship Matcher -> Money Management -> Risk Guard -> Order Dispatcher
+// -> publish, built directly off docs/08-copy-trading-engine.md §8.2 and
+// Appendix A.1-A.3's pseudocode. TICKET-106 wires the real sizing/risk-guard/
+// SL-TP/idempotency stages into the Order Dispatcher, replacing the earlier
+// STUB_1_TO_1_COPY placeholder.
 package pipeline
 
 import (
@@ -14,7 +13,9 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/avison9/nectrix/copy-engine/internal/moneymgmt"
 	"github.com/avison9/nectrix/copy-engine/internal/observability"
+	"github.com/avison9/nectrix/copy-engine/internal/remoteadapter"
 	domain "github.com/avison9/nectrix/go-domain"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -36,22 +37,23 @@ func finishSpan(span trace.Span, err error) {
 	span.End()
 }
 
-// Pipeline holds everything HandleEvent needs. followerHandle is a single,
-// pre-connected BrokerAdapter handle for the one follower account this
-// stub-era pipeline dispatches to -- real multi-follower connection
-// management is Phase 1 scope; dispatchOrder (see dispatch.go) refuses to
-// silently misroute an order to the wrong account if a relationship's
-// follower doesn't match this handle.
+// Pipeline holds everything HandleEvent needs. TICKET-106: the single
+// shared adapter/followerHandle fields from the stub era are replaced by
+// router, which resolves the right RemoteAdapter per relationship's actual
+// master/follower domain.BrokerType at dispatch time -- master and follower
+// accounts in one relationship may be on different broker types entirely
+// (the whole point of the cross-broker acceptance criteria), so a single
+// fixed adapter/handle pair can no longer be injected at construction.
 type Pipeline struct {
-	pool           *pgxpool.Pool
-	deduper        domain.Deduper
-	adapter        domain.BrokerAdapter
-	followerHandle domain.ConnectionHandle
-	kafkaWriter    *kafka.Writer
+	pool        *pgxpool.Pool
+	deduper     domain.Deduper
+	router      *remoteadapter.Router
+	fx          moneymgmt.FXRateProvider
+	kafkaWriter *kafka.Writer
 }
 
-func New(pool *pgxpool.Pool, deduper domain.Deduper, adapter domain.BrokerAdapter, followerHandle domain.ConnectionHandle, kafkaWriter *kafka.Writer) *Pipeline {
-	return &Pipeline{pool: pool, deduper: deduper, adapter: adapter, followerHandle: followerHandle, kafkaWriter: kafkaWriter}
+func New(pool *pgxpool.Pool, deduper domain.Deduper, router *remoteadapter.Router, fx moneymgmt.FXRateProvider, kafkaWriter *kafka.Writer) *Pipeline {
+	return &Pipeline{pool: pool, deduper: deduper, router: router, fx: fx, kafkaWriter: kafkaWriter}
 }
 
 // HandleEvent is the onEvent callback registered via

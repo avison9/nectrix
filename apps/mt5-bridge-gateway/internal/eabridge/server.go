@@ -15,6 +15,7 @@ package eabridge
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -24,6 +25,13 @@ import (
 	domain "github.com/avison9/nectrix/go-domain"
 	"github.com/gorilla/websocket"
 )
+
+// ErrNoSession is a sentinel wrapped by mtadapter.sessionFor's error when no
+// live EA session is currently paired for the requested broker_accounts.id
+// -- TICKET-106: lets internal/internalapi's new HTTP handlers distinguish
+// "not connected" (404) from any other real adapter failure (502) via
+// errors.Is, rather than string-matching an error message.
+var ErrNoSession = errors.New("eabridge: no live EA session for broker account")
 
 // handshakeTimeout bounds how long a freshly-upgraded socket has to send
 // its hello message before the server gives up and closes it — protects

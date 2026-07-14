@@ -11,6 +11,7 @@ import (
 
 	"github.com/avison9/nectrix/broker-adapters/internal/ctrader"
 	"github.com/avison9/nectrix/broker-adapters/internal/internalapi"
+	domain "github.com/avison9/nectrix/go-domain"
 )
 
 type fakeAccountLister struct {
@@ -22,6 +23,69 @@ type fakeAccountLister struct {
 func (f *fakeAccountLister) ListAccountsByAccessToken(ctx context.Context, accessToken string) ([]ctrader.AccountSummary, error) {
 	f.gotToken = accessToken
 	return f.accounts, f.err
+}
+
+// fakeHandleProvider mirrors *reconcile.Loop.HandleFor without needing a
+// real Loop.
+type fakeHandleProvider struct {
+	handles map[string]domain.ConnectionHandle
+}
+
+func (f *fakeHandleProvider) HandleFor(brokerAccountID string) (domain.ConnectionHandle, bool) {
+	h, ok := f.handles[brokerAccountID]
+	return h, ok
+}
+
+// fakeBrokerAdapter implements the full domain.BrokerAdapter interface;
+// only GetAccountSnapshot/PlaceOrder are exercised by this package, the rest
+// are unused stubs.
+type fakeBrokerAdapter struct {
+	snapshot    domain.AccountSnapshot
+	snapshotErr error
+	gotSnapshotHandle domain.ConnectionHandle
+
+	orderResult domain.NormalizedOrderResult
+	orderErr    error
+	gotOrder    domain.NormalizedOrderRequest
+	gotOrderHandle domain.ConnectionHandle
+}
+
+func (f *fakeBrokerAdapter) BrokerType() domain.BrokerType { return domain.BrokerTypeCTrader }
+func (f *fakeBrokerAdapter) Connect(ctx context.Context, credentials domain.BrokerCredentials) (domain.ConnectionHandle, error) {
+	return domain.ConnectionHandle{}, errors.New("not implemented")
+}
+func (f *fakeBrokerAdapter) Disconnect(ctx context.Context, handle domain.ConnectionHandle) error {
+	return errors.New("not implemented")
+}
+func (f *fakeBrokerAdapter) HealthCheck(ctx context.Context, handle domain.ConnectionHandle) (domain.ConnectionHealth, error) {
+	return domain.ConnectionHealth{}, errors.New("not implemented")
+}
+func (f *fakeBrokerAdapter) GetAccountSnapshot(ctx context.Context, handle domain.ConnectionHandle) (domain.AccountSnapshot, error) {
+	f.gotSnapshotHandle = handle
+	return f.snapshot, f.snapshotErr
+}
+func (f *fakeBrokerAdapter) GetOpenPositions(ctx context.Context, handle domain.ConnectionHandle) ([]domain.NormalizedPosition, error) {
+	return nil, errors.New("not implemented")
+}
+func (f *fakeBrokerAdapter) StreamTradeEvents(ctx context.Context, handle domain.ConnectionHandle, onEvent func(context.Context, domain.NormalizedTradeEvent) error) (domain.Subscription, error) {
+	return nil, errors.New("not implemented")
+}
+func (f *fakeBrokerAdapter) PlaceOrder(ctx context.Context, handle domain.ConnectionHandle, order domain.NormalizedOrderRequest) (domain.NormalizedOrderResult, error) {
+	f.gotOrderHandle = handle
+	f.gotOrder = order
+	return f.orderResult, f.orderErr
+}
+func (f *fakeBrokerAdapter) ModifyPosition(ctx context.Context, handle domain.ConnectionHandle, positionID string, changes domain.SLTPChange) (domain.NormalizedOrderResult, error) {
+	return domain.NormalizedOrderResult{}, errors.New("not implemented")
+}
+func (f *fakeBrokerAdapter) ClosePosition(ctx context.Context, handle domain.ConnectionHandle, positionID string, volume *float64) (domain.NormalizedOrderResult, error) {
+	return domain.NormalizedOrderResult{}, errors.New("not implemented")
+}
+func (f *fakeBrokerAdapter) ResolveSymbol(ctx context.Context, brokerSymbol string) (domain.NormalizedSymbol, error) {
+	return domain.NormalizedSymbol{}, errors.New("not implemented")
+}
+func (f *fakeBrokerAdapter) GetSymbolSpecification(ctx context.Context, symbol domain.NormalizedSymbol) (domain.SymbolSpec, error) {
+	return domain.SymbolSpec{}, errors.New("not implemented")
 }
 
 const sharedSecret = "test-internal-token"
@@ -37,11 +101,22 @@ func doRequest(t *testing.T, mux http.Handler, token, body string) *httptest.Res
 	return rec
 }
 
+func doPathRequest(t *testing.T, mux http.Handler, method, path, token, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	if token != "" {
+		req.Header.Set("X-Internal-Service-Token", token)
+	}
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
 func TestListAccounts_Success(t *testing.T) {
 	lister := &fakeAccountLister{accounts: []ctrader.AccountSummary{
 		{CtidTraderAccountID: 42, IsLive: false, TraderLogin: 12345, BrokerTitleShort: "IC Markets"},
 	}}
-	mux := internalapi.NewMux(lister, sharedSecret, nil)
+	mux := internalapi.NewMux(lister, &fakeHandleProvider{}, &fakeBrokerAdapter{}, sharedSecret, nil)
 
 	rec := doRequest(t, mux, sharedSecret, `{"accessToken":"tok-1"}`)
 	if rec.Code != http.StatusOK {
@@ -68,7 +143,7 @@ func TestListAccounts_Success(t *testing.T) {
 
 func TestListAccounts_MissingOrWrongSharedSecretRejected(t *testing.T) {
 	lister := &fakeAccountLister{}
-	mux := internalapi.NewMux(lister, sharedSecret, nil)
+	mux := internalapi.NewMux(lister, &fakeHandleProvider{}, &fakeBrokerAdapter{}, sharedSecret, nil)
 
 	for _, token := range []string{"", "wrong-token"} {
 		rec := doRequest(t, mux, token, `{"accessToken":"tok-1"}`)
@@ -80,7 +155,7 @@ func TestListAccounts_MissingOrWrongSharedSecretRejected(t *testing.T) {
 
 func TestListAccounts_EmptySharedSecretConfigRejectsEverything(t *testing.T) {
 	lister := &fakeAccountLister{}
-	mux := internalapi.NewMux(lister, "", nil)
+	mux := internalapi.NewMux(lister, &fakeHandleProvider{}, &fakeBrokerAdapter{}, "", nil)
 
 	rec := doRequest(t, mux, "", `{"accessToken":"tok-1"}`)
 	if rec.Code != http.StatusUnauthorized {
@@ -90,7 +165,7 @@ func TestListAccounts_EmptySharedSecretConfigRejectsEverything(t *testing.T) {
 
 func TestListAccounts_MissingAccessTokenRejected(t *testing.T) {
 	lister := &fakeAccountLister{}
-	mux := internalapi.NewMux(lister, sharedSecret, nil)
+	mux := internalapi.NewMux(lister, &fakeHandleProvider{}, &fakeBrokerAdapter{}, sharedSecret, nil)
 
 	rec := doRequest(t, mux, sharedSecret, `{}`)
 	if rec.Code != http.StatusBadRequest {
@@ -100,7 +175,7 @@ func TestListAccounts_MissingAccessTokenRejected(t *testing.T) {
 
 func TestListAccounts_InvalidJSONRejected(t *testing.T) {
 	lister := &fakeAccountLister{}
-	mux := internalapi.NewMux(lister, sharedSecret, nil)
+	mux := internalapi.NewMux(lister, &fakeHandleProvider{}, &fakeBrokerAdapter{}, sharedSecret, nil)
 
 	rec := doRequest(t, mux, sharedSecret, `not json`)
 	if rec.Code != http.StatusBadRequest {
@@ -110,9 +185,135 @@ func TestListAccounts_InvalidJSONRejected(t *testing.T) {
 
 func TestListAccounts_ListerErrorSurfacesAsBadGateway(t *testing.T) {
 	lister := &fakeAccountLister{err: errors.New("ctrader: no accounts found")}
-	mux := internalapi.NewMux(lister, sharedSecret, nil)
+	mux := internalapi.NewMux(lister, &fakeHandleProvider{}, &fakeBrokerAdapter{}, sharedSecret, nil)
 
 	rec := doRequest(t, mux, sharedSecret, `{"accessToken":"tok-1"}`)
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", rec.Code)
+	}
+}
+
+// --- TICKET-106: GET .../snapshot ---
+
+func TestGetAccountSnapshot_Success(t *testing.T) {
+	handle := domain.ConnectionHandle{ID: "h1", BrokerType: domain.BrokerTypeCTrader, AccountID: "acct-1"}
+	adapter := &fakeBrokerAdapter{snapshot: domain.AccountSnapshot{BrokerAccountID: "acct-1", Currency: "USD", Balance: 10000, Equity: 9800}}
+	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, adapter, sharedSecret, nil)
+
+	rec := doPathRequest(t, mux, http.MethodGet, "/internal/ctrader/accounts/acct-1/snapshot", sharedSecret, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body=%s", rec.Code, rec.Body.String())
+	}
+	if adapter.gotSnapshotHandle != handle {
+		t.Fatalf("GetAccountSnapshot called with handle %+v, want %+v", adapter.gotSnapshotHandle, handle)
+	}
+
+	var got domain.AccountSnapshot
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if got.Balance != 10000 || got.Equity != 9800 {
+		t.Fatalf("got snapshot %+v, want balance=10000 equity=9800", got)
+	}
+}
+
+func TestGetAccountSnapshot_UnknownAccount_NotFound(t *testing.T) {
+	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{}, &fakeBrokerAdapter{}, sharedSecret, nil)
+
+	rec := doPathRequest(t, mux, http.MethodGet, "/internal/ctrader/accounts/unknown/snapshot", sharedSecret, "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+func TestGetAccountSnapshot_AdapterError_BadGateway(t *testing.T) {
+	handle := domain.ConnectionHandle{AccountID: "acct-1"}
+	adapter := &fakeBrokerAdapter{snapshotErr: errors.New("ctrader: connection dropped")}
+	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, adapter, sharedSecret, nil)
+
+	rec := doPathRequest(t, mux, http.MethodGet, "/internal/ctrader/accounts/acct-1/snapshot", sharedSecret, "")
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", rec.Code)
+	}
+}
+
+func TestGetAccountSnapshot_MissingToken_Unauthorized(t *testing.T) {
+	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{}, &fakeBrokerAdapter{}, sharedSecret, nil)
+
+	rec := doPathRequest(t, mux, http.MethodGet, "/internal/ctrader/accounts/acct-1/snapshot", "", "")
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+}
+
+// --- TICKET-106: POST .../orders ---
+
+func TestPlaceOrder_Success(t *testing.T) {
+	handle := domain.ConnectionHandle{ID: "h1", BrokerType: domain.BrokerTypeCTrader, AccountID: "acct-1"}
+	filledPrice := 1.10005
+	adapter := &fakeBrokerAdapter{orderResult: domain.NormalizedOrderResult{Success: true, BrokerPositionID: "pos-1", FilledPrice: &filledPrice}}
+	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, adapter, sharedSecret, nil)
+
+	body := `{"platform":"","order":{"idempotencyKey":"idem-1","followerBrokerAccountId":"acct-1","symbol":{"canonicalCode":"EURUSD","assetClass":"FX"},"direction":"BUY","volumeLots":1.5,"maxSlippagePips":5,"clientOrderTag":"rel-1:pos-1"}}`
+	rec := doPathRequest(t, mux, http.MethodPost, "/internal/ctrader/accounts/acct-1/orders", sharedSecret, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body=%s", rec.Code, rec.Body.String())
+	}
+	if adapter.gotOrderHandle != handle {
+		t.Fatalf("PlaceOrder called with handle %+v, want %+v", adapter.gotOrderHandle, handle)
+	}
+	if adapter.gotOrder.VolumeLots != 1.5 || adapter.gotOrder.IdempotencyKey != "idem-1" {
+		t.Fatalf("PlaceOrder called with unexpected order: %+v", adapter.gotOrder)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if _, hasRaw := got["rawBrokerResponse"]; hasRaw {
+		t.Fatalf("response must not include rawBrokerResponse, got %v", got)
+	}
+	if got["brokerPositionId"] != "pos-1" {
+		t.Fatalf("brokerPositionId = %v, want pos-1", got["brokerPositionId"])
+	}
+}
+
+func TestPlaceOrder_UnknownAccount_NotFound(t *testing.T) {
+	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{}, &fakeBrokerAdapter{}, sharedSecret, nil)
+
+	rec := doPathRequest(t, mux, http.MethodPost, "/internal/ctrader/accounts/unknown/orders", sharedSecret, `{"order":{}}`)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+func TestPlaceOrder_MismatchedFollowerAccountId_BadRequest(t *testing.T) {
+	handle := domain.ConnectionHandle{AccountID: "acct-1"}
+	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, &fakeBrokerAdapter{}, sharedSecret, nil)
+
+	body := `{"order":{"followerBrokerAccountId":"acct-2"}}`
+	rec := doPathRequest(t, mux, http.MethodPost, "/internal/ctrader/accounts/acct-1/orders", sharedSecret, body)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestPlaceOrder_InvalidJSON_BadRequest(t *testing.T) {
+	handle := domain.ConnectionHandle{AccountID: "acct-1"}
+	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, &fakeBrokerAdapter{}, sharedSecret, nil)
+
+	rec := doPathRequest(t, mux, http.MethodPost, "/internal/ctrader/accounts/acct-1/orders", sharedSecret, `not json`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestPlaceOrder_AdapterError_BadGateway(t *testing.T) {
+	handle := domain.ConnectionHandle{AccountID: "acct-1"}
+	adapter := &fakeBrokerAdapter{orderErr: errors.New("ctrader: request timed out")}
+	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, adapter, sharedSecret, nil)
+
+	rec := doPathRequest(t, mux, http.MethodPost, "/internal/ctrader/accounts/acct-1/orders", sharedSecret, `{"order":{}}`)
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("status = %d, want 502", rec.Code)
 	}

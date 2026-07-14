@@ -1,0 +1,136 @@
+package remoteadapter
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+
+	domain "github.com/avison9/nectrix/go-domain"
+)
+
+// placeOrderWireResult mirrors the wire-safe result shape both
+// apps/broker-adapters/internal/internalapi and
+// apps/mt5-bridge-gateway/internal/internalapi return -- deliberately
+// missing domain.NormalizedOrderResult's RawBrokerResponse (never parsed
+// upstream, fragile to depend on across a network hop).
+type placeOrderWireResult struct {
+	Success          bool     `json:"success"`
+	BrokerPositionID string   `json:"brokerPositionId,omitempty"`
+	FilledPrice      *float64 `json:"filledPrice,omitempty"`
+	RejectReason     string   `json:"rejectReason,omitempty"`
+}
+
+type placeOrderWireRequest struct {
+	Platform string                        `json:"platform"`
+	Order    domain.NormalizedOrderRequest `json:"order"`
+}
+
+// HTTPClient implements RemoteAdapter over broker-adapters' or
+// mt5-bridge-gateway's internal routes. platform is "" for cTrader
+// (broker-adapters serves exactly one platform per deployment) and
+// "MT5"/"MT4" for mt5-bridge-gateway (one process, two platforms, identical
+// wire shape) -- kept as one type with a platform field rather than two
+// types, since the wire format is otherwise identical.
+type HTTPClient struct {
+	// pathPrefix is "/internal/ctrader" or "/internal/mt" -- baseURL is
+	// just the service's scheme://host:port, kept env-var-simple.
+	baseURL      string
+	pathPrefix   string
+	platform     string
+	sharedSecret string
+	httpClient   *http.Client
+}
+
+// NewCTraderHTTPClient builds a RemoteAdapter calling apps/broker-adapters'
+// internal routes. httpClient defaults to http.DefaultClient when nil.
+func NewCTraderHTTPClient(baseURL, sharedSecret string, httpClient *http.Client) *HTTPClient {
+	return newHTTPClient(baseURL, "/internal/ctrader", "", sharedSecret, httpClient)
+}
+
+// NewMTHTTPClient builds a RemoteAdapter calling apps/mt5-bridge-gateway's
+// internal routes for one platform ("MT5" or "MT4") -- one process serves
+// both, so every request carries which one to route to.
+func NewMTHTTPClient(baseURL, sharedSecret, platform string, httpClient *http.Client) *HTTPClient {
+	return newHTTPClient(baseURL, "/internal/mt", platform, sharedSecret, httpClient)
+}
+
+func newHTTPClient(baseURL, pathPrefix, platform, sharedSecret string, httpClient *http.Client) *HTTPClient {
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	return &HTTPClient{baseURL: baseURL, pathPrefix: pathPrefix, platform: platform, sharedSecret: sharedSecret, httpClient: httpClient}
+}
+
+func (c *HTTPClient) GetAccountSnapshot(ctx context.Context, brokerAccountID string) (domain.AccountSnapshot, error) {
+	url := fmt.Sprintf("%s%s/accounts/%s/snapshot", c.baseURL, c.pathPrefix, brokerAccountID)
+	if c.platform != "" {
+		url += "?platform=" + c.platform
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return domain.AccountSnapshot{}, fmt.Errorf("remoteadapter: build snapshot request: %w", err)
+	}
+	req.Header.Set("X-Internal-Service-Token", c.sharedSecret)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return domain.AccountSnapshot{}, fmt.Errorf("remoteadapter: snapshot request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return domain.AccountSnapshot{}, fmt.Errorf("remoteadapter: snapshot request for %s: %w", brokerAccountID, wireStatusError(resp))
+	}
+
+	var snapshot domain.AccountSnapshot
+	if err := json.NewDecoder(resp.Body).Decode(&snapshot); err != nil {
+		return domain.AccountSnapshot{}, fmt.Errorf("remoteadapter: decode snapshot response: %w", err)
+	}
+	return snapshot, nil
+}
+
+func (c *HTTPClient) PlaceOrder(ctx context.Context, brokerAccountID string, order domain.NormalizedOrderRequest) (domain.NormalizedOrderResult, error) {
+	url := fmt.Sprintf("%s%s/accounts/%s/orders", c.baseURL, c.pathPrefix, brokerAccountID)
+
+	body, err := json.Marshal(placeOrderWireRequest{Platform: c.platform, Order: order})
+	if err != nil {
+		return domain.NormalizedOrderResult{}, fmt.Errorf("remoteadapter: marshal order request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return domain.NormalizedOrderResult{}, fmt.Errorf("remoteadapter: build order request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Internal-Service-Token", c.sharedSecret)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return domain.NormalizedOrderResult{}, fmt.Errorf("remoteadapter: order request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return domain.NormalizedOrderResult{}, fmt.Errorf("remoteadapter: order request for %s: %w", brokerAccountID, wireStatusError(resp))
+	}
+
+	var wire placeOrderWireResult
+	if err := json.NewDecoder(resp.Body).Decode(&wire); err != nil {
+		return domain.NormalizedOrderResult{}, fmt.Errorf("remoteadapter: decode order response: %w", err)
+	}
+	return domain.NormalizedOrderResult{
+		Success:          wire.Success,
+		BrokerPositionID: wire.BrokerPositionID,
+		FilledPrice:      wire.FilledPrice,
+		RejectReason:     wire.RejectReason,
+	}, nil
+}
+
+func wireStatusError(resp *http.Response) error {
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	return fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
+}

@@ -15,6 +15,7 @@ import (
 	"github.com/avison9/nectrix/mt5-bridge-gateway/internal/coreappclient"
 	"github.com/avison9/nectrix/mt5-bridge-gateway/internal/dedupadapter"
 	"github.com/avison9/nectrix/mt5-bridge-gateway/internal/eabridge"
+	"github.com/avison9/nectrix/mt5-bridge-gateway/internal/internalapi"
 	"github.com/avison9/nectrix/mt5-bridge-gateway/internal/mtadapter"
 	"github.com/avison9/nectrix/mt5-bridge-gateway/internal/pairing"
 	"github.com/avison9/nectrix/mt5-bridge-gateway/internal/tradesignals"
@@ -85,12 +86,9 @@ func main() {
 	go pairingLoop.Run(ctx)
 
 	// Dedup-wrapped MT5/MT4 domain.BrokerAdapter implementations — real,
-	// tested, and BrokerType()-conformant, ready for whichever caller needs
-	// to place/modify/close orders against a live EA session (Copy Engine's
-	// own cross-service routing to broker-adapters/mt5-bridge-gateway is a
-	// separate, not-yet-built concern — see internal/mtadapter's package
-	// doc; internal/ctrader's own PlaceOrder is equally not yet reachable
-	// from outside apps/broker-adapters today). Both also satisfy
+	// tested, and BrokerType()-conformant. TICKET-106: these are also now
+	// reachable from Copy Engine's cross-service remoteadapter.HTTPClient via
+	// the new internal/internalapi routes mounted below. Both also satisfy
 	// domain.SymbolResolver for free (dedupadapter.Adapter embeds
 	// domain.BrokerAdapter, promoting ResolveSymbol/GetSymbolSpecification).
 	mt5Adapter := dedupadapter.New(mtadapter.NewMT5(eaServer), deduper)
@@ -111,6 +109,7 @@ func main() {
 		_ = json.NewEncoder(w).Encode(healthResponse{Service: serviceName, Status: "ok"})
 	})
 	mux.Handle(eaWebSocketPath, eaServer.Handler())
+	mux.Handle("/internal/", internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5Adapter, MT4: mt4Adapter}, internalServiceToken, logger))
 
 	server := &http.Server{Addr: addr, Handler: mux}
 

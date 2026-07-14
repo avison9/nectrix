@@ -156,7 +156,7 @@ func (a *Adapter) ClosePosition(ctx context.Context, handle domain.ConnectionHan
 func (a *Adapter) sessionFor(handle domain.ConnectionHandle) (*eabridge.Session, error) {
 	sess, ok := a.server.Session(handle.AccountID)
 	if !ok {
-		return nil, fmt.Errorf("mtadapter(%s): no live EA session for broker account %s", a.brokerType, handle.AccountID)
+		return nil, fmt.Errorf("mtadapter(%s): no live EA session for broker account %s: %w", a.brokerType, handle.AccountID, eabridge.ErrNoSession)
 	}
 	return sess, nil
 }
