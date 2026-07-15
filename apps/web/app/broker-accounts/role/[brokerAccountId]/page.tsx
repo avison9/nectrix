@@ -1,6 +1,7 @@
 import { getBrokerAccount } from "@nectrix/api-client";
 import { coreAppBaseUrl } from "@/lib/core-app";
 import { requireSession } from "@/lib/auth";
+import { fetchOrNotFound } from "@/lib/fetchOrNotFound";
 import { RoleSelectionForm } from "./RoleSelectionForm";
 
 /**
@@ -15,7 +16,9 @@ export default async function RoleSelectionPage({
 }) {
   const { accessToken } = await requireSession();
   const { brokerAccountId } = await params;
-  const account = await getBrokerAccount(coreAppBaseUrl(), accessToken, brokerAccountId);
+  const account = await fetchOrNotFound(
+    getBrokerAccount(coreAppBaseUrl(), accessToken, brokerAccountId),
+  );
 
   return (
     <main className="mx-auto max-w-[420px] px-4 py-10">

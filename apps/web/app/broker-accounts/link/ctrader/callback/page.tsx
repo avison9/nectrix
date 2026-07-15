@@ -1,13 +1,16 @@
 "use client";
 
+import { Suspense, useEffect, useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useState, useTransition } from "react";
 import type { ConnectionRole, CtraderAccountOption } from "@nectrix/api-client";
 import { linkCtraderAccountAction, submitCallbackAction } from "./actions";
 
 type Step = "exchanging" | "picking" | "error";
 
-export default function CtraderCallbackPage() {
+// useSearchParams() opts into client-side rendering during prerendering
+// unless wrapped in a Suspense boundary -- next build fails outright
+// without it (see ctrader/page.tsx's own identical Javadoc note).
+function CtraderCallbackInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [step, setStep] = useState<Step>("exchanging");
@@ -151,5 +154,13 @@ export default function CtraderCallbackPage() {
         </div>
       )}
     </main>
+  );
+}
+
+export default function CtraderCallbackPage() {
+  return (
+    <Suspense fallback={null}>
+      <CtraderCallbackInner />
+    </Suspense>
   );
 }

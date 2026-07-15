@@ -58,7 +58,7 @@ export default function LoginPage() {
         </p>
 
         {step === "credentials" ? (
-          <form onSubmit={submitCredentials} className="mt-6 flex flex-col gap-3.5">
+          <form key="credentials" onSubmit={submitCredentials} className="mt-6 flex flex-col gap-3.5">
             <label className="flex flex-col gap-1.5">
               <span className="text-[12.5px] font-medium text-[var(--text-2)]">Email</span>
               <input
@@ -138,7 +138,7 @@ export default function LoginPage() {
             </button>
           </form>
         ) : (
-          <form onSubmit={submitTotp} className="mt-6 flex flex-col gap-3.5">
+          <form key="totp" onSubmit={submitTotp} className="mt-6 flex flex-col gap-3.5">
             <label className="flex flex-col gap-1.5">
               <span className="text-[12.5px] font-medium text-[var(--text-2)]">2FA code</span>
               <input

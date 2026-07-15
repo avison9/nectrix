@@ -1,7 +1,7 @@
 "use client";
 
+import { Suspense, useState, useTransition } from "react";
 import { useSearchParams } from "next/navigation";
-import { useState, useTransition } from "react";
 import { getAuthorizeUrlAction } from "./actions";
 
 /**
@@ -11,8 +11,13 @@ import { getAuthorizeUrlAction } from "./actions";
  * page is the piece core-app's own Javadoc says must exist: parse `state` out
  * of the authorize URL BEFORE navigating, persist it in localStorage (it must
  * survive a full top-level navigation), and the callback page re-attaches it.
+ *
+ * <p>`useSearchParams()` opts the component into client-side rendering during
+ * prerendering unless wrapped in a Suspense boundary -- `next build` fails
+ * outright without it (caught by CI, not `next dev`, which doesn't prerender
+ * the same way). {@link ConnectCtraderPage} below is just that wrapper.
  */
-export default function ConnectCtraderPage() {
+function ConnectCtraderForm() {
   const [error, setError] = useState<string | undefined>();
   const [pending, startTransition] = useTransition();
   const searchParams = useSearchParams();
@@ -58,5 +63,13 @@ export default function ConnectCtraderPage() {
         {pending ? "Connecting…" : "Connect cTrader account"}
       </button>
     </main>
+  );
+}
+
+export default function ConnectCtraderPage() {
+  return (
+    <Suspense fallback={null}>
+      <ConnectCtraderForm />
+    </Suspense>
   );
 }

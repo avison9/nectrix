@@ -1,7 +1,7 @@
 "use client";
 
+import { Suspense, useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useState, useTransition } from "react";
 import type { ConnectionRole } from "@nectrix/api-client";
 import { linkMtAccountAction } from "./actions";
 
@@ -9,8 +9,12 @@ import { linkMtAccountAction } from "./actions";
  * docs/07-auth-onboarding-broker-linking.md §7.7 -- the EA-bridge credential
  * form. Submits directly (no OAuth dance); the response carries a pairing
  * token + gateway URL the user pastes into their EA's own input parameters.
+ *
+ * <p>useSearchParams() opts into client-side rendering during prerendering
+ * unless wrapped in a Suspense boundary -- next build fails outright without
+ * it (see ctrader/page.tsx's own identical Javadoc note).
  */
-export default function ConnectMt5Page() {
+function ConnectMt5Form() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const openedViaIbLinkId = searchParams.get("openedViaIbLinkId") ?? undefined;
@@ -182,5 +186,13 @@ export default function ConnectMt5Page() {
         </button>
       </form>
     </main>
+  );
+}
+
+export default function ConnectMt5Page() {
+  return (
+    <Suspense fallback={null}>
+      <ConnectMt5Form />
+    </Suspense>
   );
 }

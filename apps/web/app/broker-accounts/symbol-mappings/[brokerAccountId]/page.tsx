@@ -1,6 +1,7 @@
 import { listSymbolMappings } from "@nectrix/api-client";
 import { coreAppBaseUrl } from "@/lib/core-app";
 import { requireSession } from "@/lib/auth";
+import { fetchOrNotFound } from "@/lib/fetchOrNotFound";
 import { SymbolMappingsClient } from "./SymbolMappingsClient";
 
 /**
@@ -15,7 +16,9 @@ export default async function SymbolMappingsPage({
 }) {
   const { accessToken } = await requireSession();
   const { brokerAccountId } = await params;
-  const mappings = await listSymbolMappings(coreAppBaseUrl(), accessToken, brokerAccountId);
+  const mappings = await fetchOrNotFound(
+    listSymbolMappings(coreAppBaseUrl(), accessToken, brokerAccountId),
+  );
 
   return (
     <main className="mx-auto max-w-[560px] px-4 py-10">
