@@ -114,6 +114,39 @@ export async function refreshSession(baseUrl: string, refreshToken: string): Pro
   });
 }
 
+export interface TwoFactorEnrollment {
+  secret: string;
+  qrCodeUri: string; // data:image/png;base64,... -- ready to drop straight into an <img src>
+}
+
+/**
+ * TICKET-005's /2fa/enable — safe to call repeatedly (TwoFactorService's own
+ * design: each call overwrites the prior pending secret server-side, so a
+ * page reload mid-enrollment just means re-scanning, never a broken state).
+ */
+export async function beginTwoFactorEnrollment(
+  baseUrl: string,
+  accessToken: string,
+): Promise<TwoFactorEnrollment> {
+  return coreAppFetch<TwoFactorEnrollment>(baseUrl, "/api/v1/auth/2fa/enable", {
+    method: "POST",
+    accessToken,
+  });
+}
+
+/** TICKET-005's /2fa/verify — 204 on success, flips users.two_factor_enabled server-side. */
+export async function verifyTwoFactor(
+  baseUrl: string,
+  accessToken: string,
+  totpCode: string,
+): Promise<void> {
+  await coreAppFetch<null>(baseUrl, "/api/v1/auth/2fa/verify", {
+    method: "POST",
+    accessToken,
+    body: JSON.stringify({ totp_code: totpCode }),
+  });
+}
+
 export interface ProvisionedUser {
   id: string;
 }
