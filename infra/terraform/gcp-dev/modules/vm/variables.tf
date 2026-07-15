@@ -31,3 +31,8 @@ variable "artifact_registry_repository_id" {
 variable "artifact_registry_location" {
   type = string
 }
+
+variable "ci_deploy_service_account_email" {
+  description = "Granted roles/iam.serviceAccountUser on this VM's own service account — the legacy metadata-SSH-key flow (gcloud compute scp/ssh, see main.tf's metadata block note on why not OS Login) requires it on top of iap.tunnelResourceAccessor/compute.viewer"
+  type        = string
+}
