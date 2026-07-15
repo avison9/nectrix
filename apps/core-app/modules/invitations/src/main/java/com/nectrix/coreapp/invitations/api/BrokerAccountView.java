@@ -1,5 +1,6 @@
 package com.nectrix.coreapp.invitations.api;
 
+import java.time.Instant;
 import java.util.UUID;
 
 /**
@@ -19,4 +20,7 @@ public record BrokerAccountView(
     String displayLabel,
     boolean isDemo,
     String currency,
-    String connectionStatus) {}
+    String connectionRole,
+    UUID openedViaIbLinkId,
+    String connectionStatus,
+    Instant lastHealthCheckAt) {}

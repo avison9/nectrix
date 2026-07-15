@@ -21,6 +21,7 @@ node_modules/
 .next/
 dist/
 .turbo/
+*.tsbuildinfo
 
 # Terraform (.terraform.lock.hcl IS committed, for reproducible provider versions)
 .terraform/

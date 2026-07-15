@@ -4,6 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.nectrix.coreapp.audit.repository.AuditLogRepository;
 import com.nectrix.coreapp.auth.api.UserProvisioningApi;
+import dev.samstevens.totp.code.CodeGenerator;
+import dev.samstevens.totp.code.DefaultCodeGenerator;
+import dev.samstevens.totp.code.HashingAlgorithm;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -102,10 +105,17 @@ class MtTerminalCredentialIntegrationTest {
     }
   }
 
-  private String loginNewUser() {
-    String email = "mt-terminal-cred-" + UUID.randomUUID() + "@example.com";
-    userProvisioningApi.createUser(
-        email, "correct horse battery staple", "Test User", null, null, null, "US");
+  private final CodeGenerator codeGenerator = new DefaultCodeGenerator(HashingAlgorithm.SHA1);
+
+  private String generateTotpCode(String secret) {
+    try {
+      return codeGenerator.generate(secret, Instant.now().getEpochSecond() / 30);
+    } catch (Exception e) {
+      throw new IllegalStateException(e);
+    }
+  }
+
+  private String loginAs(String email) {
     HttpResult login =
         request(
             "POST",
@@ -113,6 +123,45 @@ class MtTerminalCredentialIntegrationTest {
             Map.of("email", email, "password", "correct horse battery staple"),
             null);
     return (String) login.body().get("access_token");
+  }
+
+  /** Once 2FA is enabled, a bare email+password login is challenged (401 totp_required). */
+  private String loginAsWithTotp(String email, String secret) {
+    HttpResult login =
+        request(
+            "POST",
+            "/api/v1/auth/login",
+            Map.of(
+                "email",
+                email,
+                "password",
+                "correct horse battery staple",
+                "totp_code",
+                generateTotpCode(secret)),
+            null);
+    return (String) login.body().get("access_token");
+  }
+
+  /**
+   * TICKET-110 AC1 — {@code /broker-accounts/mt5} now requires 2FA, so this shared setup enrolls it
+   * for real then re-logs-in for a fresh access token (see BrokerAccountMtIntegrationTest's own
+   * identical helper for the full reasoning).
+   */
+  private String loginNewUser() {
+    String email = "mt-terminal-cred-" + UUID.randomUUID() + "@example.com";
+    userProvisioningApi.createUser(
+        email, "correct horse battery staple", "Test User", null, null, null, "US");
+    String preEnrollmentToken = loginAs(email);
+
+    HttpResult enable = request("POST", "/api/v1/auth/2fa/enable", Map.of(), preEnrollmentToken);
+    String secret = (String) enable.body().get("secret");
+    request(
+        "POST",
+        "/api/v1/auth/2fa/verify",
+        Map.of("totp_code", generateTotpCode(secret)),
+        preEnrollmentToken);
+
+    return loginAsWithTotp(email, secret);
   }
 
   private String linkRealMt5Account(String login) {

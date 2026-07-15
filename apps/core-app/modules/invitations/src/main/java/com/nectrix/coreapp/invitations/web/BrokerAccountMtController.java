@@ -1,6 +1,7 @@
 package com.nectrix.coreapp.invitations.web;
 
 import com.nectrix.coreapp.invitations.service.MtLinkingService;
+import com.nectrix.coreapp.invitations.service.TwoFactorRequiredException;
 import java.util.UUID;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -28,12 +29,14 @@ public class BrokerAccountMtController {
   @PostMapping("/api/v1/broker-accounts/mt5")
   public LinkResponse linkMt5(
       @AuthenticationPrincipal Jwt jwt, @RequestBody LinkRequestBody request) {
+    requireTwoFactor(jwt);
     return LinkResponse.from(linkingService.linkMt5(currentUserId(jwt), toServiceRequest(request)));
   }
 
   @PostMapping("/api/v1/broker-accounts/mt4")
   public LinkResponse linkMt4(
       @AuthenticationPrincipal Jwt jwt, @RequestBody LinkRequestBody request) {
+    requireTwoFactor(jwt);
     return LinkResponse.from(linkingService.linkMt4(currentUserId(jwt), toServiceRequest(request)));
   }
 
@@ -41,13 +44,35 @@ public class BrokerAccountMtController {
     return UUID.fromString(jwt.getSubject());
   }
 
+  /**
+   * AC1 — mandatory 2FA gate, applied unconditionally (see TwoFactorRequiredException's Javadoc).
+   */
+  private void requireTwoFactor(Jwt jwt) {
+    Boolean twoFactorEnabled = jwt.getClaimAsBoolean("two_factor_enabled");
+    if (twoFactorEnabled == null || !twoFactorEnabled) {
+      throw new TwoFactorRequiredException();
+    }
+  }
+
   private MtLinkingService.LinkRequest toServiceRequest(LinkRequestBody body) {
     return new MtLinkingService.LinkRequest(
-        body.login(), body.password(), body.server(), body.isDemo(), body.displayLabel());
+        body.login(),
+        body.password(),
+        body.server(),
+        body.isDemo(),
+        body.displayLabel(),
+        body.connectionRole(),
+        body.openedViaIbLinkId());
   }
 
   public record LinkRequestBody(
-      String login, String password, String server, boolean isDemo, String displayLabel) {}
+      String login,
+      String password,
+      String server,
+      boolean isDemo,
+      String displayLabel,
+      String connectionRole,
+      UUID openedViaIbLinkId) {}
 
   public record LinkResponse(
       String id, String pairingToken, String gatewayUrl, String connectionStatus) {

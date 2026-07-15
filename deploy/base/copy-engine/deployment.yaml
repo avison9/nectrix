@@ -32,6 +32,24 @@ spec:
             # never applied" precedent as infra/terraform.
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: http://tempo.platform.svc.cluster.local:4318
+            # TICKET-106 — main.go log.Fatalf's without this (same
+            # fail-fast pattern as broker-adapters'/mt5-bridge-gateway's own
+            # copy — see those services' deployment.yaml comments). Must be
+            # byte-for-byte identical to every other service's
+            # internal-service-token: this is what authenticates copy-engine
+            # to broker-adapters'/mt5-bridge-gateway's new internal
+            # PlaceOrder/GetAccountSnapshot routes below.
+            - name: INTERNAL_SERVICE_TOKEN
+              valueFrom:
+                secretKeyRef: { name: copy-engine-secrets, key: internal-service-token }
+            # broker-adapters'/mt5-bridge-gateway's in-cluster Service DNS —
+            # both live in this same copy-engine namespace (see
+            # deploy/base/broker-adapters/service.yaml,
+            # deploy/base/mt5-bridge-gateway/service.yaml).
+            - name: BROKER_ADAPTERS_INTERNAL_BASE_URL
+              value: http://broker-adapters.copy-engine.svc.cluster.local:8091
+            - name: MT5_BRIDGE_GATEWAY_INTERNAL_BASE_URL
+              value: http://mt5-bridge-gateway.copy-engine.svc.cluster.local:8092
           securityContext:
             runAsNonRoot: true
             runAsUser: 65532

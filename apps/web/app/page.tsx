@@ -1,7 +1,7 @@
+import { redirect } from "next/navigation";
+
+// proxy.ts already gates auth on every route except /login -- an unauthenticated
+// visitor lands on /login before this ever renders.
 export default function Home() {
-  return (
-    <main className="flex min-h-screen items-center justify-center">
-      <h1 className="text-2xl font-semibold">Nectrix — Follower Web App</h1>
-    </main>
-  );
+  redirect("/broker-accounts");
 }

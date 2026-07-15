@@ -41,6 +41,9 @@ public class BrokerAccountLookupApiImpl implements BrokerAccountLookupApi {
         account.displayLabel(),
         account.isDemo(),
         account.currency(),
-        account.connectionStatus());
+        account.connectionRole(),
+        account.openedViaIbLinkId(),
+        account.connectionStatus(),
+        account.lastHealthCheckAt());
   }
 }

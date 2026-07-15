@@ -45,15 +45,21 @@ public class JwtService {
 
   /**
    * roles is embedded as a claim (not fetched per-request) so TICKET-006's role checks don't need a
-   * DB round trip.
+   * DB round trip. TICKET-110 — two_factor_enabled is embedded the same way, so the mandatory-2FA-
+   * before-trade-capable-linking gate (docs/17-security-architecture.md §17.3) doesn't need one
+   * either; it's a snapshot as of login/token-issue time, same staleness window every other claim
+   * here already accepts (a user enabling 2FA mid-session must simply get a fresh token, same as a
+   * role change would require).
    */
-  public String issueAccessToken(UUID userId, String email, List<String> roles) {
+  public String issueAccessToken(
+      UUID userId, String email, List<String> roles, boolean twoFactorEnabled) {
     return sign(
         new JWTClaimsSet.Builder()
             .subject(userId.toString())
             .issuer(ISSUER)
             .claim("email", email)
-            .claim("roles", roles));
+            .claim("roles", roles)
+            .claim("two_factor_enabled", twoFactorEnabled));
   }
 
   /**
@@ -66,13 +72,18 @@ public class JwtService {
    * impersonating is tagged... with both the admin's and the impersonated user's IDs".
    */
   public String issueImpersonationToken(
-      UUID targetUserId, String targetEmail, List<String> targetRoles, UUID actingAdminId) {
+      UUID targetUserId,
+      String targetEmail,
+      List<String> targetRoles,
+      boolean targetTwoFactorEnabled,
+      UUID actingAdminId) {
     return sign(
         new JWTClaimsSet.Builder()
             .subject(targetUserId.toString())
             .issuer(ISSUER)
             .claim("email", targetEmail)
             .claim("roles", targetRoles)
+            .claim("two_factor_enabled", targetTwoFactorEnabled)
             .claim("impersonated_by", actingAdminId.toString()));
   }
 

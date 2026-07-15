@@ -8,10 +8,32 @@ import type {
   AdminPortalRole,
   AuditLogEntry,
   AuditLogPage,
+  BrokerAccountSnapshot,
+  BrokerAccountSummary,
+  BrokerIbLink,
+  BrokerType,
+  ConnectionRole,
+  ConnectionStatus,
+  CtraderAccountOption,
+  NormalizedPosition,
   NormalizedTradeEvent,
+  SymbolMappingEntry,
 } from "@nectrix/domain-model";
 
-export type { NormalizedTradeEvent, AdminPortalRole, AuditLogEntry, AuditLogPage };
+export type {
+  NormalizedTradeEvent,
+  AdminPortalRole,
+  AuditLogEntry,
+  AuditLogPage,
+  BrokerAccountSnapshot,
+  BrokerAccountSummary,
+  BrokerIbLink,
+  BrokerType,
+  ConnectionRole,
+  ConnectionStatus,
+  CtraderAccountOption,
+  SymbolMappingEntry,
+};
 
 export const API_CLIENT_VERSION = "0.2.0";
 
@@ -143,4 +165,224 @@ export async function listAuditLog(
     method: "GET",
     accessToken,
   });
+}
+
+// ==================== TICKET-110 — Broker Account Linking ====================
+
+export async function listBrokerAccounts(
+  baseUrl: string,
+  accessToken: string,
+): Promise<BrokerAccountSummary[]> {
+  return coreAppFetch<BrokerAccountSummary[]>(baseUrl, "/api/v1/broker-accounts", {
+    method: "GET",
+    accessToken,
+  });
+}
+
+export async function getBrokerAccount(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<BrokerAccountSummary> {
+  return coreAppFetch<BrokerAccountSummary>(baseUrl, `/api/v1/broker-accounts/${id}`, {
+    method: "GET",
+    accessToken,
+  });
+}
+
+export async function patchBrokerAccount(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+  input: { displayLabel?: string; connectionRole?: ConnectionRole },
+): Promise<BrokerAccountSummary> {
+  return coreAppFetch<BrokerAccountSummary>(baseUrl, `/api/v1/broker-accounts/${id}`, {
+    method: "PATCH",
+    accessToken,
+    body: JSON.stringify({
+      ...(input.displayLabel !== undefined ? { display_label: input.displayLabel } : {}),
+      ...(input.connectionRole !== undefined ? { connection_role: input.connectionRole } : {}),
+    }),
+  });
+}
+
+export async function deleteBrokerAccount(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<void> {
+  await coreAppFetch<null>(baseUrl, `/api/v1/broker-accounts/${id}`, {
+    method: "DELETE",
+    accessToken,
+  });
+}
+
+export async function getBrokerAccountSnapshot(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<BrokerAccountSnapshot> {
+  return coreAppFetch<BrokerAccountSnapshot>(baseUrl, `/api/v1/broker-accounts/${id}/snapshot`, {
+    method: "GET",
+    accessToken,
+  });
+}
+
+export async function getBrokerAccountPositions(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<NormalizedPosition[]> {
+  return coreAppFetch<NormalizedPosition[]>(baseUrl, `/api/v1/broker-accounts/${id}/positions`, {
+    method: "GET",
+    accessToken,
+  });
+}
+
+export async function getCtraderAuthorizeUrl(
+  baseUrl: string,
+  accessToken: string,
+): Promise<{ authorizeUrl: string }> {
+  return coreAppFetch<{ authorizeUrl: string }>(baseUrl, "/api/v1/broker/ctrader/authorize-url", {
+    method: "GET",
+    accessToken,
+  });
+}
+
+export interface CtraderCallbackResult {
+  linkSessionId: string;
+  accounts: CtraderAccountOption[];
+}
+
+/** No accessToken — cTrader's own redirect carries no bearer token, see core-app's own Javadoc. */
+export async function submitCtraderCallback(
+  baseUrl: string,
+  code: string,
+  state: string,
+): Promise<CtraderCallbackResult> {
+  return coreAppFetch<CtraderCallbackResult>(baseUrl, "/api/v1/broker/ctrader/callback", {
+    method: "POST",
+    body: JSON.stringify({ code, state }),
+  });
+}
+
+export async function linkCtraderAccount(
+  baseUrl: string,
+  accessToken: string,
+  input: {
+    linkSessionId: string;
+    ctidTraderAccountId: number;
+    isLive: boolean;
+    displayLabel: string;
+    connectionRole?: ConnectionRole;
+    openedViaIbLinkId?: string;
+  },
+): Promise<BrokerAccountSummary> {
+  return coreAppFetch<BrokerAccountSummary>(baseUrl, "/api/v1/broker/ctrader/link", {
+    method: "POST",
+    accessToken,
+    body: JSON.stringify({
+      link_session_id: input.linkSessionId,
+      ctid_trader_account_id: input.ctidTraderAccountId,
+      is_live: input.isLive,
+      display_label: input.displayLabel,
+      connection_role: input.connectionRole,
+      opened_via_ib_link_id: input.openedViaIbLinkId,
+    }),
+  });
+}
+
+export interface MtLinkResult {
+  id: string;
+  pairingToken: string;
+  gatewayUrl: string;
+  connectionStatus: ConnectionStatus;
+}
+
+export interface MtLinkInput {
+  login: string;
+  password: string;
+  server: string;
+  isDemo: boolean;
+  displayLabel: string;
+  connectionRole?: ConnectionRole;
+  openedViaIbLinkId?: string;
+}
+
+function mtLinkBody(input: MtLinkInput) {
+  return JSON.stringify({
+    login: input.login,
+    password: input.password,
+    server: input.server,
+    is_demo: input.isDemo,
+    display_label: input.displayLabel,
+    connection_role: input.connectionRole,
+    opened_via_ib_link_id: input.openedViaIbLinkId,
+  });
+}
+
+export async function linkMt5Account(
+  baseUrl: string,
+  accessToken: string,
+  input: MtLinkInput,
+): Promise<MtLinkResult> {
+  return coreAppFetch<MtLinkResult>(baseUrl, "/api/v1/broker-accounts/mt5", {
+    method: "POST",
+    accessToken,
+    body: mtLinkBody(input),
+  });
+}
+
+export async function linkMt4Account(
+  baseUrl: string,
+  accessToken: string,
+  input: MtLinkInput,
+): Promise<MtLinkResult> {
+  return coreAppFetch<MtLinkResult>(baseUrl, "/api/v1/broker-accounts/mt4", {
+    method: "POST",
+    accessToken,
+    body: mtLinkBody(input),
+  });
+}
+
+export async function listSymbolMappings(
+  baseUrl: string,
+  accessToken: string,
+  brokerAccountId: string,
+): Promise<SymbolMappingEntry[]> {
+  return coreAppFetch<SymbolMappingEntry[]>(
+    baseUrl,
+    `/api/v1/broker-accounts/${brokerAccountId}/symbol-mappings`,
+    { method: "GET", accessToken },
+  );
+}
+
+export async function confirmSymbolMapping(
+  baseUrl: string,
+  accessToken: string,
+  brokerAccountId: string,
+  canonicalSymbol: string,
+  brokerSymbolName: string,
+): Promise<SymbolMappingEntry> {
+  return coreAppFetch<SymbolMappingEntry>(
+    baseUrl,
+    `/api/v1/broker-accounts/${brokerAccountId}/symbol-mappings/${canonicalSymbol}`,
+    { method: "PUT", accessToken, body: JSON.stringify({ broker_symbol_name: brokerSymbolName }) },
+  );
+}
+
+/**
+ * Returns [] gracefully when a Master has no active IB links (TICKET-119 isn't built yet — this
+ * is TICKET-110's own narrow, additive read, see BrokerIbLinkController's Javadoc).
+ */
+export async function listMasterIbLinks(
+  baseUrl: string,
+  accessToken: string,
+  masterProfileId: string,
+): Promise<BrokerIbLink[]> {
+  return coreAppFetch<BrokerIbLink[]>(
+    baseUrl,
+    `/api/v1/broker-accounts/ib-links?masterProfileId=${masterProfileId}`,
+    { method: "GET", accessToken },
+  );
 }

@@ -5,7 +5,7 @@
 // services' internal types (packages/go-domain) are the runtime source of
 // truth; this package exists for frontend DX, not as a second source of truth.
 
-export type BrokerType = "CTRADER" | "MT5";
+export type BrokerType = "CTRADER" | "MT5" | "MT4";
 
 export interface NormalizedSymbol {
   canonicalCode: string; // platform's own symbol code, e.g. "EURUSD"
@@ -114,4 +114,62 @@ export interface AuditLogPage {
   total: number;
   page: number;
   pageSize: number;
+}
+
+// TICKET-110 — broker-linking UI & API. Mirrors
+// apps/core-app/modules/invitations' BrokerAccount domain/view record.
+export type ConnectionRole = "MASTER_ONLY" | "FOLLOWER_ONLY" | "BOTH";
+
+export type ConnectionStatus = "PENDING" | "CONNECTED" | "DEGRADED" | "DISCONNECTED" | "REAUTH_REQUIRED";
+
+export interface BrokerAccountSummary {
+  id: string;
+  userId: string;
+  brokerType: BrokerType;
+  brokerAccountLogin: string;
+  displayLabel: string | null;
+  isDemo: boolean;
+  currency: string;
+  connectionRole: ConnectionRole;
+  openedViaIbLinkId: string | null;
+  connectionStatus: ConnectionStatus;
+  lastHealthCheckAt: string | null;
+}
+
+// Mirrors BrokerAccountAdaptersInternalClient.AccountSnapshot's JSON shape.
+export type BrokerAccountSnapshot = AccountSnapshot;
+
+// Mirrors BrokerIbLink.java (docs/07-auth-onboarding-broker-linking.md §7.4) — read-only here,
+// creation/management is TICKET-119's own scope.
+export interface BrokerIbLink {
+  id: string;
+  masterProfileId: string;
+  brokerType: BrokerType;
+  brokerDisplayName: string;
+  ibReferralUrlOrCode: string;
+  isActive: boolean;
+}
+
+// Mirrors SymbolMappingController.SymbolMappingResponse (TICKET-103).
+export interface SymbolMappingEntry {
+  id: number;
+  brokerAccountId: string;
+  canonicalSymbol: string;
+  brokerSymbolName: string;
+  contractSize: number;
+  lotStep: number;
+  minLot: number;
+  maxLot: number;
+  pipSize: number;
+  digits: number;
+  marginCurrency: string;
+  isConfirmed: boolean;
+}
+
+// Mirrors BrokerAccountOAuthController.CallbackAccount (the cTrader account picker step).
+export interface CtraderAccountOption {
+  ctidTraderAccountId: number;
+  isLive: boolean;
+  traderLogin: number;
+  brokerTitleShort: string;
 }

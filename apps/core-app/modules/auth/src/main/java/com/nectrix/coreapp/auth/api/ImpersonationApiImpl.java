@@ -26,7 +26,8 @@ public class ImpersonationApiImpl implements ImpersonationApi {
             .orElseThrow(() -> new NoSuchElementException("No such user: " + targetUserId));
     var roles = userRepository.findRoleNames(targetUserId);
     String accessToken =
-        jwtService.issueImpersonationToken(targetUserId, target.email(), roles, actingAdminId);
+        jwtService.issueImpersonationToken(
+            targetUserId, target.email(), roles, target.twoFactorEnabled(), actingAdminId);
     return new ImpersonationResult(accessToken, JwtService.ACCESS_TOKEN_TTL_SECONDS);
   }
 }

@@ -132,6 +132,21 @@ public class SecurityConfig {
                     // only be caught by the method-security check, yielding a less correct 403).
                     .requestMatchers(HttpMethod.GET, "/api/v1/broker-accounts/*")
                     .authenticated()
+                    // TICKET-110 — list/PATCH/DELETE/snapshot/positions. list's own query is
+                    // scoped to the caller at the SQL layer (BrokerAccountService#listForUser);
+                    // PATCH/DELETE use an explicit fetch-then-check-then-mutate guard
+                    // (BrokerAccountController calls getBrokerAccount first) since @PostAuthorize
+                    // doesn't apply to a same-class self-invocation — see that service's Javadoc.
+                    .requestMatchers(HttpMethod.GET, "/api/v1/broker-accounts")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.PATCH, "/api/v1/broker-accounts/*")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.DELETE, "/api/v1/broker-accounts/*")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.GET, "/api/v1/broker-accounts/*/snapshot")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.GET, "/api/v1/broker-accounts/*/positions")
+                    .authenticated()
                     .requestMatchers(HttpMethod.POST, "/api/v1/admin/impersonate/*")
                     .authenticated()
                     .requestMatchers(HttpMethod.POST, "/api/v1/admin/ledger-adjustments")

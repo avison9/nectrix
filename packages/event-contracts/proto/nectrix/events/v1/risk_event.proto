@@ -16,10 +16,23 @@ enum RiskEventType {
   RISK_EVENT_TYPE_DRAWDOWN_THRESHOLD_BREACHED = 1;
 }
 
+// TICKET-108: docs/09-money-management-risk-formulas.md §9.7's two-tier
+// model -- PAUSE (drawdown_pause_pct) leaves positions open, FORCE_CLOSE
+// (drawdown_close_all_pct, a stricter threshold) closes everything. Both are
+// the SAME RiskEventType (drawdown.threshold_breached); severity is what
+// distinguishes them, matching the ticket text's own literal phrasing
+// ("emit drawdown.threshold_breached (severity=PAUSE/FORCE_CLOSE)").
+enum RiskEventSeverity {
+  RISK_EVENT_SEVERITY_UNSPECIFIED = 0;
+  RISK_EVENT_SEVERITY_PAUSE = 1;
+  RISK_EVENT_SEVERITY_FORCE_CLOSE = 2;
+}
+
 message RiskEvent {
   EventEnvelope envelope = 1;
   string copy_relationship_id = 2; // partition key
   RiskEventType event_type = 3;
   double drawdown_pct = 4;
   double threshold_pct = 5;
+  RiskEventSeverity severity = 6;
 }

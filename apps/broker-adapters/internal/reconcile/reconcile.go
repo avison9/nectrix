@@ -256,3 +256,17 @@ func (l *Loop) disconnectAll(ctx context.Context) {
 		l.disconnectLocked(ctx, id, conn)
 	}
 }
+
+// HandleFor returns the live, connected domain.ConnectionHandle for
+// brokerAccountID, if this loop currently has one -- the only
+// broker_accounts.id -> ConnectionHandle registry this service has. This is
+// the "once it consumes trade-signals from Kafka" moment this package's own
+// doc comment anticipated: TICKET-106's internal PlaceOrder/GetAccountSnapshot
+// HTTP routes use this to resolve a remote caller's broker_account_id into
+// the handle domain.BrokerAdapter's own methods require.
+func (l *Loop) HandleFor(brokerAccountID string) (domain.ConnectionHandle, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	conn, ok := l.connected[brokerAccountID]
+	return conn.handle, ok
+}

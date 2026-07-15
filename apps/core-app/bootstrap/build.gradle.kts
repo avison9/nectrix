@@ -23,6 +23,15 @@ dependencyManagement {
 dependencies {
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("org.springframework.boot:spring-boot-starter-jdbc")
+    // TICKET-110 — the /ws/v1 broker-connection channel (docs/14-api-specification.md §14.11).
+    // A narrow, single-channel plain WebSocketHandler (not full STOMP) — see
+    // bootstrap/.../realtime package's own Javadoc for why.
+    implementation("org.springframework.boot:spring-boot-starter-websocket")
+    // TICKET-110 — BrokerConnectionEventConsumer is this app's first real Kafka CONSUMER
+    // (event-contracts was already a direct dependency here for other reasons; redis-client
+    // wasn't yet, needed directly for RedisDeduplicator, same "implementation not api, must be
+    // added directly" reasoning modules:crypto/modules:audit below already document).
+    implementation("com.nectrix:redis-client")
     // TICKET-010 — /actuator/prometheus scrape endpoint (Micrometer's
     // http.server.requests timer -> Prometheus histogram), zero custom
     // metric code needed for request latency/error-rate dashboard panels.
@@ -43,6 +52,12 @@ dependencies {
     // AccessDeniedException; just the core annotations/types, not the full
     // security starter (auth module owns the actual SecurityFilterChain).
     implementation("org.springframework.security:spring-security-core")
+    // TICKET-110 — BrokerConnectionWebSocketHandler verifies the WS connect-time
+    // access_token against the SAME JwtDecoder bean SecurityConfig exposes for REST;
+    // needs the resource-server module directly here for the Jwt/JwtDecoder/JwtException
+    // types (modules:auth's own dependency on this is `implementation`, so it doesn't
+    // propagate transitively, same "implementation not api" reasoning as redis-client above).
+    implementation("org.springframework.boot:spring-boot-starter-oauth2-resource-server")
     // Driver only — no liquibase-core here at all (see db/build.gradle.kts's
     // top comment). The app connects as the restricted `nectrix_app` role;
     // migrations are always run separately, by the db subproject, as the
