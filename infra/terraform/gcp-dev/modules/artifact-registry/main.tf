@@ -97,6 +97,18 @@ resource "google_project_iam_member" "ci_deploy_compute_viewer" {
   member  = "serviceAccount:${google_service_account.ci_deploy.email}"
 }
 
+# OS Login with sudo — lets gcloud compute scp/ssh --tunnel-through-iap
+# authenticate via IAM instead of injecting a temporary SSH key into instance
+# metadata (which needs compute.instances.setMetadata, not granted here on
+# purpose — see modules/vm's enable-oslogin metadata note). *Admin* login
+# specifically (not the plain osLogin role) since deploy-dev's steps run
+# `sudo -E kubectl`/`docker compose` on the box.
+resource "google_project_iam_member" "ci_deploy_os_admin_login" {
+  project = var.project_id
+  role    = "roles/compute.osAdminLogin"
+  member  = "serviceAccount:${google_service_account.ci_deploy.email}"
+}
+
 resource "google_service_account_iam_member" "ci_deploy_wif_binding" {
   service_account_id = google_service_account.ci_deploy.name
   role               = "roles/iam.workloadIdentityUser"

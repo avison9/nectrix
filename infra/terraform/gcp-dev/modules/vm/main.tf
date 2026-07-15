@@ -62,6 +62,15 @@ resource "google_compute_instance" "dev" {
     # Only this instance's own SSH keys apply — a project-wide key wouldn't
     # implicitly grant access to this box too.
     block-project-ssh-keys = "true"
+    # OS Login, not metadata-based SSH keys — IAM (roles/compute.osAdminLogin,
+    # granted to ci_deploy in modules/artifact-registry) gates who can SSH in
+    # and as which POSIX user, so `gcloud compute scp/ssh --tunnel-through-iap`
+    # never needs compute.instances.setMetadata to inject a temporary key.
+    # Google's own recommended pattern for CI/CD SSH access — real, live
+    # failure the first time this ran for real: ci_deploy only had
+    # iap.tunnelResourceAccessor + compute.viewer, neither of which covers
+    # the legacy metadata-key flow gcloud falls back to without this.
+    enable-oslogin = "TRUE"
   }
 
   shielded_instance_config {
@@ -93,16 +102,21 @@ resource "google_compute_firewall" "allow_web" {
   target_tags   = ["nectrix-dev-vm"]
 }
 
-# SSH restricted to Google's IAP TCP-forwarding range — no public port 22.
-# Reach the VM via `gcloud compute ssh --tunnel-through-iap`, which requires
-# the connecting principal to hold roles/iap.tunnelResourceAccessor.
-resource "google_compute_firewall" "allow_iap_ssh" {
-  name    = "${var.name}-allow-iap-ssh"
+# IAP TCP forwarding range only — no public port 22, and no public 5432.
+# Port 22 is `gcloud compute ssh/scp --tunnel-through-iap` (requires
+# roles/iap.tunnelResourceAccessor); 5432 is db-migration-dev's tunnel
+# straight to the docker-compose Postgres (see main-pipeline.yml) — a real,
+# live gap the first time that job ran for real: only 22 was open here, so
+# `gcloud compute start-iap-tunnel ... 5432` connected but the tunnel itself
+# never came up, and the job's own wait-loop had no failure check to catch
+# it (it just moved on and Liquibase hit a bare "connection refused" later).
+resource "google_compute_firewall" "allow_iap" {
+  name    = "${var.name}-allow-iap"
   network = "default"
 
   allow {
     protocol = "tcp"
-    ports    = ["22"]
+    ports    = ["22", "5432"]
   }
 
   source_ranges = var.ssh_source_ranges
