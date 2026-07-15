@@ -463,55 +463,135 @@ jobs:
         # Real, stable secret values (unlike deploy-staging's throwaway
         # ones) — this environment persists, so JWT_SIGNING_SECRET etc must
         # stay byte-for-byte identical across deploys or existing sessions
-        # break.
+        # break. Built as a real script file and scp'd over, not inlined into
+        # `gcloud compute ssh --command="..."` — that got genuinely
+        # unmaintainable once this needed a shell function with a jsonpath
+        # filter (nested single/double quotes plus parens inside an already
+        # double-quoted --command string is exactly the kind of thing
+        # shellcheck rightly flags as unparseable). GitHub still substitutes
+        # every ${{ }} below before bash ever sees the file — same secret
+        # handling as before, just written as a normal script.
         run: |
-          gcloud compute ssh --tunnel-through-iap --zone="${{ vars.GCP_DEV_VM_ZONE }}" "${{ vars.GCP_DEV_VM_NAME }}" --command="
-            set -euo pipefail
-            export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
-            sudo -E kubectl create namespace core-app --dry-run=client -o yaml | sudo -E kubectl apply -f -
-            sudo -E kubectl create secret generic core-app-secrets -n core-app \
-              --from-literal=jwt-signing-secret='${{ secrets.DEV_JWT_SIGNING_SECRET }}' \
-              --from-literal=internal-service-token='${{ secrets.DEV_INTERNAL_SERVICE_TOKEN }}' \
-              --from-literal=mt-terminal-provisioner-token='${{ secrets.DEV_MT_TERMINAL_PROVISIONER_TOKEN }}' \
-              --from-literal=postgres-app-password='${{ secrets.DEV_POSTGRES_APP_PASSWORD }}' \
-              --dry-run=client -o yaml | sudo -E kubectl apply -f -
-            sudo -E kubectl create namespace admin-portal --dry-run=client -o yaml | sudo -E kubectl apply -f -
-            sudo -E kubectl create secret generic admin-portal-secrets -n admin-portal \
-              --from-literal=jwt-signing-secret='${{ secrets.DEV_JWT_SIGNING_SECRET }}' \
-              --dry-run=client -o yaml | sudo -E kubectl apply -f -
-            sudo -E kubectl create namespace web --dry-run=client -o yaml | sudo -E kubectl apply -f -
-            sudo -E kubectl create secret generic web-secrets -n web \
-              --from-literal=jwt-signing-secret='${{ secrets.DEV_JWT_SIGNING_SECRET }}' \
-              --dry-run=client -o yaml | sudo -E kubectl apply -f -
-            sudo -E kubectl create namespace copy-engine --dry-run=client -o yaml | sudo -E kubectl apply -f -
-            sudo -E kubectl create secret generic copy-engine-secrets -n copy-engine \
-              --from-literal=internal-service-token='${{ secrets.DEV_INTERNAL_SERVICE_TOKEN }}' \
-              --from-literal=postgres-app-password='${{ secrets.DEV_POSTGRES_APP_PASSWORD }}' \
-              --dry-run=client -o yaml | sudo -E kubectl apply -f -
-            sudo -E kubectl create secret generic broker-adapters-secrets -n copy-engine \
-              --from-literal=internal-service-token='${{ secrets.DEV_INTERNAL_SERVICE_TOKEN }}' \
-              --from-literal=ctrader-client-id='${{ secrets.DEV_CTRADER_CLIENT_ID }}' \
-              --from-literal=ctrader-client-secret='${{ secrets.DEV_CTRADER_CLIENT_SECRET }}' \
-              --dry-run=client -o yaml | sudo -E kubectl apply -f -
-            # k3s has no built-in Artifact-Registry credential integration
-            # (unlike GKE) — a real imagePullSecret, minted here from the
-            # VM's OWN attached service account via the metadata server
-            # directly (no gcloud CLI installed, and no token ever transits
-            # the GitHub Actions log/command line this way). Short-lived
-            # (~1hr), refreshed on every deploy-dev run.
-            AR_TOKEN=\$(curl -s -H 'Metadata-Flavor: Google' 'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token' | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"access_token\"])')
-            for ns in core-app copy-engine admin-portal web; do
-              sudo -E kubectl create secret docker-registry artifact-registry-pull -n \$ns \
-                --docker-server=europe-west1-docker.pkg.dev \
-                --docker-username=oauth2accesstoken \
-                --docker-password=\"\$AR_TOKEN\" \
-                --dry-run=client -o yaml | sudo -E kubectl apply -f -
+          cat > /tmp/deploy-dev.sh <<'DEPLOY_SCRIPT'
+          set -euo pipefail
+          export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+
+          # kubectl rollout status is NOT used to verify deployments below —
+          # a real false-negative caught live: unlike deploy-staging's
+          # always-fresh ephemeral kind cluster, this environment persists
+          # across deploys, so a Deployment can carry a STALE
+          # ProgressDeadlineExceeded Progressing-condition reason from a
+          # PRIOR failed rollout. kubectl rollout status treats that reason
+          # as immediately fatal and exits without waiting to see whether the
+          # rollout that just landed actually fixes it — even though it does,
+          # seconds later. Polling the real Available condition directly
+          # instead sidesteps that quirk entirely.
+          wait_for_deployment() {
+            ns=$1; name=$2; deadline=$((SECONDS + 180))
+            while [ $SECONDS -lt $deadline ]; do
+              cond=$(sudo -E kubectl get deployment "$name" -n "$ns" -o jsonpath='{.status.conditions[?(@.type=="Available")].status}' 2>/dev/null || true)
+              if [ "$cond" = "True" ]; then
+                echo "$name -n $ns: Available"
+                return 0
+              fi
+              sleep 5
             done
-            sudo -E kubectl apply -f /tmp/dev-overlay-rendered.yaml
-            sudo -E kubectl -n core-app rollout status deployment/core-app --timeout=180s
-            sudo -E kubectl -n web rollout status deployment/web --timeout=180s
-            sudo -E kubectl -n admin-portal rollout status deployment/admin-portal --timeout=180s
-          "
+            echo "::error::$name -n $ns never became Available within 180s"
+            sudo -E kubectl get pods -n "$ns"
+            sudo -E kubectl describe deployment "$name" -n "$ns"
+            return 1
+          }
+
+          sudo -E kubectl create namespace core-app --dry-run=client -o yaml | sudo -E kubectl apply -f -
+          sudo -E kubectl create secret generic core-app-secrets -n core-app \
+            --from-literal=jwt-signing-secret='DEPLOY_SCRIPT_JWT_SIGNING_SECRET' \
+            --from-literal=internal-service-token='DEPLOY_SCRIPT_INTERNAL_SERVICE_TOKEN' \
+            --from-literal=mt-terminal-provisioner-token='DEPLOY_SCRIPT_MT_TERMINAL_PROVISIONER_TOKEN' \
+            --from-literal=postgres-app-password='DEPLOY_SCRIPT_POSTGRES_APP_PASSWORD' \
+            --dry-run=client -o yaml | sudo -E kubectl apply -f -
+          sudo -E kubectl create namespace admin-portal --dry-run=client -o yaml | sudo -E kubectl apply -f -
+          sudo -E kubectl create secret generic admin-portal-secrets -n admin-portal \
+            --from-literal=jwt-signing-secret='DEPLOY_SCRIPT_JWT_SIGNING_SECRET' \
+            --dry-run=client -o yaml | sudo -E kubectl apply -f -
+          sudo -E kubectl create namespace web --dry-run=client -o yaml | sudo -E kubectl apply -f -
+          sudo -E kubectl create secret generic web-secrets -n web \
+            --from-literal=jwt-signing-secret='DEPLOY_SCRIPT_JWT_SIGNING_SECRET' \
+            --dry-run=client -o yaml | sudo -E kubectl apply -f -
+          sudo -E kubectl create namespace copy-engine --dry-run=client -o yaml | sudo -E kubectl apply -f -
+          sudo -E kubectl create secret generic copy-engine-secrets -n copy-engine \
+            --from-literal=internal-service-token='DEPLOY_SCRIPT_INTERNAL_SERVICE_TOKEN' \
+            --from-literal=postgres-app-password='DEPLOY_SCRIPT_POSTGRES_APP_PASSWORD' \
+            --dry-run=client -o yaml | sudo -E kubectl apply -f -
+          # ctrader-client-id/secret: real values if you've set
+          # DEV_CTRADER_CLIENT_ID/SECRET, otherwise the same placeholder
+          # deploy-staging already uses — broker-adapters' main.go
+          # log.Fatalf's on an empty value (a real, live crash-loop the first
+          # time this deployed for real, not a soft-fail like the README's
+          # original "cTrader linking just won't work" assumed).
+          sudo -E kubectl create secret generic broker-adapters-secrets -n copy-engine \
+            --from-literal=internal-service-token='DEPLOY_SCRIPT_INTERNAL_SERVICE_TOKEN' \
+            --from-literal=ctrader-client-id='DEPLOY_SCRIPT_CTRADER_CLIENT_ID' \
+            --from-literal=ctrader-client-secret='DEPLOY_SCRIPT_CTRADER_CLIENT_SECRET' \
+            --dry-run=client -o yaml | sudo -E kubectl apply -f -
+          # Missing entirely until now — a real gap, not a deliberate
+          # omission (deploy-staging/production both already create these;
+          # this job just never had them copied in).
+          sudo -E kubectl create secret generic mt5-bridge-gateway-secrets -n copy-engine \
+            --from-literal=internal-service-token='DEPLOY_SCRIPT_INTERNAL_SERVICE_TOKEN' \
+            --dry-run=client -o yaml | sudo -E kubectl apply -f -
+          # No separate namespace/ServiceAccount/Role/RoleBinding apply here,
+          # unlike deploy-staging's equivalent block — those are files on the
+          # RUNNER's own checkout, which this SSH session has no access to (a
+          # real bug caught before it ever ran: the VM only ever receives the
+          # single rendered overlay file, and
+          # deploy/base/mt-terminal-host/kustomization.yaml already lists its
+          # own serviceaccount.yaml/role.yaml/rolebinding.yaml as resources,
+          # so kubectl apply -f the rendered manifest below covers all of it
+          # already, confirmed against a real render).
+          sudo -E kubectl create secret generic mt-terminal-host-secrets -n copy-engine \
+            --from-literal=internal-service-token='DEPLOY_SCRIPT_INTERNAL_SERVICE_TOKEN' \
+            --from-literal=mt-terminal-provisioner-token='DEPLOY_SCRIPT_MT_TERMINAL_PROVISIONER_TOKEN' \
+            --dry-run=client -o yaml | sudo -E kubectl apply -f -
+          # k3s has no built-in Artifact-Registry credential integration
+          # (unlike GKE) — a real imagePullSecret, minted here from the VM's
+          # OWN attached service account via the metadata server directly (no
+          # gcloud CLI installed, and no token ever transits the GitHub
+          # Actions log/command line this way). Short-lived (~1hr), refreshed
+          # on every deploy-dev run.
+          AR_TOKEN=$(curl -s -H 'Metadata-Flavor: Google' 'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token' | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
+          for ns in core-app copy-engine admin-portal web; do
+            sudo -E kubectl create secret docker-registry artifact-registry-pull -n "$ns" \
+              --docker-server=europe-west1-docker.pkg.dev \
+              --docker-username=oauth2accesstoken \
+              --docker-password="$AR_TOKEN" \
+              --dry-run=client -o yaml | sudo -E kubectl apply -f -
+          done
+          sudo -E kubectl apply -f /tmp/dev-overlay-rendered.yaml
+          wait_for_deployment core-app core-app
+          wait_for_deployment web web
+          wait_for_deployment admin-portal admin-portal
+          wait_for_deployment copy-engine copy-engine
+          wait_for_deployment copy-engine broker-adapters
+          wait_for_deployment copy-engine mt5-bridge-gateway
+          wait_for_deployment copy-engine mt-terminal-host
+          DEPLOY_SCRIPT
+          # Real secret values substituted here (not inside the heredoc
+          # above, which is deliberately 'quoted' so $ and other shell
+          # metacharacters in secret values can't be misinterpreted) via a
+          # plain sed pass — same secrets this step already used, just moved
+          # out of the inline --command string.
+          sed -i \
+            -e "s|DEPLOY_SCRIPT_JWT_SIGNING_SECRET|${{ secrets.DEV_JWT_SIGNING_SECRET }}|g" \
+            -e "s|DEPLOY_SCRIPT_INTERNAL_SERVICE_TOKEN|${{ secrets.DEV_INTERNAL_SERVICE_TOKEN }}|g" \
+            -e "s|DEPLOY_SCRIPT_MT_TERMINAL_PROVISIONER_TOKEN|${{ secrets.DEV_MT_TERMINAL_PROVISIONER_TOKEN }}|g" \
+            -e "s|DEPLOY_SCRIPT_POSTGRES_APP_PASSWORD|${{ secrets.DEV_POSTGRES_APP_PASSWORD }}|g" \
+            -e "s|DEPLOY_SCRIPT_CTRADER_CLIENT_ID|${{ secrets.DEV_CTRADER_CLIENT_ID != '' && secrets.DEV_CTRADER_CLIENT_ID || 'dev-placeholder-client-id' }}|g" \
+            -e "s|DEPLOY_SCRIPT_CTRADER_CLIENT_SECRET|${{ secrets.DEV_CTRADER_CLIENT_SECRET != '' && secrets.DEV_CTRADER_CLIENT_SECRET || 'dev-placeholder-client-secret' }}|g" \
+            /tmp/deploy-dev.sh
+          gcloud compute scp --tunnel-through-iap --zone="${{ vars.GCP_DEV_VM_ZONE }}" \
+            /tmp/deploy-dev.sh "${{ vars.GCP_DEV_VM_NAME }}:/tmp/deploy-dev.sh"
+          gcloud compute ssh --tunnel-through-iap --zone="${{ vars.GCP_DEV_VM_ZONE }}" "${{ vars.GCP_DEV_VM_NAME }}" \
+            --command="bash /tmp/deploy-dev.sh && rm /tmp/deploy-dev.sh"
 
   # deploy-staging, drain-hook verification, and the E2E smoke check are one
   # job, not three: each GitHub Actions job runs on its own fresh runner VM,
