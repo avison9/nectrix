@@ -62,15 +62,18 @@ resource "google_compute_instance" "dev" {
     # Only this instance's own SSH keys apply — a project-wide key wouldn't
     # implicitly grant access to this box too.
     block-project-ssh-keys = "true"
-    # OS Login, not metadata-based SSH keys — IAM (roles/compute.osAdminLogin,
-    # granted to ci_deploy in modules/artifact-registry) gates who can SSH in
-    # and as which POSIX user, so `gcloud compute scp/ssh --tunnel-through-iap`
-    # never needs compute.instances.setMetadata to inject a temporary key.
-    # Google's own recommended pattern for CI/CD SSH access — real, live
-    # failure the first time this ran for real: ci_deploy only had
-    # iap.tunnelResourceAccessor + compute.viewer, neither of which covers
-    # the legacy metadata-key flow gcloud falls back to without this.
-    enable-oslogin = "TRUE"
+    # NOT OS Login — tried it first (Google's own recommended pattern for
+    # CI/CD SSH access, no key management needed), but it's a real dead end
+    # here: `gcloud compute scp` crashes ("gcloud crashed (TypeError):
+    # quote_from_bytes() expected bytes") specifically when OS Login is
+    # enabled, reproduced consistently on the GitHub Actions runner's bundled
+    # Cloud SDK version (worked fine with a newer local Cloud SDK, so this is
+    # a version-specific gcloud bug, not a config mistake) — for BOTH
+    # recursive and single-file transfers, so there's no scp-shape
+    # workaround, only avoiding OS Login entirely. Falls back to the legacy
+    # metadata-SSH-key flow instead (ci_deploy granted a minimal custom role
+    # for just compute.instances.setMetadata — see
+    # modules/artifact-registry — rather than OS Login's IAM roles).
   }
 
   shielded_instance_config {
