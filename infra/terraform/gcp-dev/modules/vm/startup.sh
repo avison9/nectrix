@@ -23,10 +23,16 @@ curl -fsSL https://get.docker.com | sh
 usermod -aG docker "$(logname 2>/dev/null || echo root)" || true
 
 # k3s — single-node, single-binary Kubernetes distribution. Traefik (bundled
-# by default) becomes the one thing bound to 80/443 on this VM; disabling
-# servicelb since the static external IP is already handled at the GCE level
-# (google_compute_address), not by k3s's own LoadBalancer controller.
-curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--disable=servicelb" sh -
+# by default) becomes the one thing bound to 80/443 on this VM via servicelb
+# (klipper-lb) — NOT disabled, a real live mistake corrected after deploying
+# for real: a GCE static IP (google_compute_address) is just an address
+# attached to the VM's NIC, it does nothing on its own to bind a Kubernetes
+# Service's ports to the host — something inside the VM still has to do
+# that, which is exactly servicelb's job on a bare-metal/single-node install
+# with no cloud LB integration. Without it, Traefik's LoadBalancer Service
+# sat at EXTERNAL-IP <pending> forever and nothing was listening on 80/443
+# at all.
+curl -sfL https://get.k3s.io | sh -
 
 # So a non-root operator (via IAP SSH) can run kubectl without sudo.
 mkdir -p /etc/rancher/k3s
