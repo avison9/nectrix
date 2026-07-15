@@ -1,5 +1,5 @@
 # A DELEGATED CHILD ZONE for dev.<domain>, not a zone for the apex domain
-# itself — deliberately narrower than "move nectrix.dev's DNS into Google
+# itself — deliberately narrower than "move nectrix.app's DNS into Google
 # Cloud DNS". The apex zone (and whatever MX/root records it carries today)
 # stays exactly wherever it already lives; only the "dev" subtree is
 # delegated here. The one manual step (see root README/outputs.tf): add an

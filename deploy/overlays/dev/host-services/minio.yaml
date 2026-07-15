@@ -37,7 +37,7 @@ metadata:
   namespace: host-services
 spec:
   rules:
-    - host: minio.dev.nectrix.dev
+    - host: minio.dev.nectrix.app
       http:
         paths:
           - path: /

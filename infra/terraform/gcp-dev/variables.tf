@@ -5,13 +5,13 @@ variable "project_id" {
 
 variable "region" {
   type    = string
-  default = "us-central1"
+  default = "europe-west1"
 }
 
 variable "zone" {
   description = "Compute zone within region for the VM"
   type        = string
-  default     = "us-central1-a"
+  default     = "europe-west1-b"
 }
 
 variable "machine_type" {
@@ -26,13 +26,13 @@ variable "boot_disk_size_gb" {
 }
 
 variable "domain" {
-  description = "The paid apex domain (nectrix.dev) — this module only creates a delegated child zone for dev_subdomain, never touches the apex zone's own records"
+  description = "The paid apex domain (nectrix.app) — this module only creates a delegated child zone for dev_subdomain, never touches the apex zone's own records"
   type        = string
-  default     = "nectrix.dev"
+  default     = "nectrix.app"
 }
 
 variable "dev_subdomain" {
-  description = "The delegated subtree this module owns end-to-end, e.g. \"dev\" -> dev.nectrix.dev"
+  description = "The delegated subtree this module owns end-to-end, e.g. \"dev\" -> dev.nectrix.app"
   type        = string
   default     = "dev"
 }
