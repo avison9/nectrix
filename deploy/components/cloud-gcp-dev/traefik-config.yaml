@@ -15,6 +15,14 @@ spec:
     additionalArguments:
       - "--certificatesresolvers.letsencrypt.acme.httpchallenge=true"
       - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
-      - "--certificatesresolvers.letsencrypt.acme.email=REPLACE_WITH_REAL_CONTACT_EMAIL"
+      # Real, live failure the first time this actually tried to issue a
+      # cert: Let's Encrypt rejects account registration outright
+      # ("invalidContact: unable to parse email address") on a literal
+      # placeholder, not just a soft warning — this has to be a real,
+      # validly-formatted address before ANY cert on this VM can issue,
+      # not only a "nice to have" for renewal notices. admin@ on the domain
+      # this Terraform module already manages DNS for; swap for a real
+      # monitored address if you want renewal-failure notices to reach you.
+      - "--certificatesresolvers.letsencrypt.acme.email=admin@nectrix.app"
       - "--certificatesresolvers.letsencrypt.acme.storage=/data/acme.json"
       - "--entrypoints.websecure.http.tls.certresolver=letsencrypt"
