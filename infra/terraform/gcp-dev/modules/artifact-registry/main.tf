@@ -97,15 +97,24 @@ resource "google_project_iam_member" "ci_deploy_compute_viewer" {
   member  = "serviceAccount:${google_service_account.ci_deploy.email}"
 }
 
-# OS Login with sudo — lets gcloud compute scp/ssh --tunnel-through-iap
-# authenticate via IAM instead of injecting a temporary SSH key into instance
-# metadata (which needs compute.instances.setMetadata, not granted here on
-# purpose — see modules/vm's enable-oslogin metadata note). *Admin* login
-# specifically (not the plain osLogin role) since deploy-dev's steps run
-# `sudo -E kubectl`/`docker compose` on the box.
-resource "google_project_iam_member" "ci_deploy_os_admin_login" {
+# A minimal custom role — just compute.instances.setMetadata, not the much
+# broader roles/compute.instanceAdmin.v1 Google's own docs point at for this.
+# Lets gcloud compute scp/ssh --tunnel-through-iap inject a temporary SSH key
+# into instance metadata for this one SSH session. NOT OS Login (tried
+# first, see modules/vm's metadata block note) — OS Login crashes gcloud's
+# own scp code on the GitHub Actions runner's bundled Cloud SDK version, a
+# real client-side bug reproduced consistently there (worked fine with a
+# newer local Cloud SDK), not a permissions problem.
+resource "google_project_iam_custom_role" "ssh_key_setter" {
+  role_id     = "nectrixDevSshKeySetter"
+  title       = "SSH key metadata setter (nectrix-dev)"
+  description = "compute.instances.setMetadata only — lets CI inject a temporary SSH key for gcloud compute scp/ssh, without OS Login's IAM-based login (which hits a real gcloud client bug on GitHub Actions' runner image)."
+  permissions = ["compute.instances.setMetadata"]
+}
+
+resource "google_project_iam_member" "ci_deploy_ssh_key_setter" {
   project = var.project_id
-  role    = "roles/compute.osAdminLogin"
+  role    = google_project_iam_custom_role.ssh_key_setter.name
   member  = "serviceAccount:${google_service_account.ci_deploy.email}"
 }
 
