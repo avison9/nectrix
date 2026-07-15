@@ -265,22 +265,44 @@ jobs:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_CI_DEPLOY_SERVICE_ACCOUNT }}
       - name: Copy infra/gcp-dev-vm to the VM
+        # A single tarball, not `gcloud compute scp --recurse` — real, live
+        # failure the first time this ran with OS Login enabled (see
+        # modules/vm's enable-oslogin note): recursive scp crashes gcloud
+        # itself ("gcloud crashed (TypeError): quote_from_bytes() expected
+        # bytes"), a known client-side bug in how it builds the recursive
+        # copy's OS-Login-derived remote path. A single non-recursive file
+        # transfer avoids that code path entirely.
         run: |
-          gcloud compute scp --tunnel-through-iap --recurse --zone="${{ vars.GCP_DEV_VM_ZONE }}" \
-            infra/gcp-dev-vm "${{ vars.GCP_DEV_VM_NAME }}:/opt/nectrix-dev-vm/compose"
+          tar czf /tmp/gcp-dev-vm.tar.gz -C infra gcp-dev-vm
+          gcloud compute scp --tunnel-through-iap --zone="${{ vars.GCP_DEV_VM_ZONE }}" \
+            /tmp/gcp-dev-vm.tar.gz "${{ vars.GCP_DEV_VM_NAME }}:/tmp/gcp-dev-vm.tar.gz"
+          gcloud compute ssh --tunnel-through-iap --zone="${{ vars.GCP_DEV_VM_ZONE }}" "${{ vars.GCP_DEV_VM_NAME }}" --command="
+            set -euo pipefail
+            sudo rm -rf /opt/nectrix-dev-vm/compose
+            sudo mkdir -p /opt/nectrix-dev-vm/compose
+            sudo tar xzf /tmp/gcp-dev-vm.tar.gz -C /opt/nectrix-dev-vm/compose --strip-components=1
+            rm /tmp/gcp-dev-vm.tar.gz
+          "
       - name: Bring up the docker-compose stateful-services stack
+        # /opt/nectrix-dev-vm is root-owned (created by the startup script,
+        # which runs as root — see modules/vm/startup.sh) and this job's
+        # OS-Login user isn't in the docker group (only whichever user
+        # `logname` resolved to at boot time got added there) — sudo
+        # throughout, and `sudo tee -a` rather than `cat >>` since a plain
+        # `>>` redirect happens in the invoking (non-root) shell before sudo
+        # ever runs, not inside the sudo'd process.
         run: |
           gcloud compute ssh --tunnel-through-iap --zone="${{ vars.GCP_DEV_VM_ZONE }}" "${{ vars.GCP_DEV_VM_NAME }}" --command="
             set -euo pipefail
             cd /opt/nectrix-dev-vm/compose
-            bash render-node-ip.sh
-            cat >> .env <<EOF
+            sudo bash render-node-ip.sh
+            sudo tee -a .env >/dev/null <<EOF
           POSTGRES_PASSWORD=${{ secrets.DEV_POSTGRES_PASSWORD }}
           POSTGRES_APP_PASSWORD=${{ secrets.DEV_POSTGRES_APP_PASSWORD }}
           MINIO_ROOT_PASSWORD=${{ secrets.DEV_MINIO_ROOT_PASSWORD }}
           EOF
-            docker compose -f docker-compose.yml pull
-            docker compose -f docker-compose.yml up -d --wait
+            sudo docker compose -f docker-compose.yml pull
+            sudo docker compose -f docker-compose.yml up -d --wait
           "
 
   db-migration-dev:
@@ -304,14 +326,30 @@ jobs:
       # Java/Go/Python install, see modules/vm/startup.sh, is for ad hoc
       # operator debugging only).
       - name: Open IAP tunnel to the VM's Postgres
+        # The wait-loop used to have no failure check at all — a real gap
+        # that masked the actual root cause the first time this failed for
+        # real (the tunnel silently never came up because the firewall only
+        # allowed the IAP range on port 22, not 5432 — see
+        # infra/terraform/gcp-dev/modules/vm's allow_iap rule); the step
+        # reported success regardless and Liquibase just hit a bare
+        # "connection refused" later with no clue why. Failing loudly here
+        # instead if the tunnel genuinely never opens.
         run: |
           gcloud compute start-iap-tunnel "${{ vars.GCP_DEV_VM_NAME }}" 5432 \
             --local-host-port=localhost:5432 \
             --zone="${{ vars.GCP_DEV_VM_ZONE }}" &
-          for _ in $(seq 1 15); do
-            (echo > /dev/tcp/localhost/5432) 2>/dev/null && break
+          connected=false
+          for _ in $(seq 1 20); do
+            if (echo > /dev/tcp/localhost/5432) 2>/dev/null; then
+              connected=true
+              break
+            fi
             sleep 1
           done
+          if [ "$connected" != "true" ]; then
+            echo "::error::IAP tunnel to the VM's Postgres never came up after 20s"
+            exit 1
+          fi
       - uses: actions/setup-java@v5.4.0
         with:
           distribution: temurin
@@ -415,8 +453,12 @@ jobs:
         run: |
           kubectl kustomize deploy/overlays/dev > /tmp/dev-overlay-rendered.yaml
           sed -i "s|NODE_INTERNAL_IP_REPLACED_BY_CI|${{ vars.GCP_DEV_VM_INTERNAL_IP }}|g" /tmp/dev-overlay-rendered.yaml
+          # /tmp on the remote, not /opt/nectrix-dev-vm — that directory is
+          # root-owned (mode 755, see provision-dev-host-services' identical
+          # note) and gcloud compute scp's single-file transfer has no sudo
+          # mechanism of its own to write there directly.
           gcloud compute scp --tunnel-through-iap --zone="${{ vars.GCP_DEV_VM_ZONE }}" \
-            /tmp/dev-overlay-rendered.yaml "${{ vars.GCP_DEV_VM_NAME }}:/opt/nectrix-dev-vm/dev-overlay-rendered.yaml"
+            /tmp/dev-overlay-rendered.yaml "${{ vars.GCP_DEV_VM_NAME }}:/tmp/dev-overlay-rendered.yaml"
       - name: Create/refresh namespaces + secrets, apply the rendered manifest
         # Real, stable secret values (unlike deploy-staging's throwaway
         # ones) — this environment persists, so JWT_SIGNING_SECRET etc must
@@ -451,7 +493,7 @@ jobs:
               --from-literal=ctrader-client-id='${{ secrets.DEV_CTRADER_CLIENT_ID }}' \
               --from-literal=ctrader-client-secret='${{ secrets.DEV_CTRADER_CLIENT_SECRET }}' \
               --dry-run=client -o yaml | sudo -E kubectl apply -f -
-            sudo -E kubectl apply -f /opt/nectrix-dev-vm/dev-overlay-rendered.yaml
+            sudo -E kubectl apply -f /tmp/dev-overlay-rendered.yaml
             sudo -E kubectl -n core-app rollout status deployment/core-app --timeout=180s
             sudo -E kubectl -n web rollout status deployment/web --timeout=180s
             sudo -E kubectl -n admin-portal rollout status deployment/admin-portal --timeout=180s
