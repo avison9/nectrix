@@ -493,6 +493,20 @@ jobs:
               --from-literal=ctrader-client-id='${{ secrets.DEV_CTRADER_CLIENT_ID }}' \
               --from-literal=ctrader-client-secret='${{ secrets.DEV_CTRADER_CLIENT_SECRET }}' \
               --dry-run=client -o yaml | sudo -E kubectl apply -f -
+            # k3s has no built-in Artifact-Registry credential integration
+            # (unlike GKE) — a real imagePullSecret, minted here from the
+            # VM's OWN attached service account via the metadata server
+            # directly (no gcloud CLI installed, and no token ever transits
+            # the GitHub Actions log/command line this way). Short-lived
+            # (~1hr), refreshed on every deploy-dev run.
+            AR_TOKEN=\$(curl -s -H 'Metadata-Flavor: Google' 'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token' | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"access_token\"])')
+            for ns in core-app copy-engine admin-portal web; do
+              sudo -E kubectl create secret docker-registry artifact-registry-pull -n \$ns \
+                --docker-server=europe-west1-docker.pkg.dev \
+                --docker-username=oauth2accesstoken \
+                --docker-password=\"\$AR_TOKEN\" \
+                --dry-run=client -o yaml | sudo -E kubectl apply -f -
+            done
             sudo -E kubectl apply -f /tmp/dev-overlay-rendered.yaml
             sudo -E kubectl -n core-app rollout status deployment/core-app --timeout=180s
             sudo -E kubectl -n web rollout status deployment/web --timeout=180s

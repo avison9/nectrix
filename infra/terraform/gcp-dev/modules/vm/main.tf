@@ -1,8 +1,13 @@
 # A dedicated, minimal service account for the VM itself — not the project's
 # default Compute Engine SA (which typically carries a broad Editor role).
-# Granted only artifactregistry.reader (below) so k3s's containerd can pull
-# images natively, no imagePullSecret needed — same pattern
-# infra/terraform/gcp/modules/gke uses for its node pool's own dedicated SA.
+# Granted artifactregistry.reader below — real, live finding: not enough on
+# its own for k3s's containerd to actually pull images (ImagePullBackOff/403s
+# the first time pods needed to pull — k3s has none of GKE's built-in
+# Artifact-Registry credential integration). The real fix is a Kubernetes
+# imagePullSecret (see deploy/overlays/dev's kustomization.yaml), minted by
+# deploy-dev (main-pipeline.yml) from THIS SAME grant via the VM's own
+# metadata-server token endpoint — this reader role is exactly what makes
+# that token usable for pulls, not redundant with the imagePullSecret fix.
 resource "google_service_account" "vm" {
   account_id   = "${var.name}-vm"
   display_name = "nectrix dev VM (k3s node + docker-compose host)"
