@@ -30,6 +30,7 @@ module "vm" {
 
   artifact_registry_repository_id = module.artifact_registry.repository_id
   artifact_registry_location      = module.artifact_registry.location
+  ci_deploy_service_account_email = module.artifact_registry.ci_deploy_service_account_email
 }
 
 module "dns" {

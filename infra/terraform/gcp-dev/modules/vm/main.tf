@@ -15,6 +15,19 @@ resource "google_artifact_registry_repository_iam_member" "vm_reader" {
   member     = "serviceAccount:${google_service_account.vm.email}"
 }
 
+# The legacy metadata-SSH-key flow (gcloud compute scp/ssh, not OS Login —
+# see the metadata block's note below) requires whoever connects to also be
+# an accepted "user" of the TARGET INSTANCE's own service account, not just
+# hold compute/IAP permissions generally — a real, live gap the first time
+# this ran after the OS Login revert: ci_deploy could open the IAP tunnel
+# fine but gcloud refused to inject its SSH key with "The user does not have
+# access to service account 'nectrix-dev-vm@...'".
+resource "google_service_account_iam_member" "ci_deploy_can_use_vm_sa" {
+  service_account_id = google_service_account.vm.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${var.ci_deploy_service_account_email}"
+}
+
 resource "google_compute_address" "dev" {
   name   = "${var.name}-static-ip"
   region = var.region
