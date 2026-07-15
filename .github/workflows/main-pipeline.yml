@@ -243,8 +243,48 @@ jobs:
   # staging's placeholder below) genuinely runs against a real, persistent
   # Postgres. No-op (skipped, not failed) until vars.GCP_DEV_VM_NAME is set —
   # see infra/terraform/gcp-dev/README.md's credentials/manual-steps list.
-  db-migration-dev:
+  # Runs BEFORE db-migration-dev/deploy-dev deliberately — a real, live
+  # failure the first time this pipeline ran for real: db-migration-dev tried
+  # to connect to the VM's Postgres before anything had ever started it
+  # (docker-compose only used to get brought up as part of deploy-dev, which
+  # itself only runs AFTER db-migration-dev succeeds — a chicken-and-egg
+  # ordering bug). Bringing the compose stack up first, in its own job, fixes
+  # it for both the first-ever deploy and every one after (docker compose up
+  # is idempotent — a no-op restart if nothing changed).
+  provision-dev-host-services:
     needs: [build-scan-push]
+    runs-on: ubuntu-latest
+    if: vars.GCP_DEV_VM_NAME != ''
+    permissions:
+      contents: read
+      id-token: write # for the WIF auth step below
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: google-github-actions/auth@v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_CI_DEPLOY_SERVICE_ACCOUNT }}
+      - name: Copy infra/gcp-dev-vm to the VM
+        run: |
+          gcloud compute scp --tunnel-through-iap --recurse --zone="${{ vars.GCP_DEV_VM_ZONE }}" \
+            infra/gcp-dev-vm "${{ vars.GCP_DEV_VM_NAME }}:/opt/nectrix-dev-vm/compose"
+      - name: Bring up the docker-compose stateful-services stack
+        run: |
+          gcloud compute ssh --tunnel-through-iap --zone="${{ vars.GCP_DEV_VM_ZONE }}" "${{ vars.GCP_DEV_VM_NAME }}" --command="
+            set -euo pipefail
+            cd /opt/nectrix-dev-vm/compose
+            bash render-node-ip.sh
+            cat >> .env <<EOF
+          POSTGRES_PASSWORD=${{ secrets.DEV_POSTGRES_PASSWORD }}
+          POSTGRES_APP_PASSWORD=${{ secrets.DEV_POSTGRES_APP_PASSWORD }}
+          MINIO_ROOT_PASSWORD=${{ secrets.DEV_MINIO_ROOT_PASSWORD }}
+          EOF
+            docker compose -f docker-compose.yml pull
+            docker compose -f docker-compose.yml up -d --wait
+          "
+
+  db-migration-dev:
+    needs: [provision-dev-host-services]
     runs-on: ubuntu-latest
     if: vars.GCP_DEV_VM_NAME != ''
     permissions:
@@ -258,10 +298,11 @@ jobs:
           service_account: ${{ vars.GCP_CI_DEPLOY_SERVICE_ACCOUNT }}
       # Runs ./gradlew :db:update on THIS runner (which already has the full
       # repo checkout + Java/Gradle, same as the integration-test job above),
-      # tunneled to the VM's docker-compose Postgres over IAP — not on the VM
-      # itself, so the VM never needs a Gradle/full-source checkout of its
-      # own (its Java/Go/Python install, see modules/vm/startup.sh, is for ad
-      # hoc operator debugging only).
+      # tunneled to the VM's docker-compose Postgres over IAP (now guaranteed
+      # up by provision-dev-host-services above) — not on the VM itself, so
+      # the VM never needs a Gradle/full-source checkout of its own (its
+      # Java/Go/Python install, see modules/vm/startup.sh, is for ad hoc
+      # operator debugging only).
       - name: Open IAP tunnel to the VM's Postgres
         run: |
           gcloud compute start-iap-tunnel "${{ vars.GCP_DEV_VM_NAME }}" 5432 \
@@ -290,14 +331,19 @@ jobs:
   db-migration-staging:
     # Same "must come after the previous tier" chain deploy-production's own
     # needs: [deploy-staging] already enforces — mirrored one tier down.
-    # deploy-dev runs (and must succeed) before this, EXCEPT it's a no-op
-    # (result: skipped, not failed) until vars.GCP_DEV_VM_NAME is set (see
-    # infra/terraform/gcp-dev/README.md) — the explicit `if:` below tolerates
-    # that skip so staging/production keep working exactly as before until
-    # dev is actually provisioned, while still genuinely blocking on a real
-    # deploy-dev failure once it is.
+    # deploy-dev must succeed before this proceeds. The `if:` checks
+    # vars.GCP_DEV_VM_NAME directly (not needs.deploy-dev.result == 'skipped')
+    # deliberately — deploy-dev's result is ALSO 'skipped' when it's skipped
+    # because db-migration-dev genuinely failed upstream (GitHub Actions'
+    # default skip-on-failed-dependency behavior), which a bare
+    # result=='skipped' check can't tell apart from "dev isn't configured
+    # yet" — a real gap caught live the first time db-migration-dev actually
+    # failed (a real Postgres-not-up-yet bug) and staging proceeded anyway.
+    # Checking the var directly closes that hole: only an unset
+    # GCP_DEV_VM_NAME counts as "intentionally not configured", every other
+    # non-success result genuinely blocks.
     needs: [deploy-dev]
-    if: always() && (needs.deploy-dev.result == 'success' || needs.deploy-dev.result == 'skipped')
+    if: always() && (needs.deploy-dev.result == 'success' || vars.GCP_DEV_VM_NAME == '')
     runs-on: ubuntu-latest
     steps:
       - run: |
@@ -356,33 +402,21 @@ jobs:
       #   for app in core-app copy-engine broker-adapters mt5-bridge-gateway mt-terminal-host admin-portal web; do
       #     kustomize edit set image "ghcr.io/avison9/nectrix/$app=ghcr.io/avison9/nectrix/$app:${{ github.sha }}"
       #   done
-      - name: Render the dev overlay + copy it, deploy/base, deploy/components, and infra/gcp-dev-vm to the VM
+      - name: Render the dev overlay + copy it to the VM
         # NODE_INTERNAL_IP_REPLACED_BY_CI (deploy/overlays/dev/host-services'
         # Endpoints objects) is a stable value — infra/terraform/gcp-dev's own
         # vm_internal_ip output, set once as the GCP_DEV_VM_INTERNAL_IP repo
         # variable — substituted here the same REPLACED_BY_CI-sentinel way
-        # deploy-staging patches TERMINAL_IMAGE.
+        # deploy-staging patches TERMINAL_IMAGE. The docker-compose stack
+        # itself (infra/gcp-dev-vm) is already up by now — see
+        # provision-dev-host-services above, which runs before
+        # db-migration-dev/this job specifically so migrations have a real
+        # Postgres to connect to.
         run: |
           kubectl kustomize deploy/overlays/dev > /tmp/dev-overlay-rendered.yaml
           sed -i "s|NODE_INTERNAL_IP_REPLACED_BY_CI|${{ vars.GCP_DEV_VM_INTERNAL_IP }}|g" /tmp/dev-overlay-rendered.yaml
           gcloud compute scp --tunnel-through-iap --zone="${{ vars.GCP_DEV_VM_ZONE }}" \
             /tmp/dev-overlay-rendered.yaml "${{ vars.GCP_DEV_VM_NAME }}:/opt/nectrix-dev-vm/dev-overlay-rendered.yaml"
-          gcloud compute scp --tunnel-through-iap --recurse --zone="${{ vars.GCP_DEV_VM_ZONE }}" \
-            infra/gcp-dev-vm "${{ vars.GCP_DEV_VM_NAME }}:/opt/nectrix-dev-vm/compose"
-      - name: Refresh the docker-compose stateful-services stack
-        run: |
-          gcloud compute ssh --tunnel-through-iap --zone="${{ vars.GCP_DEV_VM_ZONE }}" "${{ vars.GCP_DEV_VM_NAME }}" --command="
-            set -euo pipefail
-            cd /opt/nectrix-dev-vm/compose
-            bash render-node-ip.sh
-            cat >> .env <<EOF
-          POSTGRES_PASSWORD=${{ secrets.DEV_POSTGRES_PASSWORD }}
-          POSTGRES_APP_PASSWORD=${{ secrets.DEV_POSTGRES_APP_PASSWORD }}
-          MINIO_ROOT_PASSWORD=${{ secrets.DEV_MINIO_ROOT_PASSWORD }}
-          EOF
-            docker compose -f docker-compose.yml pull
-            docker compose -f docker-compose.yml up -d
-          "
       - name: Create/refresh namespaces + secrets, apply the rendered manifest
         # Real, stable secret values (unlike deploy-staging's throwaway
         # ones) — this environment persists, so JWT_SIGNING_SECRET etc must
