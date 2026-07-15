@@ -49,18 +49,38 @@ export default function LoginPage() {
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-[var(--bg)] px-4">
-      <div className="w-full max-w-[360px] rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-7">
-        <h1 className="text-[20px] font-semibold tracking-tight text-[var(--text)]">Nectrix</h1>
-        <p className="mt-1.5 text-[13px] text-[var(--text-2)]">
-          {step === "credentials"
-            ? "Sign in to link and manage your broker accounts."
-            : `Enter the 2FA code for ${email}.`}
-        </p>
+      <div className="w-full max-w-[400px]">
+        <div className="mb-[26px] flex flex-col items-center text-center">
+          <div className="mb-4 flex h-[46px] w-[46px] items-center justify-center rounded-[13px] bg-[var(--accent)]">
+            <svg
+              viewBox="0 0 24 24"
+              width={24}
+              height={24}
+              fill="none"
+              stroke="#fff"
+              strokeWidth={2.1}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M5 19V7l7 5 7-5v12" />
+            </svg>
+          </div>
+          <h1 className="text-[22px] font-semibold tracking-tight text-[var(--text)]">
+            Sign in to Nectrix
+          </h1>
+          <p className="mt-2 text-[13.5px] leading-[1.5] text-[var(--text-2)]">
+            {step === "credentials"
+              ? "Sign in to link and manage your broker accounts."
+              : `Enter the 2FA code for ${email}.`}
+          </p>
+        </div>
 
-        {step === "credentials" ? (
-          <form key="credentials" onSubmit={submitCredentials} className="mt-6 flex flex-col gap-3.5">
-            <label className="flex flex-col gap-1.5">
-              <span className="text-[12.5px] font-medium text-[var(--text-2)]">Email</span>
+        <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-6">
+          {step === "credentials" ? (
+            <form key="credentials" onSubmit={submitCredentials} className="flex flex-col">
+              <label className="mb-1.5 block text-xs font-semibold text-[var(--text-2)]">
+                Email
+              </label>
               <input
                 type="email"
                 required
@@ -68,15 +88,13 @@ export default function LoginPage() {
                 autoComplete="username"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="h-10 rounded-[10px] border border-[var(--border)] bg-transparent px-3 text-[13.5px] text-[var(--text)] outline-none focus:border-[var(--accent)]"
+                className="mb-3.5 h-11 w-full rounded-[11px] border border-[var(--border)] bg-transparent px-3.5 text-sm text-[var(--text)] outline-none focus:border-[var(--accent)]"
               />
-            </label>
 
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor="password" className="text-[12.5px] font-medium text-[var(--text-2)]">
+              <label htmlFor="password" className="mb-1.5 block text-xs font-semibold text-[var(--text-2)]">
                 Password
               </label>
-              <div className="relative flex items-center">
+              <div className="relative mb-4.5 flex items-center">
                 <input
                   id="password"
                   type={showPassword ? "text" : "password"}
@@ -84,7 +102,7 @@ export default function LoginPage() {
                   autoComplete="current-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="h-10 w-full rounded-[10px] border border-[var(--border)] bg-transparent px-3 pr-10 text-[13.5px] text-[var(--text)] outline-none focus:border-[var(--accent)]"
+                  className="h-11 w-full rounded-[11px] border border-[var(--border)] bg-transparent px-3.5 pr-10 text-sm text-[var(--text)] outline-none focus:border-[var(--accent)]"
                 />
                 <button
                   type="button"
@@ -125,22 +143,22 @@ export default function LoginPage() {
                   )}
                 </button>
               </div>
-            </div>
 
-            {error && <p className="text-[12.5px] text-[var(--neg)]">{error}</p>}
+              {error && <p className="mb-3.5 text-[12.5px] text-[var(--neg)]">{error}</p>}
 
-            <button
-              type="submit"
-              disabled={pending}
-              className="mt-1.5 h-[42px] rounded-[11px] bg-[var(--accent)] text-[13.5px] font-semibold text-white transition-opacity disabled:opacity-60"
-            >
-              {pending ? "Signing in…" : "Sign in"}
-            </button>
-          </form>
-        ) : (
-          <form key="totp" onSubmit={submitTotp} className="mt-6 flex flex-col gap-3.5">
-            <label className="flex flex-col gap-1.5">
-              <span className="text-[12.5px] font-medium text-[var(--text-2)]">2FA code</span>
+              <button
+                type="submit"
+                disabled={pending}
+                className="h-[46px] rounded-[11px] bg-[var(--accent)] text-sm font-semibold text-white transition-all hover:-translate-y-px hover:opacity-95 disabled:opacity-60 disabled:hover:translate-y-0"
+              >
+                {pending ? "Signing in…" : "Sign in"}
+              </button>
+            </form>
+          ) : (
+            <form key="totp" onSubmit={submitTotp} className="flex flex-col">
+              <label className="mb-1.5 block text-xs font-semibold text-[var(--text-2)]">
+                2FA code
+              </label>
               <input
                 name="totpCode"
                 type="text"
@@ -148,32 +166,32 @@ export default function LoginPage() {
                 autoFocus
                 inputMode="numeric"
                 autoComplete="one-time-code"
-                className="h-10 rounded-[10px] border border-[var(--border)] bg-transparent px-3 font-mono text-[13.5px] text-[var(--text)] outline-none focus:border-[var(--accent)]"
+                className="mb-4.5 h-11 w-full rounded-[11px] border border-[var(--border)] bg-transparent px-3.5 font-mono text-sm text-[var(--text)] outline-none focus:border-[var(--accent)]"
               />
-            </label>
 
-            {error && <p className="text-[12.5px] text-[var(--neg)]">{error}</p>}
+              {error && <p className="mb-3.5 text-[12.5px] text-[var(--neg)]">{error}</p>}
 
-            <button
-              type="submit"
-              disabled={pending}
-              className="mt-1.5 h-[42px] rounded-[11px] bg-[var(--accent)] text-[13.5px] font-semibold text-white transition-opacity disabled:opacity-60"
-            >
-              {pending ? "Verifying…" : "Verify"}
-            </button>
+              <button
+                type="submit"
+                disabled={pending}
+                className="h-[46px] rounded-[11px] bg-[var(--accent)] text-sm font-semibold text-white transition-all hover:-translate-y-px hover:opacity-95 disabled:opacity-60 disabled:hover:translate-y-0"
+              >
+                {pending ? "Verifying…" : "Verify"}
+              </button>
 
-            <button
-              type="button"
-              onClick={() => {
-                setStep("credentials");
-                setError(undefined);
-              }}
-              className="text-[12.5px] font-medium text-[var(--text-2)] underline-offset-2 hover:underline"
-            >
-              Back
-            </button>
-          </form>
-        )}
+              <button
+                type="button"
+                onClick={() => {
+                  setStep("credentials");
+                  setError(undefined);
+                }}
+                className="mt-3.5 text-[12.5px] font-medium text-[var(--text-2)] underline-offset-2 hover:underline"
+              >
+                Back
+              </button>
+            </form>
+          )}
+        </div>
       </div>
     </main>
   );
