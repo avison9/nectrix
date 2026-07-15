@@ -25,18 +25,18 @@ patches:
     patch: |-
       - op: replace
         path: /spec/rules/0/host
-        value: app.dev.nectrix.dev
+        value: app.dev.nectrix.app
   - target:
       kind: Ingress
       name: admin-portal
     patch: |-
       - op: replace
         path: /spec/rules/0/host
-        value: portal.dev.nectrix.dev
+        value: portal.dev.nectrix.app
   - target:
       kind: Ingress
       name: gateway
     patch: |-
       - op: replace
         path: /spec/rules/0/host
-        value: api.dev.nectrix.dev
+        value: api.dev.nectrix.app

@@ -1,5 +1,5 @@
 variable "domain" {
-  description = "Apex domain, e.g. nectrix.dev"
+  description = "Apex domain, e.g. nectrix.app"
   type        = string
 }
 

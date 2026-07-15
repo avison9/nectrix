@@ -6,14 +6,9 @@
 # annoying enough to justify moving to the GCS backend as the very first
 # step, not a someday-later migration.
 #
-# Once bootstrap/ has run, uncomment this and run `terraform init -migrate-state`:
-#
-# terraform {
-#   backend "gcs" {
-#     bucket = "nectrix-terraform-state-gcp-dev"
-#     prefix = "gcp-dev/state"
-#   }
-# }
 terraform {
-  backend "local" {}
+  backend "gcs" {
+    bucket = "nectrix-terraform-state-gcp-dev"
+    prefix = "gcp-dev/state"
+  }
 }

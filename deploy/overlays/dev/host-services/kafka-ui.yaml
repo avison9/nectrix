@@ -1,7 +1,7 @@
 # kafka-ui isn't a k8s Deployment — it's a docker-compose container on this
 # same VM (network_mode: host), fronted here the same no-selector-Service way
 # postgres.yaml is, but ALSO given a public Ingress since (unlike Postgres)
-# it's meant to be browsed directly at kafka-ui.dev.nectrix.dev.
+# it's meant to be browsed directly at kafka-ui.dev.nectrix.app.
 apiVersion: v1
 kind: Service
 metadata:
@@ -30,7 +30,7 @@ metadata:
   namespace: host-services
 spec:
   rules:
-    - host: kafka-ui.dev.nectrix.dev
+    - host: kafka-ui.dev.nectrix.app
       http:
         paths:
           - path: /

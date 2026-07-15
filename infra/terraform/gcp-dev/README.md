@@ -58,7 +58,7 @@ alternative, not a replacement for that module.
    | `GCP_CI_DEPLOY_SERVICE_ACCOUNT` | `ci_deploy_service_account_email` |
    | `GCP_DEV_VM_NAME` / `GCP_DEV_VM_ZONE` | `vm_instance_name` / `var.zone` |
    | `GCP_DEV_VM_INTERNAL_IP` | `vm_internal_ip` |
-6. DNS: at whichever registrar/DNS provider manages `nectrix.dev` today, add
+6. DNS: at whichever registrar/DNS provider manages `nectrix.app` today, add
    an **NS record for the `dev` subdomain** pointing at the 4 name servers in
    the `dns_name_servers` output. This does not touch the apex domain's own
    records (root site, MX, etc.) at all.
