@@ -1,0 +1,49 @@
+# Same shape as kafka-ui.yaml. Only the console port (9001) gets a public
+# Ingress — the S3 API port (9000) stays cluster-internal-only, reached via
+# in-cluster Service DNS (minio.host-services.svc.cluster.local:9000) by
+# whichever app services use it, same as local dev's MinIO usage.
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: host-services
+spec:
+  ports:
+    - name: api
+      port: 9000
+      targetPort: 9000
+    - name: console
+      port: 9001
+      targetPort: 9001
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: minio
+  namespace: host-services
+subsets:
+  - addresses:
+      - ip: NODE_INTERNAL_IP_REPLACED_BY_CI
+    ports:
+      - name: api
+        port: 9000
+      - name: console
+        port: 9001
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: minio-console
+  namespace: host-services
+spec:
+  rules:
+    - host: minio.dev.nectrix.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: minio
+                port:
+                  number: 9001

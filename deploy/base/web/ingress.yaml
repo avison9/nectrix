@@ -1,0 +1,21 @@
+# Cloud-agnostic on purpose — see deploy/base/gateway/ingress.yaml for the same
+# note. Distinct domain from admin-portal per docs/13-technology-stack.md
+# §13.3 (app.example.com vs. portal.example.com) — independently controllable
+# auth/CORS/network exposure.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web
+  namespace: web
+spec:
+  rules:
+    - host: app.nectrix.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  number: 8080

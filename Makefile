@@ -17,7 +17,7 @@
 # only unwinds the 42 core changesets, not the additional dev-context ones.
 DB_CHANGESET_COUNT = 42
 
-TF_DIRS = infra/terraform/aws infra/terraform/gcp
+TF_DIRS = infra/terraform/aws infra/terraform/gcp infra/terraform/gcp-dev
 
 COMPOSE = docker compose -f docker-compose.yml -f .devcontainer/docker-compose.yml
 DC_EXEC = $(COMPOSE) exec devcontainer

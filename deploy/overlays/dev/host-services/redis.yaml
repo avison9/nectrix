@@ -1,0 +1,21 @@
+# See postgres.yaml's comment for why this Service has no selector.
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: host-services
+spec:
+  ports:
+    - port: 6379
+      targetPort: 6379
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: redis
+  namespace: host-services
+subsets:
+  - addresses:
+      - ip: NODE_INTERNAL_IP_REPLACED_BY_CI
+    ports:
+      - port: 6379

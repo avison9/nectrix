@@ -135,6 +135,10 @@ jobs:
           # false means it never blocks the other legs.
           - { name: mt-terminal-image, dockerfile: apps/mt-terminal-host/terminal-image/Dockerfile }
           - { name: admin-portal, dockerfile: apps/admin-portal/Dockerfile }
+          # TICKET-110 — apps/web (the follower/master-facing broker-linking
+          # app) had no Dockerfile/image at all until this ticket; it only
+          # ever ran via `next dev`.
+          - { name: web, dockerfile: apps/web/Dockerfile }
     steps:
       - uses: actions/checkout@v7.0.0
       - uses: docker/setup-buildx-action@v4.2.0
@@ -233,8 +237,67 @@ jobs:
           docker tag "${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.app.name }}:${{ github.sha }}" "$AR_REPOSITORY/${{ matrix.app.name }}:${{ github.sha }}"
           docker push "$AR_REPOSITORY/${{ matrix.app.name }}:${{ github.sha }}"
 
-  db-migration-staging:
+  # --- dev: the nectrix-dev VM (infra/terraform/gcp-dev) — unlike
+  # staging/production's ephemeral-per-run kind cluster, this is a real,
+  # persistent environment, so its migration step (unlike db-migration-
+  # staging's placeholder below) genuinely runs against a real, persistent
+  # Postgres. No-op (skipped, not failed) until vars.GCP_DEV_VM_NAME is set —
+  # see infra/terraform/gcp-dev/README.md's credentials/manual-steps list.
+  db-migration-dev:
     needs: [build-scan-push]
+    runs-on: ubuntu-latest
+    if: vars.GCP_DEV_VM_NAME != ''
+    permissions:
+      contents: read
+      id-token: write # for the WIF auth step below
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: google-github-actions/auth@v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_CI_DEPLOY_SERVICE_ACCOUNT }}
+      # Runs ./gradlew :db:update on THIS runner (which already has the full
+      # repo checkout + Java/Gradle, same as the integration-test job above),
+      # tunneled to the VM's docker-compose Postgres over IAP — not on the VM
+      # itself, so the VM never needs a Gradle/full-source checkout of its
+      # own (its Java/Go/Python install, see modules/vm/startup.sh, is for ad
+      # hoc operator debugging only).
+      - name: Open IAP tunnel to the VM's Postgres
+        run: |
+          gcloud compute start-iap-tunnel "${{ vars.GCP_DEV_VM_NAME }}" 5432 \
+            --local-host-port=localhost:5432 \
+            --zone="${{ vars.GCP_DEV_VM_ZONE }}" &
+          for _ in $(seq 1 15); do
+            (echo > /dev/tcp/localhost/5432) 2>/dev/null && break
+            sleep 1
+          done
+      - uses: actions/setup-java@v5.4.0
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+      - name: core-app db:update against the real dev Postgres
+        working-directory: apps/core-app
+        env:
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: "5432"
+          POSTGRES_USER: nectrix
+          POSTGRES_PASSWORD: ${{ secrets.DEV_POSTGRES_PASSWORD }}
+          POSTGRES_APP_PASSWORD: ${{ secrets.DEV_POSTGRES_APP_PASSWORD }}
+          POSTGRES_DB: nectrix
+        run: ./gradlew :db:update
+
+  db-migration-staging:
+    # Same "must come after the previous tier" chain deploy-production's own
+    # needs: [deploy-staging] already enforces — mirrored one tier down.
+    # deploy-dev runs (and must succeed) before this, EXCEPT it's a no-op
+    # (result: skipped, not failed) until vars.GCP_DEV_VM_NAME is set (see
+    # infra/terraform/gcp-dev/README.md) — the explicit `if:` below tolerates
+    # that skip so staging/production keep working exactly as before until
+    # dev is actually provisioned, while still genuinely blocking on a real
+    # deploy-dev failure once it is.
+    needs: [deploy-dev]
+    if: always() && (needs.deploy-dev.result == 'success' || needs.deploy-dev.result == 'skipped')
     runs-on: ubuntu-latest
     steps:
       - run: |
@@ -246,6 +309,120 @@ jobs:
           echo "./gradlew :db:update against the real staging DATABASE_URL, before the app"
           echo "deployment step below - per docs/16-deployment-architecture.md §16.3."
 
+  # dev's single VM (see infra/terraform/gcp-dev) genuinely persists state
+  # across deploys (unlike staging/production's fresh-kind-cluster-per-run),
+  # so this pulls the just-built images from Artifact Registry, applies
+  # deploy/overlays/dev via kubectl on the VM's own k3s, and refreshes the
+  # docker-compose stateful-services stack — all over one IAP-tunneled SSH
+  # session, never a public port. No-op until vars.GCP_DEV_VM_NAME is set —
+  # same gate as db-migration-dev above.
+  deploy-dev:
+    needs: [db-migration-dev, resolve-registry, build-scan-push]
+    runs-on: ubuntu-latest
+    if: vars.GCP_DEV_VM_NAME != ''
+    permissions:
+      contents: read
+      id-token: write # for the WIF auth step below
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: google-github-actions/auth@v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_CI_DEPLOY_SERVICE_ACCOUNT }}
+      - name: Install kustomize
+        run: |
+          mkdir -p /tmp/kustomize-bin
+          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash -s -- 5.7.1 /tmp/kustomize-bin
+          echo "/tmp/kustomize-bin" >> "$GITHUB_PATH"
+      - name: Patch image tags into the dev overlay
+        # Same explicit oldName=newName:tag form as deploy-staging's
+        # identical step, now genuinely exercising the Artifact Registry path
+        # (see infra/terraform/gcp-dev/modules/artifact-registry) rather than
+        # the CLOUD_PROVIDER-unset GHCR default.
+        working-directory: deploy/overlays/dev
+        run: |
+          for app in core-app copy-engine broker-adapters mt5-bridge-gateway mt-terminal-host admin-portal web; do
+            kustomize edit set image "ghcr.io/avison9/nectrix/$app=${{ needs.resolve-registry.outputs.image_prefix }}/$app:${{ github.sha }}"
+          done
+      # --- Fallback, commented out: if the $300 credit runs out before a GCP
+      # startup-credit grant comes through, unset vars.CLOUD_PROVIDER (falls
+      # build-scan-push/resolve-registry back to GHCR automatically) and swap
+      # the block above for this one instead, after making the GHCR packages
+      # public (Settings -> Packages, per package) so the VM's k3s node can
+      # pull without an imagePullSecret:
+      #
+      # working-directory: deploy/overlays/dev
+      # run: |
+      #   for app in core-app copy-engine broker-adapters mt5-bridge-gateway mt-terminal-host admin-portal web; do
+      #     kustomize edit set image "ghcr.io/avison9/nectrix/$app=ghcr.io/avison9/nectrix/$app:${{ github.sha }}"
+      #   done
+      - name: Render the dev overlay + copy it, deploy/base, deploy/components, and infra/gcp-dev-vm to the VM
+        # NODE_INTERNAL_IP_REPLACED_BY_CI (deploy/overlays/dev/host-services'
+        # Endpoints objects) is a stable value — infra/terraform/gcp-dev's own
+        # vm_internal_ip output, set once as the GCP_DEV_VM_INTERNAL_IP repo
+        # variable — substituted here the same REPLACED_BY_CI-sentinel way
+        # deploy-staging patches TERMINAL_IMAGE.
+        run: |
+          kubectl kustomize deploy/overlays/dev > /tmp/dev-overlay-rendered.yaml
+          sed -i "s|NODE_INTERNAL_IP_REPLACED_BY_CI|${{ vars.GCP_DEV_VM_INTERNAL_IP }}|g" /tmp/dev-overlay-rendered.yaml
+          gcloud compute scp --tunnel-through-iap --zone="${{ vars.GCP_DEV_VM_ZONE }}" \
+            /tmp/dev-overlay-rendered.yaml "${{ vars.GCP_DEV_VM_NAME }}:/opt/nectrix-dev-vm/dev-overlay-rendered.yaml"
+          gcloud compute scp --tunnel-through-iap --recurse --zone="${{ vars.GCP_DEV_VM_ZONE }}" \
+            infra/gcp-dev-vm "${{ vars.GCP_DEV_VM_NAME }}:/opt/nectrix-dev-vm/compose"
+      - name: Refresh the docker-compose stateful-services stack
+        run: |
+          gcloud compute ssh --tunnel-through-iap --zone="${{ vars.GCP_DEV_VM_ZONE }}" "${{ vars.GCP_DEV_VM_NAME }}" --command="
+            set -euo pipefail
+            cd /opt/nectrix-dev-vm/compose
+            bash render-node-ip.sh
+            cat >> .env <<EOF
+          POSTGRES_PASSWORD=${{ secrets.DEV_POSTGRES_PASSWORD }}
+          POSTGRES_APP_PASSWORD=${{ secrets.DEV_POSTGRES_APP_PASSWORD }}
+          MINIO_ROOT_PASSWORD=${{ secrets.DEV_MINIO_ROOT_PASSWORD }}
+          EOF
+            docker compose -f docker-compose.yml pull
+            docker compose -f docker-compose.yml up -d
+          "
+      - name: Create/refresh namespaces + secrets, apply the rendered manifest
+        # Real, stable secret values (unlike deploy-staging's throwaway
+        # ones) — this environment persists, so JWT_SIGNING_SECRET etc must
+        # stay byte-for-byte identical across deploys or existing sessions
+        # break.
+        run: |
+          gcloud compute ssh --tunnel-through-iap --zone="${{ vars.GCP_DEV_VM_ZONE }}" "${{ vars.GCP_DEV_VM_NAME }}" --command="
+            set -euo pipefail
+            export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+            sudo -E kubectl create namespace core-app --dry-run=client -o yaml | sudo -E kubectl apply -f -
+            sudo -E kubectl create secret generic core-app-secrets -n core-app \
+              --from-literal=jwt-signing-secret='${{ secrets.DEV_JWT_SIGNING_SECRET }}' \
+              --from-literal=internal-service-token='${{ secrets.DEV_INTERNAL_SERVICE_TOKEN }}' \
+              --from-literal=mt-terminal-provisioner-token='${{ secrets.DEV_MT_TERMINAL_PROVISIONER_TOKEN }}' \
+              --from-literal=postgres-app-password='${{ secrets.DEV_POSTGRES_APP_PASSWORD }}' \
+              --dry-run=client -o yaml | sudo -E kubectl apply -f -
+            sudo -E kubectl create namespace admin-portal --dry-run=client -o yaml | sudo -E kubectl apply -f -
+            sudo -E kubectl create secret generic admin-portal-secrets -n admin-portal \
+              --from-literal=jwt-signing-secret='${{ secrets.DEV_JWT_SIGNING_SECRET }}' \
+              --dry-run=client -o yaml | sudo -E kubectl apply -f -
+            sudo -E kubectl create namespace web --dry-run=client -o yaml | sudo -E kubectl apply -f -
+            sudo -E kubectl create secret generic web-secrets -n web \
+              --from-literal=jwt-signing-secret='${{ secrets.DEV_JWT_SIGNING_SECRET }}' \
+              --dry-run=client -o yaml | sudo -E kubectl apply -f -
+            sudo -E kubectl create namespace copy-engine --dry-run=client -o yaml | sudo -E kubectl apply -f -
+            sudo -E kubectl create secret generic copy-engine-secrets -n copy-engine \
+              --from-literal=internal-service-token='${{ secrets.DEV_INTERNAL_SERVICE_TOKEN }}' \
+              --from-literal=postgres-app-password='${{ secrets.DEV_POSTGRES_APP_PASSWORD }}' \
+              --dry-run=client -o yaml | sudo -E kubectl apply -f -
+            sudo -E kubectl create secret generic broker-adapters-secrets -n copy-engine \
+              --from-literal=internal-service-token='${{ secrets.DEV_INTERNAL_SERVICE_TOKEN }}' \
+              --from-literal=ctrader-client-id='${{ secrets.DEV_CTRADER_CLIENT_ID }}' \
+              --from-literal=ctrader-client-secret='${{ secrets.DEV_CTRADER_CLIENT_SECRET }}' \
+              --dry-run=client -o yaml | sudo -E kubectl apply -f -
+            sudo -E kubectl apply -f /opt/nectrix-dev-vm/dev-overlay-rendered.yaml
+            sudo -E kubectl -n core-app rollout status deployment/core-app --timeout=180s
+            sudo -E kubectl -n web rollout status deployment/web --timeout=180s
+            sudo -E kubectl -n admin-portal rollout status deployment/admin-portal --timeout=180s
+          "
+
   # deploy-staging, drain-hook verification, and the E2E smoke check are one
   # job, not three: each GitHub Actions job runs on its own fresh runner VM,
   # and the ephemeral kind cluster created here only exists as containers on
@@ -256,6 +433,12 @@ jobs:
   deploy-staging:
     needs: [db-migration-staging, resolve-registry]
     runs-on: ubuntu-latest
+    # Same manual-approval gate deploy-production already uses (environment:
+    # {name: production} below) — a required-reviewers protection rule on
+    # the "staging" GitHub Environment (Settings → Environments → staging),
+    # not something expressible in this file itself.
+    environment:
+      name: staging
     permissions:
       contents: read
       packages: read
@@ -296,7 +479,7 @@ jobs:
         # locally if this environment's smoke test ever provisions a real
         # terminal pod.
         run: |
-          for app in core-app copy-engine broker-adapters mt5-bridge-gateway mt-terminal-host mt-terminal-image admin-portal; do
+          for app in core-app copy-engine broker-adapters mt5-bridge-gateway mt-terminal-host mt-terminal-image admin-portal web; do
             docker pull ${{ needs.resolve-registry.outputs.image_prefix }}/$app:${{ github.sha }}
           done
       - uses: helm/kind-action@v1.14.0
@@ -304,7 +487,7 @@ jobs:
           cluster_name: nectrix-staging
       - name: Load images into kind (no registry pull needed inside the cluster)
         run: |
-          for app in core-app copy-engine broker-adapters mt5-bridge-gateway mt-terminal-host mt-terminal-image admin-portal; do
+          for app in core-app copy-engine broker-adapters mt5-bridge-gateway mt-terminal-host mt-terminal-image admin-portal web; do
             kind load docker-image "${{ needs.resolve-registry.outputs.image_prefix }}/$app:${{ github.sha }}" --name nectrix-staging
           done
       - name: Install kustomize
@@ -326,7 +509,7 @@ jobs:
         # kustomize's image-set mechanism doesn't reach into env var strings.
         working-directory: deploy/overlays/staging
         run: |
-          for app in core-app copy-engine broker-adapters mt5-bridge-gateway mt-terminal-host admin-portal; do
+          for app in core-app copy-engine broker-adapters mt5-bridge-gateway mt-terminal-host admin-portal web; do
             kustomize edit set image "ghcr.io/avison9/nectrix/$app=${{ needs.resolve-registry.outputs.image_prefix }}/$app:${{ github.sha }}"
           done
       - name: Patch TERMINAL_IMAGE env var into mt-terminal-host's base Deployment
@@ -368,6 +551,13 @@ jobs:
             --dry-run=client -o yaml | kubectl apply -f -
           kubectl create namespace admin-portal --dry-run=client -o yaml | kubectl apply -f -
           kubectl create secret generic admin-portal-secrets -n admin-portal \
+            --from-literal=jwt-signing-secret="n/ErCuickD7JyKdFhuOeH2QWJjQp6ZBxGxUosC6Mtr3kP6idy8j1sMYV0lKL0wAPeMuFQ4iwsF2uxq9lIk6MYQ==" \
+            --dry-run=client -o yaml | kubectl apply -f -
+          # TICKET-110 — apps/web needs the same JWT-verification secret
+          # admin-portal/core-app do, in its own namespace (Secrets are
+          # namespace-scoped).
+          kubectl create namespace web --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create secret generic web-secrets -n web \
             --from-literal=jwt-signing-secret="n/ErCuickD7JyKdFhuOeH2QWJjQp6ZBxGxUosC6Mtr3kP6idy8j1sMYV0lKL0wAPeMuFQ4iwsF2uxq9lIk6MYQ==" \
             --dry-run=client -o yaml | kubectl apply -f -
           kubectl create namespace copy-engine --dry-run=client -o yaml | kubectl apply -f -
@@ -531,7 +721,7 @@ jobs:
         # mt-terminal-image isn't its own deployed service — see
         # deploy-staging's identical note.
         run: |
-          for app in core-app copy-engine broker-adapters mt5-bridge-gateway mt-terminal-host mt-terminal-image admin-portal; do
+          for app in core-app copy-engine broker-adapters mt5-bridge-gateway mt-terminal-host mt-terminal-image admin-portal web; do
             docker pull ${{ needs.resolve-registry.outputs.image_prefix }}/$app:${{ github.sha }}
           done
       - uses: helm/kind-action@v1.14.0
@@ -539,7 +729,7 @@ jobs:
           cluster_name: nectrix-production
       - name: Load images into kind (no registry pull needed inside the cluster)
         run: |
-          for app in core-app copy-engine broker-adapters mt5-bridge-gateway mt-terminal-host mt-terminal-image admin-portal; do
+          for app in core-app copy-engine broker-adapters mt5-bridge-gateway mt-terminal-host mt-terminal-image admin-portal web; do
             kind load docker-image "${{ needs.resolve-registry.outputs.image_prefix }}/$app:${{ github.sha }}" --name nectrix-production
           done
       - name: Install kustomize
@@ -553,7 +743,7 @@ jobs:
         # identical note (patched via TERMINAL_IMAGE env var below instead).
         working-directory: deploy/overlays/production
         run: |
-          for app in core-app copy-engine broker-adapters mt5-bridge-gateway mt-terminal-host admin-portal; do
+          for app in core-app copy-engine broker-adapters mt5-bridge-gateway mt-terminal-host admin-portal web; do
             kustomize edit set image "ghcr.io/avison9/nectrix/$app=${{ needs.resolve-registry.outputs.image_prefix }}/$app:${{ github.sha }}"
           done
       - name: Patch TERMINAL_IMAGE env var into mt-terminal-host's base Deployment
@@ -577,6 +767,13 @@ jobs:
             --dry-run=client -o yaml | kubectl apply -f -
           kubectl create namespace admin-portal --dry-run=client -o yaml | kubectl apply -f -
           kubectl create secret generic admin-portal-secrets -n admin-portal \
+            --from-literal=jwt-signing-secret="n/ErCuickD7JyKdFhuOeH2QWJjQp6ZBxGxUosC6Mtr3kP6idy8j1sMYV0lKL0wAPeMuFQ4iwsF2uxq9lIk6MYQ==" \
+            --dry-run=client -o yaml | kubectl apply -f -
+          # TICKET-110 — apps/web needs the same JWT-verification secret
+          # admin-portal/core-app do, in its own namespace (Secrets are
+          # namespace-scoped).
+          kubectl create namespace web --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create secret generic web-secrets -n web \
             --from-literal=jwt-signing-secret="n/ErCuickD7JyKdFhuOeH2QWJjQp6ZBxGxUosC6Mtr3kP6idy8j1sMYV0lKL0wAPeMuFQ4iwsF2uxq9lIk6MYQ==" \
             --dry-run=client -o yaml | kubectl apply -f -
           kubectl create namespace copy-engine --dry-run=client -o yaml | kubectl apply -f -

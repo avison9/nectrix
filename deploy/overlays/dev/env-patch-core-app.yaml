@@ -1,0 +1,26 @@
+# deploy/base/core-app/deployment.yaml sets none of these — POSTGRES_HOST/
+# REDIS_HOST/KAFKA_HOST all default to "localhost" (see application.yml),
+# fine for staging/production's current placeholder smoke-test (no real
+# datastore behind it yet, see db-migration-staging's own echo-only step) but
+# wrong here, where a real Postgres/Redis/Kafka genuinely need to be reached
+# at host-services.svc.cluster.local (see ./host-services).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: core-app
+  namespace: core-app
+spec:
+  template:
+    spec:
+      containers:
+        - name: core-app
+          env:
+            - name: POSTGRES_HOST
+              value: postgres.host-services.svc.cluster.local
+            - name: POSTGRES_APP_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: core-app-secrets, key: postgres-app-password }
+            - name: REDIS_HOST
+              value: redis.host-services.svc.cluster.local
+            - name: KAFKA_HOST
+              value: kafka.host-services.svc.cluster.local

@@ -15,6 +15,11 @@ metadata:
 apiVersion: v1
 kind: Namespace
 metadata:
+  name: web
+---
+apiVersion: v1
+kind: Namespace
+metadata:
   name: core-app
 ---
 apiVersion: v1

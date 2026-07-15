@@ -1,0 +1,19 @@
+# Selected by deploy/overlays/dev/kustomization.yaml's `components:` list.
+# k3s's bundled Traefik is the ingress controller here (unlike
+# ../cloud-gcp's GCE-Ingress-managed LB, which needs a real GKE cluster) —
+# "traefik" is also k3s's default IngressClass, so no explicit
+# ingressClassName patch is strictly required, but set it anyway to be
+# explicit/future-proof against a second controller ever being added.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  - traefik-config.yaml
+
+patches:
+  - target:
+      kind: Ingress
+    patch: |-
+      - op: add
+        path: /spec/ingressClassName
+        value: traefik

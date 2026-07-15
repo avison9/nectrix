@@ -1,0 +1,14 @@
+# See env-patch-broker-adapters.yaml's identical note (apps/mt5-bridge-gateway/main.go).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mt5-bridge-gateway
+  namespace: copy-engine
+spec:
+  template:
+    spec:
+      containers:
+        - name: mt5-bridge-gateway
+          env:
+            - name: KAFKA_HOST
+              value: kafka.host-services.svc.cluster.local

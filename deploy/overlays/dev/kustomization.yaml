@@ -1,0 +1,42 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+  - host-services
+components:
+  - ../../components/cloud-gcp-dev
+# `kustomize edit set image ghcr.io/avison9/nectrix/<app>=<AR_image>:<sha>`
+# (run by deploy-dev in main-pipeline.yml) appends/updates entries here.
+images: []
+# Single replica everywhere — one e2-standard-4 VM, not an autoscaled
+# multi-node cluster. base's own defaults are already replicas: 1 for every
+# Deployment, so no explicit replica patch is needed here.
+patches:
+  - path: env-patch-core-app.yaml
+  - path: env-patch-copy-engine.yaml
+  - path: env-patch-broker-adapters.yaml
+  - path: env-patch-mt5-bridge-gateway.yaml
+  # Real public hostnames (see infra/terraform/gcp-dev/modules/dns), replacing
+  # base's ghcr.io-era app.nectrix.example.com / portal.nectrix.example.com
+  # placeholders.
+  - target:
+      kind: Ingress
+      name: web
+    patch: |-
+      - op: replace
+        path: /spec/rules/0/host
+        value: app.dev.nectrix.dev
+  - target:
+      kind: Ingress
+      name: admin-portal
+    patch: |-
+      - op: replace
+        path: /spec/rules/0/host
+        value: portal.dev.nectrix.dev
+  - target:
+      kind: Ingress
+      name: gateway
+    patch: |-
+      - op: replace
+        path: /spec/rules/0/host
+        value: api.dev.nectrix.dev
