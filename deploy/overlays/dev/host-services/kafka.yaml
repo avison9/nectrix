@@ -1,0 +1,26 @@
+# See postgres.yaml's comment for why this Service has no selector. Port 9092
+# (not local dev's 29092 in-network listener) — network_mode: host means
+# there's no separate "in-docker-network" listener to speak of; this
+# environment's docker-compose file (see ../../../../infra/terraform/gcp-dev's
+# README) advertises a single listener on 9092 bound to the node's real
+# internal IP.
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka
+  namespace: host-services
+spec:
+  ports:
+    - port: 9092
+      targetPort: 9092
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: kafka
+  namespace: host-services
+subsets:
+  - addresses:
+      - ip: NODE_INTERNAL_IP_REPLACED_BY_CI
+    ports:
+      - port: 9092

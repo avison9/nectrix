@@ -1,0 +1,20 @@
+# See env-patch-core-app.yaml's comment — same "localhost" defaults problem,
+# Go side (apps/copy-engine/main.go's envOr calls).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: copy-engine
+  namespace: copy-engine
+spec:
+  template:
+    spec:
+      containers:
+        - name: copy-engine
+          env:
+            - name: POSTGRES_HOST
+              value: postgres.host-services.svc.cluster.local
+            - name: POSTGRES_APP_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: copy-engine-secrets, key: postgres-app-password }
+            - name: KAFKA_HOST
+              value: kafka.host-services.svc.cluster.local

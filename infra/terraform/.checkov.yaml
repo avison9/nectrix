@@ -4,6 +4,7 @@ framework:
 directory:
   - infra/terraform/aws
   - infra/terraform/gcp
+  - infra/terraform/gcp-dev
 
 # checkov never calls a cloud API regardless of flags — it's fully static (HCL
 # parsing only), so this runs with zero credentials, consistent with this
@@ -62,5 +63,14 @@ skip-check:
   - CKV_GCP_62 # GCS bucket access logging needs a second, dedicated log-destination bucket
   - CKV_GCP_65 # Google-Groups-backed GKE RBAC needs a real Workspace group
   - CKV_GCP_66 # Binary Authorization needs a real attestor/policy set up against a real registry
+
+  # infra/terraform/gcp-dev — a single, publicly-browsable dev VM (the whole
+  # point of the ticket is a real domain reachable from any browser), not a
+  # private cluster behind a load balancer like modules/gke. These are
+  # inherent to that design, not oversights:
+  - CKV_GCP_40 # the VM needs a public IP — it's a single-box environment users browse directly, no LB/NAT gateway in front of it
+  - CKV_GCP_106 # port 80 is open deliberately — Traefik's Let's Encrypt HTTP-01 challenge needs it, and it redirects to 443 for everything else
+  - CKV_GCP_38 # boot disk uses Google-managed encryption, not CSEK — same CMK/CSEK deferral as CKV_GCP_84/29/35 above, applies to a plain dev VM disk too
+  - CKV_GCP_16 # DNSSEC on the delegated dev.nectrix.dev zone needs registrar-side DS-record setup beyond this ticket's one delegation step (see infra/terraform/gcp-dev/README.md) — revisit if dev's DNS ever needs the same trust guarantees as the apex zone
 
 soft-fail: true # tighten to hard-fail once a real account/bootstrap exists and the skip-list above is revisited

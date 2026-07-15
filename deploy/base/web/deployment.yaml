@@ -1,0 +1,52 @@
+# TICKET-110 — the follower/master-facing broker-linking app (docs/13-technology-stack.md
+# §13.3's "app.example.com"), mirroring deploy/base/admin-portal's shape. Had
+# no deploy manifests at all until this ticket — apps/web previously only ran
+# via `next dev`.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: web
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: web }
+  template:
+    metadata:
+      labels: { app: web }
+    spec:
+      containers:
+        - name: web
+          image: ghcr.io/avison9/nectrix/web:REPLACED_BY_CI
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+          env:
+            # proxy.ts verifies the access_token cookie's signature itself
+            # (see apps/web/lib/session.ts) with the same secret core-app
+            # signs with — same web-secrets Secret pattern as
+            # admin-portal-secrets/core-app-secrets, created by CI before this
+            # manifest is applied.
+            - name: JWT_SIGNING_SECRET
+              valueFrom:
+                secretKeyRef: { name: web-secrets, key: jwt-signing-secret }
+            # In-cluster Service DNS — core-app's own namespace/Service (see
+            # deploy/base/core-app/service.yaml). The browser never talks to
+            # core-app directly (see lib/core-app.ts's comment); only this
+            # app's own server does, server-side.
+            - name: CORE_APP_BASE_URL
+              value: http://core-app.core-app.svc.cluster.local:8080
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+          readinessProbe:
+            httpGet: { path: /login, port: 3000 }
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /login, port: 3000 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 400m, memory: 384Mi }

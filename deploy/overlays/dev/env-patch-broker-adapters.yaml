@@ -1,0 +1,15 @@
+# See env-patch-core-app.yaml's comment — broker-adapters only needs Kafka
+# (apps/broker-adapters/main.go), no Postgres/Redis env vars of its own.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: broker-adapters
+  namespace: copy-engine
+spec:
+  template:
+    spec:
+      containers:
+        - name: broker-adapters
+          env:
+            - name: KAFKA_HOST
+              value: kafka.host-services.svc.cluster.local

@@ -1,0 +1,9 @@
+# Shared by every app namespace (core-app, copy-engine, broker-adapters,
+# mt5-bridge-gateway, async, web, admin-portal) via cross-namespace Service
+# DNS (host-services.svc.cluster.local) — dev-only, since staging/production
+# use real managed Postgres/Redis/Kafka (infra/terraform/gcp) instead of a
+# docker-compose stack on the node.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: host-services

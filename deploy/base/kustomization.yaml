@@ -9,6 +9,7 @@ resources:
   - mt-terminal-host
   - gateway
   - admin-portal
+  - web
   - async
 # platform-observability is deliberately NOT listed here — every overlay
 # (staging/production/local) references this file wholesale via

@@ -1,0 +1,20 @@
+# k3s ships Traefik as a HelmChart-managed add-on; this HelmChartConfig
+# (k3s's own CRD for overriding that chart's values without forking it)
+# layers in a Let's Encrypt cert-resolver as the DEFAULT resolver on the
+# websecure (443) entrypoint — every plain Ingress (deploy/base/*/ingress.yaml,
+# no TLS-specific annotations needed) gets a real cert automatically. HTTP-01
+# challenge needs port 80 reachable (see infra/terraform/gcp-dev's firewall
+# rule), which the challenge uses transiently before redirecting to 443.
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    additionalArguments:
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
+      - "--certificatesresolvers.letsencrypt.acme.email=REPLACE_WITH_REAL_CONTACT_EMAIL"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/data/acme.json"
+      - "--entrypoints.websecure.http.tls.certresolver=letsencrypt"

@@ -1,0 +1,106 @@
+name: nectrix-dev
+
+# Stateful infra for the nectrix-dev VM (see infra/terraform/gcp-dev), mirroring
+# the root docker-compose.yml's service shapes with one deliberate difference:
+# network_mode: host on every service. k3s (running on this same VM — see
+# infra/terraform/gcp-dev/modules/vm/startup.sh) reaches these via the node's
+# own internal IP (deploy/overlays/dev/host-services' Endpoints objects), not
+# compose's own bridge network / service-name DNS, which only resolves for
+# other containers in this same compose project. Observability stack
+# (prometheus/grafana/etc.) and localstack are deliberately NOT included —
+# out of scope for v1 (see infra/terraform/gcp-dev/README.md).
+#
+# Requires a .env file alongside this one, written by render-env.sh at deploy
+# time (NODE_INTERNAL_IP, POSTGRES_PASSWORD, POSTGRES_APP_PASSWORD,
+# MINIO_ROOT_PASSWORD — deploy-dev in main-pipeline.yml supplies the real
+# values from GitHub Secrets over the IAP-tunneled SSH session, never
+# committed here).
+services:
+  postgres:
+    image: postgres:17-alpine
+    network_mode: host
+    environment:
+      POSTGRES_USER: nectrix
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: nectrix
+      PGPORT: 5432
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nectrix -d nectrix"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    network_mode: host
+    command: ["redis-server", "--port", "6379"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "6379", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Single listener (not local dev's dual PLAINTEXT/EXTERNAL setup) — host
+  # networking means there's no separate "in-docker-network" hostname to
+  # distinguish from an "external" one; every client (in-cluster pods via the
+  # node's internal IP, or this same host) reaches the same real address.
+  kafka:
+    image: apache/kafka:3.8.0
+    network_mode: host
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:29093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://${NODE_INTERNAL_IP:?Set NODE_INTERNAL_IP in .env}:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:29093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      CLUSTER_ID: nectrix-dev-kraft-cluster
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    network_mode: host
+    environment:
+      SERVER_PORT: 8081
+      KAFKA_CLUSTERS_0_NAME: nectrix-dev
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: localhost:9092
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  minio:
+    image: minio/minio:latest
+    network_mode: host
+    command: server /data --address ":9000" --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: nectrix
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres-data:
+  redis-data:
+  kafka-data:
+  minio-data:
