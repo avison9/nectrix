@@ -12,9 +12,15 @@ import type {
   BrokerAccountSummary,
   BrokerIbLink,
   BrokerType,
+  CopiedTrade,
+  CopiedTradesPage,
   ConnectionRole,
   ConnectionStatus,
+  CopyRelationship,
+  CopyRelationshipStatus,
   CtraderAccountOption,
+  FeeCollectionMethod,
+  MasterProfile,
   NormalizedPosition,
   NormalizedTradeEvent,
   SymbolMappingEntry,
@@ -29,9 +35,15 @@ export type {
   BrokerAccountSummary,
   BrokerIbLink,
   BrokerType,
+  CopiedTrade,
+  CopiedTradesPage,
   ConnectionRole,
   ConnectionStatus,
+  CopyRelationship,
+  CopyRelationshipStatus,
   CtraderAccountOption,
+  FeeCollectionMethod,
+  MasterProfile,
   SymbolMappingEntry,
 };
 
@@ -416,6 +428,190 @@ export async function listMasterIbLinks(
   return coreAppFetch<BrokerIbLink[]>(
     baseUrl,
     `/api/v1/broker-accounts/ib-links?masterProfileId=${masterProfileId}`,
+    { method: "GET", accessToken },
+  );
+}
+
+// ==================== TICKET-111 — Master Profile Creation & CopyRelationship State Machine ====================
+
+export interface CreateMasterProfileInput {
+  brokerAccountId: string;
+  displayName: string;
+  bio?: string;
+  strategyTags?: string[];
+  performanceFeePercent?: number;
+  feeCollectionMethod?: FeeCollectionMethod;
+}
+
+/** Throws ApiError(409) with body.existing_profile_id if the caller already has one — see MasterProfileExceptionHandler. */
+export async function createMasterProfile(
+  baseUrl: string,
+  accessToken: string,
+  input: CreateMasterProfileInput,
+): Promise<MasterProfile> {
+  return coreAppFetch<MasterProfile>(baseUrl, "/api/v1/master-profiles", {
+    method: "POST",
+    accessToken,
+    body: JSON.stringify({
+      broker_account_id: input.brokerAccountId,
+      display_name: input.displayName,
+      bio: input.bio,
+      strategy_tags: input.strategyTags,
+      performance_fee_percent: input.performanceFeePercent,
+      fee_collection_method: input.feeCollectionMethod,
+    }),
+  });
+}
+
+export async function getMasterProfile(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<MasterProfile> {
+  return coreAppFetch<MasterProfile>(baseUrl, `/api/v1/master-profiles/${id}`, {
+    method: "GET",
+    accessToken,
+  });
+}
+
+export async function patchMasterProfile(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+  input: {
+    displayName?: string;
+    bio?: string;
+    strategyTags?: string[];
+    performanceFeePercent?: number;
+    isPublic?: boolean;
+  },
+): Promise<MasterProfile> {
+  return coreAppFetch<MasterProfile>(baseUrl, `/api/v1/master-profiles/${id}`, {
+    method: "PATCH",
+    accessToken,
+    body: JSON.stringify({
+      display_name: input.displayName,
+      bio: input.bio,
+      strategy_tags: input.strategyTags,
+      performance_fee_percent: input.performanceFeePercent,
+      is_public: input.isPublic,
+    }),
+  });
+}
+
+export async function listCopyRelationships(
+  baseUrl: string,
+  accessToken: string,
+  filter: { role?: "follower" | "master"; status?: CopyRelationshipStatus } = {},
+): Promise<CopyRelationship[]> {
+  const params = new URLSearchParams();
+  if (filter.role) params.set("role", filter.role);
+  if (filter.status) params.set("status", filter.status);
+  const query = params.toString();
+  return coreAppFetch<CopyRelationship[]>(
+    baseUrl,
+    `/api/v1/copy-relationships${query ? `?${query}` : ""}`,
+    { method: "GET", accessToken },
+  );
+}
+
+export async function getCopyRelationship(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<CopyRelationship> {
+  return coreAppFetch<CopyRelationship>(baseUrl, `/api/v1/copy-relationships/${id}`, {
+    method: "GET",
+    accessToken,
+  });
+}
+
+/**
+ * allocationWeight is accepted by core-app but has no backing column yet
+ * (Phase-2/portfolio-module territory) — included here for contract parity but silently a no-op.
+ */
+export async function patchCopyRelationship(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+  input: { moneyManagementProfileId?: string; riskProfileId?: string; allocationWeight?: number },
+): Promise<CopyRelationship> {
+  return coreAppFetch<CopyRelationship>(baseUrl, `/api/v1/copy-relationships/${id}`, {
+    method: "PATCH",
+    accessToken,
+    body: JSON.stringify({
+      money_management_profile_id: input.moneyManagementProfileId,
+      risk_profile_id: input.riskProfileId,
+      allocation_weight: input.allocationWeight,
+    }),
+  });
+}
+
+function copyRelationshipAction(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+  action: "acknowledge-risk" | "sign-agreement" | "pause" | "resume" | "stop",
+): Promise<CopyRelationship> {
+  return coreAppFetch<CopyRelationship>(baseUrl, `/api/v1/copy-relationships/${id}/${action}`, {
+    method: "POST",
+    accessToken,
+  });
+}
+
+/** AC2 — the risk-acknowledgement gate. Server-side enforced; this call is what actually flips state, not a UI-only step. */
+export async function acknowledgeRisk(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<CopyRelationship> {
+  return copyRelationshipAction(baseUrl, accessToken, id, "acknowledge-risk");
+}
+
+/** AC3 — only has effect from PENDING_AGREEMENT; core-app rejects otherwise. */
+export async function signAgreement(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<CopyRelationship> {
+  return copyRelationshipAction(baseUrl, accessToken, id, "sign-agreement");
+}
+
+export async function pauseCopyRelationship(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<CopyRelationship> {
+  return copyRelationshipAction(baseUrl, accessToken, id, "pause");
+}
+
+export async function resumeCopyRelationship(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<CopyRelationship> {
+  return copyRelationshipAction(baseUrl, accessToken, id, "resume");
+}
+
+/** AC4 — force-closes all open positions asynchronously via copy-engine's stop-closure poller, not synchronously in this call. */
+export async function stopCopyRelationship(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<CopyRelationship> {
+  return copyRelationshipAction(baseUrl, accessToken, id, "stop");
+}
+
+export async function listCopyRelationshipTrades(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+  page = 0,
+  pageSize = 20,
+): Promise<CopiedTradesPage> {
+  return coreAppFetch<CopiedTradesPage>(
+    baseUrl,
+    `/api/v1/copy-relationships/${id}/trades?page=${page}&pageSize=${pageSize}`,
     { method: "GET", accessToken },
   );
 }

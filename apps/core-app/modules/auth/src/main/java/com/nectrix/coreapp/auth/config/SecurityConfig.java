@@ -184,6 +184,36 @@ public class SecurityConfig {
                     .authenticated()
                     .requestMatchers(HttpMethod.PUT, "/api/v1/broker-accounts/*/symbol-mappings/*")
                     .authenticated()
+                    // TICKET-111 — Master profile self-service creation (role check is
+                    // @PreAuthorize("hasRole('MASTER')") method-security, see
+                    // MasterProfileController) + the CopyRelationship state machine (ownership is
+                    // method-security, same @perms.isOwnerOrStaff reasoning as broker-accounts
+                    // above).
+                    .requestMatchers(HttpMethod.POST, "/api/v1/master-profiles")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.GET, "/api/v1/master-profiles/*")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.PATCH, "/api/v1/master-profiles/*")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.GET, "/api/v1/copy-relationships")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.GET, "/api/v1/copy-relationships/*")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.PATCH, "/api/v1/copy-relationships/*")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.GET, "/api/v1/copy-relationships/*/trades")
+                    .authenticated()
+                    .requestMatchers(
+                        HttpMethod.POST, "/api/v1/copy-relationships/*/acknowledge-risk")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.POST, "/api/v1/copy-relationships/*/sign-agreement")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.POST, "/api/v1/copy-relationships/*/pause")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.POST, "/api/v1/copy-relationships/*/resume")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.POST, "/api/v1/copy-relationships/*/stop")
+                    .authenticated()
                     // -- add new protected/public auth-adjacent routes here (future tickets:
                     // accept-invite, by-token) — anyRequest() below is intentionally permitAll,
                     // not authenticated(), so genuinely unmapped paths 404 instead of 401; see

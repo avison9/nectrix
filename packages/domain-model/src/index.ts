@@ -173,3 +173,100 @@ export interface CtraderAccountOption {
   traderLogin: number;
   brokerTitleShort: string;
 }
+
+// TICKET-111 — Master Profile Creation & CopyRelationship State Machine.
+// Mirrors MasterProfileController's response record (apps/core-app/modules/social).
+// Matches master_profiles/copy_relationships' own fee_collection_method CHECK constraint exactly
+// (005-social-marketplace.sql/006-copy-trading.sql) — NOT an arbitrary frontend-invented enum.
+export type FeeCollectionMethod = "BROKER_PARTNERSHIP" | "STRIPE_INVOICE";
+
+export interface MasterProfile {
+  id: string;
+  userId: string;
+  primaryBrokerAccountId: string;
+  displayName: string;
+  bio: string | null;
+  strategyTags: string[];
+  performanceFeePercent: number;
+  feeCollectionMethod: FeeCollectionMethod;
+  isPublic: boolean;
+  verifiedAt: string | null;
+  createdAt: string;
+}
+
+// Mirrors CopyRelationshipController.CopyRelationshipView's nested shapes
+// (apps/core-app/modules/trading) — the state machine itself lives in
+// CopyRelationshipService's Javadoc, transcribed for apps/web's own reference:
+// PENDING_RISK_ACK -> [PENDING_AGREEMENT if BROKER_PARTNERSHIP, else ACTIVE] -> ACTIVE <-> PAUSED -> STOPPED.
+export type CopyRelationshipStatus =
+  | "PENDING_RISK_ACK"
+  | "PENDING_AGREEMENT"
+  | "ACTIVE"
+  | "PAUSED"
+  | "STOPPED";
+
+export type CopyDirection = "COPY" | "REVERSE";
+
+export interface MoneyManagementProfileView {
+  method: string;
+  fixedLotSize: number | null;
+  multiplier: number | null;
+  riskPercent: number | null;
+  roundingMode: string;
+}
+
+export interface RiskProfileView {
+  maxLotPerTrade: number | null;
+  maxOpenPositions: number | null;
+  maxSlippagePips: number;
+  drawdownPausePct: number | null;
+  drawdownCloseAllPct: number | null;
+}
+
+export interface CopyRelationship {
+  id: string;
+  masterProfileId: string;
+  followerBrokerAccountId: string;
+  status: CopyRelationshipStatus;
+  moneyManagementProfile: MoneyManagementProfileView;
+  riskProfile: RiskProfileView;
+  copyDirection: CopyDirection;
+  feeCollectionMethod: FeeCollectionMethod;
+  originatingInvitationId: string | null;
+  originatingFollowRequestId: string | null;
+  highWaterMark: number | null;
+  createdAt: string;
+}
+
+// Mirrors CopyRelationshipController.TradesPage/CopiedTrade (read-only trades-history view).
+export type CopiedTradeStatus =
+  | "PENDING"
+  | "SUBMITTED"
+  | "FILLED"
+  | "PARTIALLY_CLOSED"
+  | "CLOSED"
+  | "REJECTED"
+  | "FAILED";
+
+export interface CopiedTrade {
+  id: string;
+  copyRelationshipId: string;
+  tradeSignalId: string;
+  status: CopiedTradeStatus;
+  computedVolumeLots: number;
+  requestedPrice: number | null;
+  filledPrice: number | null;
+  slippagePips: number | null;
+  rejectReason: string | null;
+  realizedPnl: number | null;
+  openedAt: string | null;
+  closedAt: string | null;
+  createdAt: string;
+}
+
+export interface CopiedTradesPage {
+  trades: CopiedTrade[];
+  total: number;
+  page: number;
+  pageSize: number;
+}

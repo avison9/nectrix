@@ -44,6 +44,11 @@ const (
 	// reconciliationCheckInterval (TICKET-109) -- docs/08-copy-trading-
 	// engine.md §8.9's own recommended "every 30-60s" cadence.
 	reconciliationCheckInterval = 30 * time.Second
+	// stopClosureCheckInterval (TICKET-111) -- same cadence as the drawdown
+	// monitor; force-closing a just-stopped relationship's open positions
+	// isn't as time-critical as a live drawdown breach, so no need for a
+	// tighter interval.
+	stopClosureCheckInterval = 30 * time.Second
 
 	// Default matches apps/core-app/db's 014-seed-dev-data.sql (context:dev,
 	// `make db-seed-dev`) so local manual QA works out of the box: curl the
@@ -215,6 +220,11 @@ func main() {
 	// dropped stream event by diffing actual broker positions against
 	// platform-believed state, independently of any live signal.
 	go pl.RunReconciliation(ctx, reconciliationCheckInterval)
+
+	// TICKET-111: force-closes open positions for a relationship the user
+	// just stopped via POST /copy-relationships/{id}/stop (core-app owns
+	// the status transition itself; this is what actually acts on it).
+	go pl.RunStopClosureMonitor(ctx, stopClosureCheckInterval)
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
