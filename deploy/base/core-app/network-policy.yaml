@@ -8,13 +8,19 @@
 # deploy/base/gateway's Ingress only ever forwards /api/v1/** traffic, never
 # /internal/**). What this policy DOES enforce for real: core-app's port
 # 8080 is reachable ONLY from the gateway namespace (public API traffic,
-# proxied in from deploy/base/gateway's Ingress) and the copy-engine
+# proxied in from deploy/base/gateway's Ingress), the copy-engine
 # namespace (where apps/broker-adapters actually runs — see
-# deploy/base/broker-adapters/deployment.yaml's own namespace: copy-engine)
-# — nothing else in the cluster, and nothing outside it, can reach core-app
-# directly. Same shape as copy-engine's own broker-egress policy
-# (deploy/base/copy-engine/network-policy.yaml), mirrored for ingress
-# instead of egress.
+# deploy/base/broker-adapters/deployment.yaml's own namespace: copy-engine),
+# and admin-portal/web (both call core-app directly, server-side, via
+# CORE_APP_BASE_URL=http://core-app.core-app.svc.cluster.local:8080 — see
+# apps/admin-portal/lib/core-app.ts and apps/web/lib/core-app.ts — never
+# proxied through gateway at all, so the original gateway+copy-engine-only
+# list was a real gap, invisible until a real, persistent environment
+# exercised an actual login instead of just staging/production's ephemeral
+# rollout-health smoke test). Nothing else in the cluster, and nothing
+# outside it, can reach core-app directly. Same shape as copy-engine's own
+# broker-egress policy (deploy/base/copy-engine/network-policy.yaml),
+# mirrored for ingress instead of egress.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -32,6 +38,12 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: copy-engine
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: admin-portal
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: web
       ports:
         - protocol: TCP
           port: 8080
