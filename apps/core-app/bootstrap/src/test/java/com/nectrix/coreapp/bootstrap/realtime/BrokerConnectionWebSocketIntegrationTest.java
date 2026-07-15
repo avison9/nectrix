@@ -10,11 +10,13 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.WebSocket;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -186,17 +188,21 @@ class BrokerConnectionWebSocketIntegrationTest {
       // either order.
       Thread.sleep(1000);
 
-      // Retries (not just one long wait) absorb real Kafka consumer-group rebalance/processing
-      // delays under a full-suite's heavier system load -- each connection-status call publishes
-      // a genuinely new event (fresh event_id), so a retry is a real, distinct trigger, not a
-      // resend of the same one the dedup layer would just swallow.
+      // A wall-clock deadline (not a fixed attempt count) absorbs real Kafka consumer-group
+      // rebalance/join delays -- observed in CI (slower, resource-constrained runners) to
+      // occasionally exceed 30+ seconds, well past what's typical on a local dev machine. Each
+      // connection-status call publishes a genuinely new event (fresh event_id), so every retry
+      // is a real, distinct trigger, not a resend the dedup layer would just swallow. 90s total
+      // comfortably exceeds Kafka's own session.timeout.ms (45s) for this consumer group, the
+      // slowest realistic single rebalance round trip.
       String message = null;
-      for (int attempt = 0; attempt < 4 && message == null; attempt++) {
+      long deadline = System.currentTimeMillis() + Duration.ofSeconds(90).toMillis();
+      while (message == null && System.currentTimeMillis() < deadline) {
         triggerRealConnectionStatusChange(accountId, "CONNECTED", "ws integration test");
         try {
-          message = listener.firstRealMessage.get(8, TimeUnit.SECONDS);
-        } catch (java.util.concurrent.TimeoutException e) {
-          // retry
+          message = listener.firstRealMessage.get(10, TimeUnit.SECONDS);
+        } catch (TimeoutException e) {
+          // retry until the deadline
         }
       }
       assertThat(message).as("broker-connection WS push never arrived after retries").isNotNull();
