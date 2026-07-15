@@ -8,9 +8,6 @@ components:
 # `kustomize edit set image ghcr.io/avison9/nectrix/<app>=<AR_image>:<sha>`
 # (run by deploy-dev in main-pipeline.yml) appends/updates entries here.
 images: []
-# Single replica everywhere — one e2-standard-4 VM, not an autoscaled
-# multi-node cluster. base's own defaults are already replicas: 1 for every
-# Deployment, so no explicit replica patch is needed here.
 patches:
   - path: env-patch-core-app.yaml
   - path: env-patch-copy-engine.yaml
@@ -40,3 +37,31 @@ patches:
       - op: replace
         path: /spec/rules/0/host
         value: api.dev.nectrix.app
+  # k3s (bare containerd, not GKE) has no built-in Artifact-Registry
+  # credential integration — real, live ImagePullBackOff/403s the first time
+  # pods needed to pull without this. Applied to every Deployment (not just
+  # the 7 that pull from our AR repo) since the 2 that use public images
+  # (gateway, async-worker) just ignore an imagePullSecret they don't need —
+  # simpler than enumerating targets. deploy-dev creates this secret fresh
+  # each run (see main-pipeline.yml) from a short-lived access token, not a
+  # long-lived key.
+  - target:
+      kind: Deployment
+    patch: |-
+      - op: add
+        path: /spec/template/spec/imagePullSecrets
+        value:
+          - name: artifact-registry-pull
+  # core-app's HPA (deploy/base/core-app/hpa.yaml) has minReplicas: 3 — sized
+  # for staging/production's docs/16-deployment-architecture.md §16.1
+  # target, not one shared 4vCPU/16GB VM also running 8 other app services
+  # plus the whole docker-compose stack. Real, live rollout timeout the
+  # first time this deployed for real: 3 replicas simply couldn't all pull
+  # in time on top of everything else contending for the same box.
+  - target:
+      kind: HorizontalPodAutoscaler
+      name: core-app
+    patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 1
