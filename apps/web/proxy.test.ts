@@ -61,4 +61,16 @@ describe("proxy (TICKET-110 AC6 — no public entry point)", () => {
     const response = await proxy(request);
     expect(response.headers.get("location")).toBeNull();
   });
+
+  it("never gates /masters (TICKET-112 public discovery), even with no cookie", async () => {
+    const request = new NextRequest("http://localhost:3000/masters");
+    const response = await proxy(request);
+    expect(response.headers.get("location")).toBeNull();
+  });
+
+  it("never gates /masters/{id} (public master profile), even with no cookie", async () => {
+    const request = new NextRequest("http://localhost:3000/masters/some-master-id");
+    const response = await proxy(request);
+    expect(response.headers.get("location")).toBeNull();
+  });
 });

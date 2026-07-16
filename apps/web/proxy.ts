@@ -3,7 +3,10 @@ import { verifyAccessToken } from "@/lib/session";
 
 // TICKET-118 (invitation acceptance) isn't built yet — when it lands, its own
 // /invite/{token} route adds itself here; this ticket doesn't need to pre-guess its shape.
-const PUBLIC_PATHS = ["/login"];
+// TICKET-112 — /masters (leaderboard) and /masters/{id} (public profile) are the platform's
+// public discovery/marketing surface (docs/10-portfolio-social-trading.md §10.2): reachable by
+// anyone, logged in or not.
+const PUBLIC_PATHS = ["/login", "/masters"];
 
 /**
  * TICKET-110 AC6 — this app's real gate: a missing/invalid/expired access_token

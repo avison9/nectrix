@@ -6,19 +6,16 @@
 }
 
 /*
- * TICKET-012 — design tokens extracted from the frontend-design handoff
- * bundle's Nectrix.dc.html. Only the shell chrome (sidebar/topbar/cards/
- * tables) is built from this mockup at this ticket — see the ticket's own
- * plan for why the mockup's Phase-1 feature pages aren't implemented yet.
- *
- * --accent/--accent-2 corrected (TICKET-111) to the mockup's actual dominant
- * teal (var(--accent,#33827A) appears 86 times across Nectrix.dc.html —
- * landing page, sign-in, the actual Master-management/admin page's own
- * primary buttons — vs. the #57534E "stone" fallback only used 45 times,
- * confined to a handful of Master monetization sections. This file's own
- * ::selection rule below already used rgba(51,130,122,.2) (= #33827A)
- * correctly, copied verbatim from the mockup's <style> block — the --accent
- * variable itself just had the wrong literal.
+ * TICKET-012 — design tokens taken verbatim from Nectrix.dc.html's own
+ * LIGHT/DARK theme objects (~line 1753: `const LIGHT={...}; const
+ * DARK={...};`), which get applied at the root of every screen via
+ * rootStyle/landingRootStyle — this is the actual applied theme, not the
+ * per-element `var(--accent, #33827A)` inline fallbacks scattered through
+ * individual components (those fallbacks are only ever used if --accent is
+ * unset; since LIGHT/DARK explicitly set it, they never apply). The design
+ * tool's own component prop schema (`data-props`'s "accent" field, section
+ * "Brand") confirms this too: default `#57534E`, with only grey/muted-neutral
+ * alternatives offered as options — no teal anywhere in the real palette.
  */
 :root {
   --bg: #fbfaf7;
@@ -28,18 +25,12 @@
   --text: #232326;
   --text-2: #63636a;
   --text-3: #9a9aa0;
-  --accent: #33827a;
-  --accent-2: #e4efec;
+  --accent: #57534e;
+  --accent-2: #ebe9e4;
   --pos: #3e9b6c;
   --neg: #c85c4e;
 }
 
-/*
- * Dark-mode values aren't in the design bundle (it's a light-theme export
- * only) — these are this codebase's own inferred equivalents, not literal
- * design-spec values: a lightened teal for AA contrast against the dark
- * surface, and a low-saturation dark teal for --accent-2's card/pill fills.
- */
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #141417;
@@ -49,8 +40,8 @@
     --text: #ececee;
     --text-2: #9e9ea6;
     --text-3: #6c6c74;
-    --accent: #4fa89d;
-    --accent-2: #1b3330;
+    --accent: #8a8a93;
+    --accent-2: #2e2e35;
     --pos: #57b183;
     --neg: #d8776a;
   }

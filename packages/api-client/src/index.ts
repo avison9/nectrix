@@ -20,9 +20,13 @@ import type {
   CopyRelationshipStatus,
   CtraderAccountOption,
   FeeCollectionMethod,
+  LeaderboardEntry,
+  LeaderboardPeriod,
+  LeaderboardSort,
   MasterProfile,
   NormalizedPosition,
   NormalizedTradeEvent,
+  PublicMasterProfile,
   SymbolMappingEntry,
 } from "@nectrix/domain-model";
 
@@ -43,7 +47,11 @@ export type {
   CopyRelationshipStatus,
   CtraderAccountOption,
   FeeCollectionMethod,
+  LeaderboardEntry,
+  LeaderboardPeriod,
+  LeaderboardSort,
   MasterProfile,
+  PublicMasterProfile,
   SymbolMappingEntry,
 };
 
@@ -65,8 +73,14 @@ function snakeToCamel(key: string): string {
 // core-app's Jackson config (spring.jackson.property-naming-strategy:
 // SNAKE_CASE) means every JSON response has snake_case keys; this package
 // hands back idiomatic camelCase TS shapes so nothing downstream has to know
-// that. Shallow-plus-one-level (objects, and arrays of objects) is enough for
-// every shape this client currently parses — no nested object graphs yet.
+// that. Fully recursive (objects nested inside objects, arrays of objects,
+// objects containing arrays, any depth) — TICKET-111's CopyRelationshipView
+// (nested moneyManagementProfile/riskProfile) and TICKET-112's
+// PublicMasterProfile (a map of nested LeaderboardEntry objects) both need
+// more than one level. A prior version of this function only recursed into
+// arrays, silently leaving every underscored key inside a plain nested object
+// (e.g. moneyManagementProfile.fixed_lot_size) unconverted — caught while
+// designing TICKET-112's own doubly-nested response shape, fixed here.
 function mapKeysShallow<T>(value: unknown): T {
   if (Array.isArray(value)) {
     return value.map((item) => mapKeysShallow(item)) as unknown as T;
@@ -74,7 +88,7 @@ function mapKeysShallow<T>(value: unknown): T {
   if (value !== null && typeof value === "object") {
     const result: Record<string, unknown> = {};
     for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
-      result[snakeToCamel(key)] = Array.isArray(val) ? mapKeysShallow(val) : val;
+      result[snakeToCamel(key)] = mapKeysShallow(val);
     }
     return result as T;
   }
@@ -614,4 +628,34 @@ export async function listCopyRelationshipTrades(
     `/api/v1/copy-relationships/${id}/trades?page=${page}&pageSize=${pageSize}`,
     { method: "GET", accessToken },
   );
+}
+
+// ==================== TICKET-112 — Public Discovery (Leaderboard) ====================
+// Both functions below deliberately take no accessToken — docs/14-api-specification.md §14.4:
+// "Discovery endpoints remain public/unauthenticated" (same no-token precedent as
+// submitCtraderCallback's own broker-redirect call above).
+
+export async function listLeaderboard(
+  baseUrl: string,
+  filter: { period?: LeaderboardPeriod; sort?: LeaderboardSort; page?: number } = {},
+): Promise<LeaderboardEntry[]> {
+  const params = new URLSearchParams();
+  if (filter.period) params.set("period", filter.period);
+  if (filter.sort) params.set("sort", filter.sort);
+  if (filter.page !== undefined) params.set("page", String(filter.page));
+  const query = params.toString();
+  return coreAppFetch<LeaderboardEntry[]>(
+    baseUrl,
+    `/api/v1/discovery/leaderboard${query ? `?${query}` : ""}`,
+    { method: "GET" },
+  );
+}
+
+export async function getPublicMasterProfile(
+  baseUrl: string,
+  id: string,
+): Promise<PublicMasterProfile> {
+  return coreAppFetch<PublicMasterProfile>(baseUrl, `/api/v1/discovery/masters/${id}`, {
+    method: "GET",
+  });
 }

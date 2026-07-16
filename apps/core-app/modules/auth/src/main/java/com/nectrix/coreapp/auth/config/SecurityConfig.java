@@ -214,6 +214,14 @@ public class SecurityConfig {
                     .authenticated()
                     .requestMatchers(HttpMethod.POST, "/api/v1/copy-relationships/*/stop")
                     .authenticated()
+                    // TICKET-112 — public discovery surface (docs/14-api-specification.md §14.4:
+                    // "Discovery endpoints remain public/unauthenticated"), see
+                    // DiscoveryController's
+                    // own Javadoc.
+                    .requestMatchers(HttpMethod.GET, "/api/v1/discovery/leaderboard")
+                    .permitAll()
+                    .requestMatchers(HttpMethod.GET, "/api/v1/discovery/masters/*")
+                    .permitAll()
                     // -- add new protected/public auth-adjacent routes here (future tickets:
                     // accept-invite, by-token) — anyRequest() below is intentionally permitAll,
                     // not authenticated(), so genuinely unmapped paths 404 instead of 401; see
