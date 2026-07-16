@@ -270,3 +270,32 @@ export interface CopiedTradesPage {
   page: number;
   pageSize: number;
 }
+
+// TICKET-112 — public discovery (leaderboard + public master profile). Mirrors
+// DiscoveryRepository.LeaderboardEntry/MasterPublicProfile (apps/core-app/modules/social).
+export type LeaderboardPeriod = "7D" | "30D" | "90D" | "YTD" | "ALL";
+
+export type LeaderboardSort = "return_pct" | "max_drawdown_pct" | "follower_count" | "sharpe_like_ratio";
+
+export interface LeaderboardEntry {
+  masterProfileId: string;
+  displayName: string;
+  strategyTags: string[];
+  returnPct: number;
+  maxDrawdownPct: number;
+  winRatePct: number | null;
+  sharpeLikeRatio: number | null;
+  followerCount: number;
+  aumProxy: number | null;
+}
+
+export interface PublicMasterProfile {
+  id: string;
+  displayName: string;
+  bio: string | null;
+  strategyTags: string[];
+  performanceFeePercent: number;
+  feeCollectionMethod: FeeCollectionMethod;
+  verifiedAt: string | null;
+  metricsByPeriod: Partial<Record<LeaderboardPeriod, LeaderboardEntry>>;
+}

@@ -53,26 +53,12 @@ export default function LoginPage() {
     <main className="flex min-h-screen items-center justify-center bg-[var(--bg)] px-4">
       <div className="w-full max-w-[400px]">
         <div className="mb-[26px] flex flex-col items-center text-center">
-          <div className="mb-4 flex h-[46px] w-[46px] items-center justify-center rounded-[13px] bg-[var(--accent)]">
-            <svg
-              viewBox="0 0 24 24"
-              width={24}
-              height={24}
-              fill="none"
-              stroke="#fff"
-              strokeWidth={2.1}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M5 19V7l7 5 7-5v12" />
-            </svg>
-          </div>
           <h1 className="text-[22px] font-semibold tracking-tight text-[var(--text)]">
-            Nectrix Admin Portal
+            You&apos;ve been signed out
           </h1>
           <p className="mt-2 text-[13.5px] leading-[1.5] text-[var(--text-2)]">
             {step === "credentials"
-              ? "Admin, Support, and Master sign-in."
+              ? "Sign back in to your Nectrix Admin Portal account."
               : `Enter the 2FA code for ${email}.`}
           </p>
         </div>
