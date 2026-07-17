@@ -123,3 +123,11 @@ nectrix:
         starter: ${STRIPE_PRICE_STARTER:}
         individual: ${STRIPE_PRICE_INDIVIDUAL:}
         pro: ${STRIPE_PRICE_PRO:}
+  # TICKET-115 (Core Notifications) — push/email provider config, empty in dev/test (both senders
+  # treat a blank value as "delivery for this channel is a no-op," not a startup failure).
+  notifications:
+    firebase:
+      service-account-json: ${FIREBASE_SERVICE_ACCOUNT_JSON:}
+    ses:
+      region: ${SES_REGION:}
+      sender-email: ${SES_SENDER_EMAIL:}

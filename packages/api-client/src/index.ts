@@ -685,6 +685,46 @@ export async function registerUser(
 export type SubscriptionPlanCode = "STARTER" | "INDIVIDUAL" | "PRO";
 
 /** Every plan (including the entry tier) requires a card on file — always returns a Checkout URL. */
+// ==================== TICKET-115 — Notification Preferences ====================
+
+export type NotificationChannel = "IN_APP" | "PUSH" | "EMAIL" | "SMS";
+
+export interface NotificationPreference {
+  userId: string;
+  eventType: string;
+  channel: NotificationChannel;
+  enabled: boolean;
+}
+
+export async function getNotificationPreferences(
+  baseUrl: string,
+  accessToken: string,
+): Promise<NotificationPreference[]> {
+  return coreAppFetch<NotificationPreference[]>(baseUrl, "/api/v1/notification-preferences", {
+    method: "GET",
+    accessToken,
+  });
+}
+
+/** Throws ApiError(400) with body.error === "drawdown_notification_floor_violation" for the one
+ * event type that can never have its IN_APP channel disabled — see core-app's
+ * NotificationPreferenceService for the full rule. */
+export async function updateNotificationPreference(
+  baseUrl: string,
+  accessToken: string,
+  input: { eventType: string; channel: NotificationChannel; enabled: boolean },
+): Promise<void> {
+  await coreAppFetch<null>(baseUrl, "/api/v1/notification-preferences", {
+    method: "PUT",
+    accessToken,
+    body: JSON.stringify({
+      event_type: input.eventType,
+      channel: input.channel,
+      enabled: input.enabled,
+    }),
+  });
+}
+
 export async function startSubscriptionCheckout(
   baseUrl: string,
   accessToken: string,

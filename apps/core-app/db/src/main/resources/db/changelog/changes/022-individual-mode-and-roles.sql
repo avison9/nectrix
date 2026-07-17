@@ -4,7 +4,7 @@
 -- from a flatter role catalog. SUPER_ADMIN/USER are new; MASTER/FOLLOWER keep working exactly as
 -- they do today (still Admin-invite / Master-invite additive role grants) -- this just adds the
 -- missing base role every account should have, and the not-yet-wired-into-any-check top admin tier
--- TICKET-115 (account tier-change approval) will need.
+-- TICKET-122 (account tier-change approval) will need.
 --changeset nectrix:022-seed-super-admin-and-user-roles
 INSERT INTO roles (name) VALUES ('SUPER_ADMIN'), ('USER');
 --rollback DELETE FROM roles WHERE name IN ('SUPER_ADMIN','USER');

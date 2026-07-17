@@ -247,6 +247,19 @@ public class SecurityConfig {
                     // the master-profiles/copy-relationships matchers above.
                     .requestMatchers(HttpMethod.POST, "/api/v1/individual/copy-setup")
                     .authenticated()
+                    // TICKET-115 — notification inbox/preferences/push-token registration. All
+                    // scoped to the caller's own userId inside the service layer, same reasoning
+                    // as every other .authenticated()-only matcher above.
+                    .requestMatchers(HttpMethod.GET, "/api/v1/notifications")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.POST, "/api/v1/notifications/*/read")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.GET, "/api/v1/notification-preferences")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.PUT, "/api/v1/notification-preferences")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.POST, "/api/v1/push-tokens")
+                    .authenticated()
                     // -- add new protected/public auth-adjacent routes here (future tickets:
                     // accept-invite, by-token) — anyRequest() below is intentionally permitAll,
                     // not authenticated(), so genuinely unmapped paths 404 instead of 401; see
