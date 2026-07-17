@@ -11,11 +11,33 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * (§11.7's own "Enterprise phase" note).
  */
 @ConfigurationProperties(prefix = "nectrix.billing")
-public record BillingProperties(BigDecimal platformTakeRatePct, Stripe stripe) {
+public record BillingProperties(
+    BigDecimal platformTakeRatePct, Stripe stripe, Subscriptions subscriptions) {
 
   /**
    * {@code webhookSigningSecret} verifies inbound {@code POST /internal/stripe/webhook} calls are
    * genuinely from Stripe (Stripe's own signature scheme), never trusted on payload content alone.
    */
   public record Stripe(String apiKey, String webhookSigningSecret) {}
+
+  /**
+   * TICKET-114 — Stripe Checkout Session config. {@code prices} maps {@link
+   * com.nectrix.coreapp.billing.domain.SubscriptionPlans}' static catalog codes to real Stripe
+   * Price ids (set per-environment; empty in dev/test, where Stripe calls are statically mocked).
+   */
+  public record Subscriptions(String successUrl, String cancelUrl, Prices prices) {
+
+    public record Prices(String starter, String individual, String pro) {
+
+      public String forPlanCode(String planCode) {
+        return switch (planCode) {
+          case "STARTER" -> starter;
+          case "INDIVIDUAL" -> individual;
+          case "PRO" -> pro;
+          default ->
+              throw new com.nectrix.coreapp.billing.service.InvalidPlanCodeException(planCode);
+        };
+      }
+    }
+  }
 }

@@ -24,6 +24,10 @@ dependencies {
     // @PreAuthorize et al. for the internal webhook route -- auth module owns the actual
     // SecurityFilterChain, same convention every other module follows.
     implementation("org.springframework.security:spring-security-core")
+    // TICKET-114 — org.springframework.security.oauth2.jwt.Jwt principal type for
+    // SubscriptionController's @AuthenticationPrincipal Jwt bindings; this module does not
+    // configure its own JwtDecoder (auth module's SecurityConfig owns that).
+    implementation("org.springframework.security:spring-security-oauth2-jose")
     implementation("com.nectrix:event-contracts") // BillingEvent (already scaffolded proto)
     implementation("com.stripe:stripe-java:29.4.0")
 }

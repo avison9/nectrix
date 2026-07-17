@@ -62,6 +62,33 @@ public class MasterProfileService {
     return repository.findById(id).orElseThrow(MasterProfileNotFoundException::new);
   }
 
+  /**
+   * TICKET-114 — the Individual-mode counterpart to {@link #create}: a system-created, private
+   * ({@code is_public=false}) profile backing a self-service "main account" copy setup, never
+   * user-role-gated (unlike {@link #create}'s {@code @PreAuthorize("hasRole('MASTER')")} on the
+   * controller) since nothing here is user-initiated in the marketplace sense. Idempotent — a
+   * second call for the same {@code userId} returns the existing row rather than a 409, since
+   * {@code IndividualCopySetupService} may call this again for a later slave-account addition.
+   */
+  public MasterProfile findOrCreatePrivateProfile(UUID userId, UUID mainBrokerAccountId) {
+    return repository
+        .findByUserId(userId)
+        .orElseGet(
+            () -> {
+              UUID id =
+                  repository.insert(
+                      userId,
+                      mainBrokerAccountId,
+                      "Individual",
+                      null,
+                      List.of(),
+                      BigDecimal.ZERO,
+                      "STRIPE_INVOICE",
+                      false);
+              return repository.findById(id).orElseThrow(MasterProfileNotFoundException::new);
+            });
+  }
+
   private BrokerAccountView lookupOwnedBrokerAccount(UUID userId, UUID brokerAccountId) {
     BrokerAccountView account;
     try {

@@ -154,6 +154,11 @@ class BrokerAccountCrudIntegrationTest {
     UUID userId =
         userProvisioningApi.createUser(
             email, "correct horse battery staple", "Test User", null, null, null, "US");
+    // TICKET-114 — a role-less caller is now "Individual mode" and subject to master/follower-
+    // slot capability limits; these tests are about broker-linking mechanics generally, not that
+    // new feature, so grant FOLLOWER (unaffected by any subscription/plan limit) same as every
+    // real invited Follower would have by the time they reach this step.
+    userProvisioningApi.grantRole(userId, "FOLLOWER");
     String preEnrollmentToken = loginAs(email);
 
     HttpResult enable = request("POST", "/api/v1/auth/2fa/enable", Map.of(), preEnrollmentToken);

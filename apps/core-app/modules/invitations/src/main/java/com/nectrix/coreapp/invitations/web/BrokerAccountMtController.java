@@ -2,6 +2,7 @@ package com.nectrix.coreapp.invitations.web;
 
 import com.nectrix.coreapp.invitations.service.MtLinkingService;
 import com.nectrix.coreapp.invitations.service.TwoFactorRequiredException;
+import java.util.List;
 import java.util.UUID;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -30,18 +31,29 @@ public class BrokerAccountMtController {
   public LinkResponse linkMt5(
       @AuthenticationPrincipal Jwt jwt, @RequestBody LinkRequestBody request) {
     requireTwoFactor(jwt);
-    return LinkResponse.from(linkingService.linkMt5(currentUserId(jwt), toServiceRequest(request)));
+    return LinkResponse.from(
+        linkingService.linkMt5(currentUserId(jwt), callerRoles(jwt), toServiceRequest(request)));
   }
 
   @PostMapping("/api/v1/broker-accounts/mt4")
   public LinkResponse linkMt4(
       @AuthenticationPrincipal Jwt jwt, @RequestBody LinkRequestBody request) {
     requireTwoFactor(jwt);
-    return LinkResponse.from(linkingService.linkMt4(currentUserId(jwt), toServiceRequest(request)));
+    return LinkResponse.from(
+        linkingService.linkMt4(currentUserId(jwt), callerRoles(jwt), toServiceRequest(request)));
   }
 
   private UUID currentUserId(Jwt jwt) {
     return UUID.fromString(jwt.getSubject());
+  }
+
+  /**
+   * TICKET-114 — master/follower-slot enforcement needs to know whether the caller is a real
+   * Master/Follower (unaffected) or Individual mode (subject to plan limits).
+   */
+  private List<String> callerRoles(Jwt jwt) {
+    List<String> roles = jwt.getClaimAsStringList("roles");
+    return roles != null ? roles : List.of();
   }
 
   /**

@@ -1,5 +1,6 @@
 package com.nectrix.coreapp.auth.web;
 
+import com.nectrix.coreapp.auth.service.EmailAlreadyRegisteredException;
 import com.nectrix.coreapp.auth.service.InvalidCredentialsException;
 import com.nectrix.coreapp.auth.service.InvalidRefreshTokenException;
 import com.nectrix.coreapp.auth.service.OAuthLoginRejectedException;
@@ -46,6 +47,12 @@ public class AuthExceptionHandler {
   public ResponseEntity<ErrorBody> handleOAuthLoginRejected() {
     return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
         .body(new ErrorBody("oauth_login_rejected"));
+  }
+
+  @ExceptionHandler(EmailAlreadyRegisteredException.class)
+  public ResponseEntity<ErrorBody> handleEmailAlreadyRegistered() {
+    return ResponseEntity.status(HttpStatus.CONFLICT)
+        .body(new ErrorBody("email_already_registered"));
   }
 
   public record ErrorBody(String error) {}

@@ -113,3 +113,13 @@ nectrix:
     stripe:
       api-key: ${STRIPE_API_KEY:}
       webhook-signing-secret: ${STRIPE_WEBHOOK_SIGNING_SECRET:}
+    # TICKET-114 — self-serve registration's Stripe Checkout Session config. success/cancel-url
+    # point back at apps/web; prices map SubscriptionPlans' static catalog codes to real Stripe
+    # Price ids (empty in dev/test, where Stripe calls are statically mocked).
+    subscriptions:
+      success-url: ${SUBSCRIPTION_CHECKOUT_SUCCESS_URL:http://localhost:3000/broker-accounts?subscribed=1}
+      cancel-url: ${SUBSCRIPTION_CHECKOUT_CANCEL_URL:http://localhost:3000/register}
+      prices:
+        starter: ${STRIPE_PRICE_STARTER:}
+        individual: ${STRIPE_PRICE_INDIVIDUAL:}
+        pro: ${STRIPE_PRICE_PRO:}

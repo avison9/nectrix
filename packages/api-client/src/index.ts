@@ -659,3 +659,40 @@ export async function getPublicMasterProfile(
     method: "GET",
   });
 }
+
+// ==================== TICKET-114 — Self-Serve Registration & Subscriptions ====================
+// registerUser takes no accessToken — public, no-invitation-required registration (the one
+// deliberate exception to "no self-registration anywhere", see core-app's UserProvisioningApi).
+
+export interface RegisteredUser {
+  userId: string;
+}
+
+export async function registerUser(
+  baseUrl: string,
+  input: { email: string; password: string; displayName: string },
+): Promise<RegisteredUser> {
+  return coreAppFetch<RegisteredUser>(baseUrl, "/api/v1/auth/register", {
+    method: "POST",
+    body: JSON.stringify({
+      email: input.email,
+      password: input.password,
+      display_name: input.displayName,
+    }),
+  });
+}
+
+export type SubscriptionPlanCode = "STARTER" | "INDIVIDUAL" | "PRO";
+
+/** Every plan (including the entry tier) requires a card on file — always returns a Checkout URL. */
+export async function startSubscriptionCheckout(
+  baseUrl: string,
+  accessToken: string,
+  planCode: SubscriptionPlanCode,
+): Promise<{ checkoutUrl: string }> {
+  return coreAppFetch<{ checkoutUrl: string }>(baseUrl, "/api/v1/subscriptions", {
+    method: "POST",
+    accessToken,
+    body: JSON.stringify({ plan_code: planCode }),
+  });
+}

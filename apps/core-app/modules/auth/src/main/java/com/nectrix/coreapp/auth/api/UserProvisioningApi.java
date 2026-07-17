@@ -5,11 +5,15 @@ import java.util.UUID;
 /**
  * The only cross-module-sanctioned surface of the auth module (enforced by ModuleBoundaryArchTest —
  * other modules may depend on {@code auth.api}, never {@code auth.repository}/{@code auth.domain}
- * directly). No self-registration exists anywhere in this platform (docs/05-domain-model.md §5.0) —
- * this is the one function every account-creation path (TICKET-012's admin-provisioning endpoint,
- * Phase 1's accept-invite endpoint) calls into. Deliberately uses only plain Java/domain types
- * (String, UUID) in its signature, never a Spring type, so consumers of this interface never need
- * Spring Security/JDBC/etc. on their own classpath.
+ * directly). This is the one function every account-creation path calls into: TICKET-012's
+ * admin-provisioning endpoint, Phase 1's accept-invite endpoint (not yet built), and — as of
+ * TICKET-114 — {@code RegistrationService}'s self-serve "Individual" registration, the one
+ * deliberate exception to "no self-registration anywhere" (docs/05-domain-model.md §5.0), scoped
+ * narrowly to that one path: {@code createdByUserId}/{@code createdViaInvitationId} both null, and
+ * only the base {@code USER} role granted (never {@code MASTER}/{@code FOLLOWER} — those stay
+ * admin-invite / master-invite / TICKET-122 tier-change-approval only). Deliberately uses only
+ * plain Java/domain types (String, UUID) in its signature, never a Spring type, so consumers of
+ * this interface never need Spring Security/JDBC/etc. on their own classpath.
  */
 public interface UserProvisioningApi {
 

@@ -112,4 +112,18 @@ public class SettlementDataRepository {
         .filter(java.util.Objects::nonNull)
         .findFirst();
   }
+
+  /**
+   * TICKET-114 — persists a freshly-created Stripe Customer id the first time a user checks out.
+   */
+  public void updateStripeCustomerId(UUID userId, String stripeCustomerId) {
+    jdbcTemplate.update(
+        "UPDATE users SET stripe_customer_id = ? WHERE id = ?", stripeCustomerId, userId);
+  }
+
+  /** TICKET-114 — needed to create a Stripe {@code Customer} (email is the one required field). */
+  public String findEmail(UUID userId) {
+    return jdbcTemplate.queryForObject(
+        "SELECT email FROM users WHERE id = ?", String.class, userId);
+  }
 }
