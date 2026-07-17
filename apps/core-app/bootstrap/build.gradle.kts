@@ -92,6 +92,10 @@ dependencies {
     // BrokerAccountMtTerminalCredentialsIntegrationTest's real AuditLogRepository-backed
     // assertions (confirming a real audit_log row was written).
     testImplementation(project(":modules:audit"))
+    // Same visibility reason again — modules:billing's Stripe SDK dependency is `implementation`,
+    // not `api`; SettlementIntegrationTest needs the SDK's own types directly to statically mock
+    // Invoice/InvoiceItem (Mockito's inline mock maker, already active in this project).
+    testImplementation("com.stripe:stripe-java:29.4.0")
 }
 
 application {

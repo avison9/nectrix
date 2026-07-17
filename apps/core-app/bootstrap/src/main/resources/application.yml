@@ -106,3 +106,10 @@ nectrix:
       # broker-adapters.internal-base-url above.
       internal-base-url: ${MT5_BRIDGE_GATEWAY_INTERNAL_BASE_URL:http://localhost:8092}
       service-token: ${INTERNAL_SERVICE_TOKEN}
+  # TICKET-113 (Performance Fee Engine) — docs/11-fee-engine-billing.md §11.7's global-default take
+  # rate; Stripe credentials for the STRIPE_INVOICE collection path only (Option A).
+  billing:
+    platform-take-rate-pct: ${PLATFORM_TAKE_RATE_PCT:15.00}
+    stripe:
+      api-key: ${STRIPE_API_KEY:}
+      webhook-signing-secret: ${STRIPE_WEBHOOK_SIGNING_SECRET:}

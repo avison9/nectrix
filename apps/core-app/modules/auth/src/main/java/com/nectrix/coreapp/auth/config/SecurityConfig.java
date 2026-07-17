@@ -222,6 +222,11 @@ public class SecurityConfig {
                     .permitAll()
                     .requestMatchers(HttpMethod.GET, "/api/v1/discovery/masters/*")
                     .permitAll()
+                    // TICKET-113 — Stripe's own webhook, not a bearer-token caller at all;
+                    // security is Stripe's signature scheme, verified in-controller (see
+                    // StripeWebhookController's own Javadoc for why this isn't under /internal/**).
+                    .requestMatchers(HttpMethod.POST, "/webhooks/stripe")
+                    .permitAll()
                     // -- add new protected/public auth-adjacent routes here (future tickets:
                     // accept-invite, by-token) — anyRequest() below is intentionally permitAll,
                     // not authenticated(), so genuinely unmapped paths 404 instead of 401; see
