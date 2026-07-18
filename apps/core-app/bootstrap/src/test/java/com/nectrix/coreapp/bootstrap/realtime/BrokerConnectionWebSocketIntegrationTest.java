@@ -192,11 +192,15 @@ class BrokerConnectionWebSocketIntegrationTest {
       // rebalance/join delays -- observed in CI (slower, resource-constrained runners) to
       // occasionally exceed 30+ seconds, well past what's typical on a local dev machine. Each
       // connection-status call publishes a genuinely new event (fresh event_id), so every retry
-      // is a real, distinct trigger, not a resend the dedup layer would just swallow. 90s total
-      // comfortably exceeds Kafka's own session.timeout.ms (45s) for this consumer group, the
-      // slowest realistic single rebalance round trip.
+      // is a real, distinct trigger, not a resend the dedup layer would just swallow. Widened from
+      // 90s to 180s -- the suite has grown to a couple dozen @SpringBootTest classes each
+      // joining/leaving their own consumer group against the same shared CI broker, and 90s (once
+      // comfortably past Kafka's own session.timeout.ms of 45s) stopped being a reliable margin
+      // once the suite reached its current size (see
+      // CopiedTradeNotificationConsumerIntegrationTest's
+      // own identical widening, hit the same way).
       String message = null;
-      long deadline = System.currentTimeMillis() + Duration.ofSeconds(90).toMillis();
+      long deadline = System.currentTimeMillis() + Duration.ofSeconds(180).toMillis();
       while (message == null && System.currentTimeMillis() < deadline) {
         triggerRealConnectionStatusChange(accountId, "CONNECTED", "ws integration test");
         try {

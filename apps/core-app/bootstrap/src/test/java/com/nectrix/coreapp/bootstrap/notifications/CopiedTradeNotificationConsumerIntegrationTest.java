@@ -203,7 +203,15 @@ class CopiedTradeNotificationConsumerIntegrationTest {
     Chain chain = insertCopyRelationship();
     String eventId = UUID.randomUUID().toString();
 
-    long deadline = System.currentTimeMillis() + Duration.ofSeconds(90).toMillis();
+    // Widened from 90s to 180s — the suite has grown to a couple dozen @SpringBootTest classes
+    // each joining/leaving their own Kafka consumer group against the same shared CI broker (this
+    // test's own DynamicPropertySource-randomized group is only isolated from *partition
+    // ownership* races, not from the broker's overall coordinator load); 90s reliably converged
+    // locally but was observed failing twice in a row in CI specifically (GitHub Actions'
+    // standard, more resource-constrained runners) once the suite reached its current size — a
+    // wider wall-clock margin, not a fixed-attempt-count change, same "real retries, not a flake
+    // to paper over" discipline this loop already follows.
+    long deadline = System.currentTimeMillis() + Duration.ofSeconds(180).toMillis();
     java.util.List<Map<String, Object>> rows = java.util.List.of();
     while (rows.isEmpty() && System.currentTimeMillis() < deadline) {
       publishCopiedTradeFailed(chain.copyRelationshipId(), eventId);
