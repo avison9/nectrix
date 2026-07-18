@@ -253,6 +253,9 @@ export interface CopiedTrade {
   copyRelationshipId: string;
   tradeSignalId: string;
   status: CopiedTradeStatus;
+  // TICKET-116 — not a copied_trades column itself, joined in from trade_signals (see
+  // CopiedTradeRepository's own Javadoc).
+  canonicalSymbol: string;
   computedVolumeLots: number;
   requestedPrice: number | null;
   filledPrice: number | null;

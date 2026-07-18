@@ -6,7 +6,16 @@ import { verifyAccessToken } from "@/lib/session";
 // TICKET-112 — /masters (leaderboard) and /masters/{id} (public profile) are the platform's
 // public discovery/marketing surface (docs/10-portfolio-social-trading.md §10.2): reachable by
 // anyone, logged in or not.
-const PUBLIC_PATHS = ["/login", "/masters"];
+// TICKET-114 — "/" is the public landing page (app/page.tsx does its own auth check and
+// redirects an authenticated visitor to /broker-accounts itself, so this doesn't weaken that
+// path); "/register" is the self-serve Individual registration form, also public by design (the
+// one deliberate exception to "no self-registration anywhere" — see core-app's
+// UserProvisioningApi).
+// TICKET-116 — "/request-invite" is PUBLIC · REQUEST INVITE, sitting between TICKET-112
+// (discovery, real) and TICKET-118 (invitation acceptance, not built) — the form itself is
+// reachable by anyone, its submit action is inert until that ticket lands (see the page's own
+// Javadoc-equivalent comment).
+const PUBLIC_PATHS = ["/", "/login", "/masters", "/register", "/request-invite"];
 
 /**
  * TICKET-110 AC6 — this app's real gate: a missing/invalid/expired access_token

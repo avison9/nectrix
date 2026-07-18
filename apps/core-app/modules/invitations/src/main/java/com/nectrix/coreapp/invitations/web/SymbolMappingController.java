@@ -8,6 +8,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
@@ -45,6 +46,24 @@ public class SymbolMappingController {
     UUID userId = currentUserId(authentication);
     SymbolMapping mapping =
         service.confirmMapping(id, canonicalSymbol, request.brokerSymbolName(), userId);
+    return SymbolMappingResponse.from(mapping);
+  }
+
+  /**
+   * TICKET-116 — the manual fallback for a canonical symbol {@link #confirm} can't reach (no
+   * auto-suggested row exists yet). {@code brokerSymbolName} is verified against a live broker
+   * round trip before anything is written — see {@link
+   * SymbolMappingService#createOrConfirmMapping}.
+   */
+  @PostMapping("/api/v1/broker-accounts/{id}/symbol-mappings/{canonicalSymbol}/resolve")
+  public SymbolMappingResponse resolve(
+      @PathVariable UUID id,
+      @PathVariable String canonicalSymbol,
+      Authentication authentication,
+      @RequestBody ConfirmRequest request) {
+    UUID userId = currentUserId(authentication);
+    SymbolMapping mapping =
+        service.createOrConfirmMapping(id, canonicalSymbol, request.brokerSymbolName(), userId);
     return SymbolMappingResponse.from(mapping);
   }
 

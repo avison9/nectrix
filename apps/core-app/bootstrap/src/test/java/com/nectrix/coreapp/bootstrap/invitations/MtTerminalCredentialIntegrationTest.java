@@ -149,8 +149,13 @@ class MtTerminalCredentialIntegrationTest {
    */
   private String loginNewUser() {
     String email = "mt-terminal-cred-" + UUID.randomUUID() + "@example.com";
-    userProvisioningApi.createUser(
-        email, "correct horse battery staple", "Test User", null, null, null, "US");
+    UUID userId =
+        userProvisioningApi.createUser(
+            email, "correct horse battery staple", "Test User", null, null, null, "US");
+    // TICKET-114 — a role-less caller is now "Individual mode" and subject to master/follower-
+    // slot capability limits; this test is about broker-linking mechanics generally, not that new
+    // feature, so grant FOLLOWER (unaffected by any subscription/plan limit).
+    userProvisioningApi.grantRole(userId, "FOLLOWER");
     String preEnrollmentToken = loginAs(email);
 
     HttpResult enable = request("POST", "/api/v1/auth/2fa/enable", Map.of(), preEnrollmentToken);

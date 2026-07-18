@@ -1,6 +1,7 @@
 package com.nectrix.coreapp.trading.repository;
 
 import com.nectrix.coreapp.trading.domain.CopyRelationship;
+import java.math.BigDecimal;
 import java.sql.Timestamp;
 import java.util.List;
 import java.util.Optional;
@@ -43,6 +44,42 @@ public class CopyRelationshipRepository {
 
   public CopyRelationshipRepository(JdbcTemplate jdbcTemplate) {
     this.jdbcTemplate = jdbcTemplate;
+  }
+
+  /**
+   * TICKET-114 — the first real INSERT into this table: {@code IndividualCopySetupService}'s
+   * self-service same-user copy setup. {@code originating_individual_setup=true} is the 3rd option
+   * {@code chk_exactly_one_origin} was widened for (022-individual-mode-and-roles.sql) — TICKET-111
+   * itself never creates a row (invite/follow-request-originated rows are TICKET-118/Phase-2
+   * territory), so this stays the one path that does, deliberately narrow to that one origin.
+   */
+  public UUID insert(
+      UUID masterProfileId,
+      UUID masterBrokerAccountId,
+      UUID followerUserId,
+      UUID followerBrokerAccountId,
+      UUID moneyManagementProfileId,
+      UUID riskProfileId,
+      BigDecimal performanceFeePercent,
+      String feeCollectionMethod) {
+    return jdbcTemplate.queryForObject(
+        """
+        INSERT INTO copy_relationships
+          (master_profile_id, master_broker_account_id, follower_user_id, follower_broker_account_id,
+           money_management_profile_id, risk_profile_id, performance_fee_percent,
+           fee_collection_method, originating_individual_setup)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, true)
+        RETURNING id
+        """,
+        UUID.class,
+        masterProfileId,
+        masterBrokerAccountId,
+        followerUserId,
+        followerBrokerAccountId,
+        moneyManagementProfileId,
+        riskProfileId,
+        performanceFeePercent,
+        feeCollectionMethod);
   }
 
   public Optional<CopyRelationship> findById(UUID id) {

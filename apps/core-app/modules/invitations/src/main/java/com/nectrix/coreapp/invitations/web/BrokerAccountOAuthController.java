@@ -64,6 +64,7 @@ public class BrokerAccountOAuthController {
     UUID userId = currentUserId(jwt);
     return linkingService.linkAccount(
         userId,
+        callerRoles(jwt),
         request.linkSessionId(),
         request.ctidTraderAccountId(),
         request.isLive(),
@@ -74,6 +75,15 @@ public class BrokerAccountOAuthController {
 
   private UUID currentUserId(Jwt jwt) {
     return UUID.fromString(jwt.getSubject());
+  }
+
+  /**
+   * TICKET-114 — master/follower-slot enforcement needs to know whether the caller is a real
+   * Master/Follower (unaffected) or Individual mode (subject to plan limits).
+   */
+  private List<String> callerRoles(Jwt jwt) {
+    List<String> roles = jwt.getClaimAsStringList("roles");
+    return roles != null ? roles : List.of();
   }
 
   /**

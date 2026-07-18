@@ -34,11 +34,12 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
  * deliberately, not an oversight. {@code authorizeHttpRequests} decides allow/deny purely from the
  * request's method+path, before Spring MVC ever resolves a handler; an {@code anyRequest()
  * .authenticated()} catch-all would make Security's {@code AuthenticationEntryPoint} return 401 for
- * an entirely unmapped path like {@code /api/v1/auth/register} (verified by hand — AC1 wants a
- * genuine 404, see {@code UserProvisioningApi}'s Javadoc for why that route must not exist at all).
- * With the catch-all permitAll, unmapped paths fall through to {@code DispatcherServlet}, which
- * 404s them the normal way. Every future protected route (TICKET-006 onward) must be added to this
- * allowlist explicitly — there is no longer a secure-by-default catch-all.
+ * an entirely unmapped path (verified by hand against TICKET-005's own AC1, back when {@code
+ * /api/v1/auth/register} was itself one such path — see {@code UserProvisioningApi}'s Javadoc for
+ * why TICKET-114 later made it a real, deliberate exception). With the catch-all permitAll,
+ * unmapped paths fall through to {@code DispatcherServlet}, which 404s them the normal way. Every
+ * future protected route (TICKET-006 onward) must be added to this allowlist explicitly — there is
+ * no longer a secure-by-default catch-all.
  */
 @Configuration
 @EnableWebSecurity
@@ -118,6 +119,11 @@ public class SecurityConfig {
                     .permitAll()
                     .requestMatchers(HttpMethod.POST, "/api/v1/auth/oauth/*/callback")
                     .permitAll()
+                    // TICKET-114 — self-serve "Individual" registration, the one deliberate
+                    // exception to the no-self-registration invariant this class's own Javadoc
+                    // used to describe as absolute; see RegistrationService/UserProvisioningApi.
+                    .requestMatchers(HttpMethod.POST, "/api/v1/auth/register")
+                    .permitAll()
                     .requestMatchers(HttpMethod.POST, "/api/v1/auth/logout")
                     .authenticated()
                     .requestMatchers(HttpMethod.POST, "/api/v1/auth/2fa/enable")
@@ -184,6 +190,11 @@ public class SecurityConfig {
                     .authenticated()
                     .requestMatchers(HttpMethod.PUT, "/api/v1/broker-accounts/*/symbol-mappings/*")
                     .authenticated()
+                    // TICKET-116 — manual symbol-mapping fallback (creates a row for a canonical
+                    // symbol the auto-suggestion probe list never covered).
+                    .requestMatchers(
+                        HttpMethod.POST, "/api/v1/broker-accounts/*/symbol-mappings/*/resolve")
+                    .authenticated()
                     // TICKET-111 — Master profile self-service creation (role check is
                     // @PreAuthorize("hasRole('MASTER')") method-security, see
                     // MasterProfileController) + the CopyRelationship state machine (ownership is
@@ -195,11 +206,18 @@ public class SecurityConfig {
                     .authenticated()
                     .requestMatchers(HttpMethod.PATCH, "/api/v1/master-profiles/*")
                     .authenticated()
+                    // TICKET-116 — MasterAnalyticsController, ownership enforced by
+                    // MasterAnalyticsService's own @PostAuthorize, not this matcher.
+                    .requestMatchers(HttpMethod.GET, "/api/v1/master-profiles/*/analytics")
+                    .authenticated()
                     .requestMatchers(HttpMethod.GET, "/api/v1/copy-relationships")
                     .authenticated()
                     .requestMatchers(HttpMethod.GET, "/api/v1/copy-relationships/*")
                     .authenticated()
                     .requestMatchers(HttpMethod.PATCH, "/api/v1/copy-relationships/*")
+                    .authenticated()
+                    // TICKET-116 — in-place money-management/risk profile editing.
+                    .requestMatchers(HttpMethod.PATCH, "/api/v1/copy-relationships/*/copy-settings")
                     .authenticated()
                     .requestMatchers(HttpMethod.GET, "/api/v1/copy-relationships/*/trades")
                     .authenticated()
@@ -222,6 +240,38 @@ public class SecurityConfig {
                     .permitAll()
                     .requestMatchers(HttpMethod.GET, "/api/v1/discovery/masters/*")
                     .permitAll()
+                    // TICKET-113 — Stripe's own webhook, not a bearer-token caller at all;
+                    // security is Stripe's signature scheme, verified in-controller (see
+                    // StripeWebhookController's own Javadoc for why this isn't under /internal/**).
+                    .requestMatchers(HttpMethod.POST, "/webhooks/stripe")
+                    .permitAll()
+                    // TICKET-114 — subscription lifecycle. Ownership is enforced inside
+                    // SubscriptionService itself (findActiveForUser is scoped to the caller's own
+                    // userId), same reasoning as the broker-accounts list/PATCH matchers above.
+                    .requestMatchers(HttpMethod.POST, "/api/v1/subscriptions")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.POST, "/api/v1/subscriptions/*/cancel")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.GET, "/api/v1/subscriptions/me")
+                    .authenticated()
+                    // TICKET-114 — Individual-mode self-service copy setup. Role-based rejection
+                    // (real Master/Follower callers get a 403) is method-layer, same reasoning as
+                    // the master-profiles/copy-relationships matchers above.
+                    .requestMatchers(HttpMethod.POST, "/api/v1/individual/copy-setup")
+                    .authenticated()
+                    // TICKET-115 — notification inbox/preferences/push-token registration. All
+                    // scoped to the caller's own userId inside the service layer, same reasoning
+                    // as every other .authenticated()-only matcher above.
+                    .requestMatchers(HttpMethod.GET, "/api/v1/notifications")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.POST, "/api/v1/notifications/*/read")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.GET, "/api/v1/notification-preferences")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.PUT, "/api/v1/notification-preferences")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.POST, "/api/v1/push-tokens")
+                    .authenticated()
                     // -- add new protected/public auth-adjacent routes here (future tickets:
                     // accept-invite, by-token) — anyRequest() below is intentionally permitAll,
                     // not authenticated(), so genuinely unmapped paths 404 instead of 401; see

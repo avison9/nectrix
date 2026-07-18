@@ -1,9 +1,13 @@
 package com.nectrix.coreapp.invitations.client;
 
 import com.nectrix.coreapp.invitations.config.InvitationsProperties;
+import java.net.URI;
 import java.util.List;
+import java.util.Optional;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.util.UriComponentsBuilder;
 
 /**
  * TICKET-101 — calls apps/broker-adapters' internal-only {@code POST /internal/ctrader/accounts}
@@ -74,6 +78,64 @@ public class BrokerAdaptersInternalClient {
             .body(NormalizedPosition[].class);
     return positions == null ? List.of() : List.of(positions);
   }
+
+  /**
+   * TICKET-116 — the manual symbol-mapping fallback: verifies a user-typed broker symbol name
+   * against a live broker round trip (ResolveSymbol + GetSymbolSpecification, both account-agnostic
+   * — see apps/broker-adapters' own {@code internalapi.handleResolveSymbol} Javadoc) and returns
+   * its real spec. Empty means the broker didn't recognize the symbol (the Go route's own 404) — a
+   * legitimate, expected outcome the caller maps to {@code UnresolvedBrokerSymbolException}, not a
+   * broker-adapter-is-down failure (which still propagates as an unchecked exception).
+   *
+   * <p>MT5/MT4 share one deployment/route ({@code mt}), so unlike {@link #getAccountSnapshot}/
+   * {@link #getOpenPositions} this appends {@code ?platform=} explicitly —
+   * apps/mt5-bridge-gateway's own {@code handleResolveSymbol} requires it to pick which of its two
+   * adapters to call.
+   *
+   * <p>Built via {@link UriComponentsBuilder}'s template-expansion (not string concatenation,
+   * unlike this class's other methods) — {@code brokerSymbolName} is user-typed and broker
+   * symbol-naming conventions really do include characters string concatenation would mangle (e.g.
+   * {@code go-domain}'s own {@code CandidateBrokerSymbolNames} catalog lists a {@code "#" + code}
+   * form), so the path segment needs real percent-encoding, not a raw append.
+   */
+  public Optional<SymbolSpec> resolveSymbol(
+      String brokerType, String brokerAccountId, String brokerSymbolName) {
+    Route route = routeFor(brokerType);
+    UriComponentsBuilder builder =
+        UriComponentsBuilder.fromUriString(
+            route.baseUrl()
+                + "/internal/"
+                + route.pathPrefix()
+                + "/accounts/{brokerAccountId}/symbols/{symbol}/resolve");
+    if (!"ctrader".equals(route.pathPrefix())) {
+      builder.queryParam("platform", brokerType);
+    }
+    URI uri = builder.buildAndExpand(brokerAccountId, brokerSymbolName).encode().toUri();
+    try {
+      SymbolSpec spec =
+          restClient
+              .get()
+              .uri(uri)
+              .header("X-Internal-Service-Token", route.serviceToken())
+              .retrieve()
+              .body(SymbolSpec.class);
+      return Optional.ofNullable(spec);
+    } catch (HttpClientErrorException.NotFound e) {
+      return Optional.empty();
+    }
+  }
+
+  /** Mirrors go-domain's SymbolSpec JSON shape exactly (already camelCase on the wire). */
+  public record SymbolSpec(
+      NormalizedSymbol symbol,
+      String brokerSymbolName,
+      double contractSize,
+      double lotStep,
+      double minLot,
+      double maxLot,
+      double pipSize,
+      int digits,
+      String marginCurrency) {}
 
   /**
    * cTrader has its own dedicated deployment (apps/broker-adapters); MT5 and MT4 both live behind

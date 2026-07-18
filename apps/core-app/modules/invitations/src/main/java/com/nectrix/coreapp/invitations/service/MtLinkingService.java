@@ -8,6 +8,7 @@ import com.nectrix.coreapp.invitations.repository.BrokerIbLinkRepository;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.util.Base64;
+import java.util.List;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.ObjectMapper;
@@ -35,6 +36,7 @@ public class MtLinkingService {
   private final BrokerIbLinkRepository ibLinkRepository;
   private final EnvelopeEncryptionService envelopeEncryptionService;
   private final ObjectMapper objectMapper;
+  private final IndividualModeCapabilityGuard capabilityGuard;
   private final String gatewayUrl;
   private final SecureRandom secureRandom = new SecureRandom();
 
@@ -43,23 +45,26 @@ public class MtLinkingService {
       BrokerIbLinkRepository ibLinkRepository,
       EnvelopeEncryptionService envelopeEncryptionService,
       ObjectMapper objectMapper,
+      IndividualModeCapabilityGuard capabilityGuard,
       InvitationsProperties properties) {
     this.repository = repository;
     this.ibLinkRepository = ibLinkRepository;
     this.envelopeEncryptionService = envelopeEncryptionService;
     this.objectMapper = objectMapper;
+    this.capabilityGuard = capabilityGuard;
     this.gatewayUrl = properties.mtBridge().gatewayUrl();
   }
 
-  public LinkResult linkMt5(UUID userId, LinkRequest request) {
-    return link(userId, "MT5", request);
+  public LinkResult linkMt5(UUID userId, List<String> callerRoles, LinkRequest request) {
+    return link(userId, callerRoles, "MT5", request);
   }
 
-  public LinkResult linkMt4(UUID userId, LinkRequest request) {
-    return link(userId, "MT4", request);
+  public LinkResult linkMt4(UUID userId, List<String> callerRoles, LinkRequest request) {
+    return link(userId, callerRoles, "MT4", request);
   }
 
-  private LinkResult link(UUID userId, String brokerType, LinkRequest request) {
+  private LinkResult link(
+      UUID userId, List<String> callerRoles, String brokerType, LinkRequest request) {
     if (repository.existsForUser(userId, brokerType, request.login())) {
       throw new BrokerAccountAlreadyLinkedException();
     }
@@ -69,6 +74,7 @@ public class MtLinkingService {
     if (openedViaIbLinkId != null && !ibLinkRepository.existsActiveById(openedViaIbLinkId)) {
       throw new InvalidIbLinkException();
     }
+    capabilityGuard.check(userId, callerRoles, resolvedRole);
 
     String pairingToken = generatePairingToken();
 

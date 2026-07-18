@@ -18,13 +18,17 @@ dependencyManagement {
     }
 }
 
-// Deliberately no dependencies on other *bounded-context* modules — cross-module
-// access must go through that module's ..api.. package (enforced by
-// ModuleBoundaryArchTest in :bootstrap) or through the event bus, never a direct
-// project() dependency. modules:crypto is the one documented exception (a
-// shared-kernel utility, no domain data/business capability of its own) — same
-// relationship modules/auth already has with it.
+// TICKET-114 — modules:billing is now a second bounded-context exception (alongside modules:social's
+// own identical one on this same module): BrokerLinkingService/MtLinkingService enforce Individual-
+// mode master-slot/follower-slot capacity via billing's published CapabilityLimitsApi, never
+// billing.service/billing.repository directly (enforced by ModuleBoundaryArchTest). Otherwise still
+// no dependencies on other *bounded-context* modules — cross-module access must go through that
+// module's ..api.. package or through the event bus, never a direct project() dependency.
+// modules:crypto is the one shared-kernel exception (no domain data/business capability of its own)
+// — same relationship modules/auth already has with it.
 dependencies {
+    // TICKET-114 — CapabilityLimitsApi, for master/follower-slot enforcement at link time.
+    implementation(project(":modules:billing"))
     // TICKET-101 — EnvelopeEncryptionService, for BrokerLinkingService.
     implementation(project(":modules:crypto"))
     // Nectrix-hosted MT5/MT4 terminal-provisioning — AuditLogRepository, for

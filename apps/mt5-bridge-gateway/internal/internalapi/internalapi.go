@@ -109,6 +109,9 @@ func NewMux(adapters PlatformAdapters, sharedSecret string, logger *slog.Logger)
 	mux.HandleFunc("GET /internal/mt/accounts/{brokerAccountId}/positions", func(w http.ResponseWriter, r *http.Request) {
 		handleGetOpenPositions(w, r, adapters, logger)
 	})
+	mux.HandleFunc("GET /internal/mt/accounts/{brokerAccountId}/symbols/{symbol}/resolve", func(w http.ResponseWriter, r *http.Request) {
+		handleResolveSymbol(w, r, adapters, logger)
+	})
 	return requireSharedSecret(sharedSecret, mux)
 }
 
@@ -255,6 +258,44 @@ func handleGetOpenPositions(w http.ResponseWriter, r *http.Request, adapters Pla
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(positions)
+}
+
+// handleResolveSymbol verifies a user-typed broker symbol name against the
+// live broker and returns its full trading spec -- TICKET-116's manual
+// symbol-mapping fallback (TICKET-103's auto-suggestion probe list doesn't
+// cover every possible broker symbol naming convention). ResolveSymbol/
+// GetSymbolSpecification are account-agnostic (see mtadapter/symbols.go's own
+// doc comment on domain.BrokerAdapter's interface shape) -- brokerAccountId
+// is carried in the path purely for logging/REST consistency with this
+// service's other account-scoped routes, not used to build a
+// domain.ConnectionHandle.
+func handleResolveSymbol(w http.ResponseWriter, r *http.Request, adapters PlatformAdapters, logger *slog.Logger) {
+	brokerAccountID := r.PathValue("brokerAccountId")
+	brokerSymbolName := r.PathValue("symbol")
+	platform := r.URL.Query().Get("platform")
+
+	adapter, err := adapters.forPlatform(platform)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	normalized, err := adapter.ResolveSymbol(r.Context(), brokerSymbolName)
+	if err != nil {
+		logger.Info("internalapi: resolve symbol failed", "brokerAccountId", brokerAccountID, "symbol", brokerSymbolName, "platform", platform, "error", err)
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	spec, err := adapter.GetSymbolSpecification(r.Context(), normalized)
+	if err != nil {
+		logger.Error("internalapi: get symbol specification failed", "brokerAccountId", brokerAccountID, "symbol", brokerSymbolName, "platform", platform, "error", err)
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(spec)
 }
 
 // handleClosePosition closes all (volumeLots omitted) or part (volumeLots

@@ -106,3 +106,28 @@ nectrix:
       # broker-adapters.internal-base-url above.
       internal-base-url: ${MT5_BRIDGE_GATEWAY_INTERNAL_BASE_URL:http://localhost:8092}
       service-token: ${INTERNAL_SERVICE_TOKEN}
+  # TICKET-113 (Performance Fee Engine) — docs/11-fee-engine-billing.md §11.7's global-default take
+  # rate; Stripe credentials for the STRIPE_INVOICE collection path only (Option A).
+  billing:
+    platform-take-rate-pct: ${PLATFORM_TAKE_RATE_PCT:15.00}
+    stripe:
+      api-key: ${STRIPE_API_KEY:}
+      webhook-signing-secret: ${STRIPE_WEBHOOK_SIGNING_SECRET:}
+    # TICKET-114 — self-serve registration's Stripe Checkout Session config. success/cancel-url
+    # point back at apps/web; prices map SubscriptionPlans' static catalog codes to real Stripe
+    # Price ids (empty in dev/test, where Stripe calls are statically mocked).
+    subscriptions:
+      success-url: ${SUBSCRIPTION_CHECKOUT_SUCCESS_URL:http://localhost:3000/broker-accounts?subscribed=1}
+      cancel-url: ${SUBSCRIPTION_CHECKOUT_CANCEL_URL:http://localhost:3000/register}
+      prices:
+        starter: ${STRIPE_PRICE_STARTER:}
+        individual: ${STRIPE_PRICE_INDIVIDUAL:}
+        pro: ${STRIPE_PRICE_PRO:}
+  # TICKET-115 (Core Notifications) — push/email provider config, empty in dev/test (both senders
+  # treat a blank value as "delivery for this channel is a no-op," not a startup failure).
+  notifications:
+    firebase:
+      service-account-json: ${FIREBASE_SERVICE_ACCOUNT_JSON:}
+    ses:
+      region: ${SES_REGION:}
+      sender-email: ${SES_SENDER_EMAIL:}

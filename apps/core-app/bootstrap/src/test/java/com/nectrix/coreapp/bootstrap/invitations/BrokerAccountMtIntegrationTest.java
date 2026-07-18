@@ -119,8 +119,13 @@ class BrokerAccountMtIntegrationTest {
    */
   private String loginNewUserWithoutTwoFactor() {
     String email = "mt-link-" + UUID.randomUUID() + "@example.com";
-    userProvisioningApi.createUser(
-        email, "correct horse battery staple", "Test User", null, null, null, "US");
+    UUID userId =
+        userProvisioningApi.createUser(
+            email, "correct horse battery staple", "Test User", null, null, null, "US");
+    // TICKET-114 — a role-less caller is now "Individual mode" and subject to master/follower-
+    // slot capability limits; these tests are about broker-linking mechanics generally, not that
+    // new feature, so grant FOLLOWER (unaffected by any subscription/plan limit).
+    userProvisioningApi.grantRole(userId, "FOLLOWER");
     return loginAs(email);
   }
 
@@ -153,8 +158,11 @@ class BrokerAccountMtIntegrationTest {
 
   private String loginNewUser() {
     String email = "mt-link-" + UUID.randomUUID() + "@example.com";
-    userProvisioningApi.createUser(
-        email, "correct horse battery staple", "Test User", null, null, null, "US");
+    UUID userId =
+        userProvisioningApi.createUser(
+            email, "correct horse battery staple", "Test User", null, null, null, "US");
+    // TICKET-114 — see loginNewUserWithoutTwoFactor's identical comment above.
+    userProvisioningApi.grantRole(userId, "FOLLOWER");
     String preEnrollmentToken = loginAs(email);
 
     HttpResult enable = request("POST", "/api/v1/auth/2fa/enable", Map.of(), preEnrollmentToken);

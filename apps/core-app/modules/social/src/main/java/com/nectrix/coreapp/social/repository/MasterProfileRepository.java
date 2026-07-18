@@ -64,6 +64,8 @@ public class MasterProfileRepository {
 
   /**
    * {@code feeCollectionMethod}/{@code performanceFeePercent} may be null — column defaults apply.
+   * Defaults {@code isPublic} to {@code true} (the column's own DB default) — the real Master
+   * self-service creation path.
    */
   public UUID insert(
       UUID userId,
@@ -73,12 +75,37 @@ public class MasterProfileRepository {
       List<String> strategyTags,
       BigDecimal performanceFeePercent,
       String feeCollectionMethod) {
+    return insert(
+        userId,
+        primaryBrokerAccountId,
+        displayName,
+        bio,
+        strategyTags,
+        performanceFeePercent,
+        feeCollectionMethod,
+        true);
+  }
+
+  /**
+   * TICKET-114 — {@code isPublic=false} for an Individual-mode user's system-created private
+   * profile (never appears in {@code DiscoveryRepository}'s {@code WHERE is_public = true}
+   * queries).
+   */
+  public UUID insert(
+      UUID userId,
+      UUID primaryBrokerAccountId,
+      String displayName,
+      String bio,
+      List<String> strategyTags,
+      BigDecimal performanceFeePercent,
+      String feeCollectionMethod,
+      boolean isPublic) {
     return jdbcTemplate.execute(
         """
         INSERT INTO master_profiles
           (user_id, primary_broker_account_id, display_name, bio, strategy_tags,
-           performance_fee_percent, fee_collection_method)
-        VALUES (?, ?, ?, ?, ?, COALESCE(?, 20.00), COALESCE(?, 'BROKER_PARTNERSHIP'))
+           performance_fee_percent, fee_collection_method, is_public)
+        VALUES (?, ?, ?, ?, ?, COALESCE(?, 20.00), COALESCE(?, 'BROKER_PARTNERSHIP'), ?)
         RETURNING id
         """,
         (PreparedStatement ps) -> {
@@ -89,7 +116,8 @@ public class MasterProfileRepository {
           ps.setString(i++, bio);
           ps.setArray(i++, toTextArray(ps, strategyTags));
           ps.setBigDecimal(i++, performanceFeePercent);
-          ps.setString(i, feeCollectionMethod);
+          ps.setString(i++, feeCollectionMethod);
+          ps.setBoolean(i, isPublic);
           try (ResultSet rs = ps.executeQuery()) {
             rs.next();
             return UUID.fromString(rs.getString(1));

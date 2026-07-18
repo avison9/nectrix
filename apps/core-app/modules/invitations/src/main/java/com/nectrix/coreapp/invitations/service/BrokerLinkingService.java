@@ -37,6 +37,7 @@ public class BrokerLinkingService {
   private final BrokerIbLinkRepository ibLinkRepository;
   private final EnvelopeEncryptionService envelopeEncryptionService;
   private final ObjectMapper objectMapper;
+  private final IndividualModeCapabilityGuard capabilityGuard;
 
   public BrokerLinkingService(
       OAuthLinkStateStore stateStore,
@@ -45,7 +46,8 @@ public class BrokerLinkingService {
       BrokerAccountRepository repository,
       BrokerIbLinkRepository ibLinkRepository,
       EnvelopeEncryptionService envelopeEncryptionService,
-      ObjectMapper objectMapper) {
+      ObjectMapper objectMapper,
+      IndividualModeCapabilityGuard capabilityGuard) {
     this.stateStore = stateStore;
     this.oauthClient = oauthClient;
     this.brokerAdaptersClient = brokerAdaptersClient;
@@ -53,6 +55,7 @@ public class BrokerLinkingService {
     this.ibLinkRepository = ibLinkRepository;
     this.envelopeEncryptionService = envelopeEncryptionService;
     this.objectMapper = objectMapper;
+    this.capabilityGuard = capabilityGuard;
   }
 
   /**
@@ -97,6 +100,7 @@ public class BrokerLinkingService {
    */
   public BrokerAccount linkAccount(
       UUID callerUserId,
+      List<String> callerRoles,
       String linkSessionId,
       long ctidTraderAccountId,
       boolean isLive,
@@ -118,6 +122,7 @@ public class BrokerLinkingService {
     if (openedViaIbLinkId != null && !ibLinkRepository.existsActiveById(openedViaIbLinkId)) {
       throw new InvalidIbLinkException();
     }
+    capabilityGuard.check(callerUserId, callerRoles, resolvedRole);
 
     // Jackson 3's writeValueAsString is unchecked (JacksonException extends
     // RuntimeException) — no try/catch needed, matching AuthController's own convention.

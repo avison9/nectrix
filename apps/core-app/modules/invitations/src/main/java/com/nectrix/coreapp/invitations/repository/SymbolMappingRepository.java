@@ -108,6 +108,61 @@ public class SymbolMappingRepository {
   }
 
   /**
+   * TICKET-116 — the manual fallback's own write: unlike {@link #upsertSuggested}/{@link #confirm}
+   * (which require a pre-existing auto-suggested row), this creates a brand-new, already-confirmed
+   * row outright — safe because the caller (see {@code
+   * SymbolMappingService#createOrConfirmMapping}) only calls this AFTER a live broker-adapter round
+   * trip has verified {@code brokerSymbolName} is real and returned its spec numbers. Also
+   * overwrites an existing row (even an already-confirmed one) if present — a user manually
+   * re-verifying a symbol should always win over a stale row.
+   */
+  public void upsertConfirmed(
+      UUID brokerAccountId,
+      String canonicalSymbol,
+      String brokerSymbolName,
+      double contractSize,
+      double lotStep,
+      double minLot,
+      double maxLot,
+      double pipSize,
+      short digits,
+      String marginCurrency,
+      UUID confirmedByUserId) {
+    jdbcTemplate.update(
+        """
+        INSERT INTO symbol_mappings
+          (broker_account_id, canonical_symbol, broker_symbol_name, contract_size, lot_step,
+           min_lot, max_lot, pip_size, digits, margin_currency, is_confirmed, confirmed_at,
+           confirmed_by_user_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, now(), ?)
+        ON CONFLICT (broker_account_id, canonical_symbol) DO UPDATE SET
+          broker_symbol_name = EXCLUDED.broker_symbol_name,
+          contract_size = EXCLUDED.contract_size,
+          lot_step = EXCLUDED.lot_step,
+          min_lot = EXCLUDED.min_lot,
+          max_lot = EXCLUDED.max_lot,
+          pip_size = EXCLUDED.pip_size,
+          digits = EXCLUDED.digits,
+          margin_currency = EXCLUDED.margin_currency,
+          is_confirmed = TRUE,
+          confirmed_at = now(),
+          confirmed_by_user_id = EXCLUDED.confirmed_by_user_id,
+          updated_at = now()
+        """,
+        brokerAccountId,
+        canonicalSymbol,
+        brokerSymbolName,
+        contractSize,
+        lotStep,
+        minLot,
+        maxLot,
+        pipSize,
+        digits,
+        marginCurrency,
+        confirmedByUserId);
+  }
+
+  /**
    * Confirms an existing row — {@code brokerSymbolName} is the only field a user can override (the
    * spec numbers came from a real, adapter-verified {@code GetSymbolSpecification} call at
    * suggestion time, never hand-typed). Returns the number of rows updated (0 if no row exists yet

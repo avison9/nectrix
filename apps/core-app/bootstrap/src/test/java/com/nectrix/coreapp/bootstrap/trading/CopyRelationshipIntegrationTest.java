@@ -510,4 +510,110 @@ class CopyRelationshipIntegrationTest {
     assertThat(response.body().get("total")).isEqualTo(0);
     assertThat((List<?>) response.body().get("trades")).isEmpty();
   }
+
+  // ==================== TICKET-116 — copy-settings (in-place edit) ====================
+
+  @Test
+  void updateCopySettings_editsTheExistingProfileRowsInPlace_notSwappingIds() {
+    Chain chain = insertCopyRelationship("ACTIVE", "BROKER_PARTNERSHIP");
+    UUID originalMmId =
+        UUID.fromString(
+            jdbcTemplate.queryForObject(
+                "SELECT money_management_profile_id FROM copy_relationships WHERE id = ?",
+                String.class,
+                chain.id()));
+
+    HttpResult response =
+        request(
+            "PATCH",
+            "/api/v1/copy-relationships/" + chain.id() + "/copy-settings",
+            Map.ofEntries(
+                Map.entry("method", "MULTIPLIER"),
+                Map.entry("fixed_lot_size", 0),
+                Map.entry("multiplier", 2.5),
+                Map.entry("risk_percent", 0),
+                Map.entry("rounding_mode", "NEAREST"),
+                Map.entry("max_lot_per_trade", 3.0),
+                Map.entry("max_open_positions", 5),
+                Map.entry("max_slippage_pips", 2.5)),
+            chain.follower().accessToken());
+
+    assertThat(response.status()).isEqualTo(200);
+    Map<String, Object> mm = (Map<String, Object>) response.body().get("money_management_profile");
+    assertThat(mm.get("multiplier")).isEqualTo(2.5);
+    Map<String, Object> risk = (Map<String, Object>) response.body().get("risk_profile");
+    assertThat(risk.get("max_lot_per_trade")).isEqualTo(3.0);
+
+    // Same row id — an in-place update, not a swap to a newly-inserted profile.
+    UUID storedMmId =
+        UUID.fromString(
+            jdbcTemplate.queryForObject(
+                "SELECT money_management_profile_id FROM copy_relationships WHERE id = ?",
+                String.class,
+                chain.id()));
+    assertThat(storedMmId).isEqualTo(originalMmId);
+    Double storedMultiplier =
+        jdbcTemplate.queryForObject(
+            "SELECT multiplier FROM money_management_profiles WHERE id = ?",
+            Double.class,
+            originalMmId);
+    assertThat(storedMultiplier).isEqualTo(2.5);
+  }
+
+  @Test
+  void updateCopySettings_byAnotherFollower_isForbiddenAndLeavesValuesUnchanged() {
+    Chain chain = insertCopyRelationship("ACTIVE", "BROKER_PARTNERSHIP");
+    NewUser attacker = newUser("FOLLOWER");
+
+    HttpResult response =
+        request(
+            "PATCH",
+            "/api/v1/copy-relationships/" + chain.id() + "/copy-settings",
+            Map.ofEntries(
+                Map.entry("method", "FIXED_LOT"),
+                Map.entry("fixed_lot_size", 9.0),
+                Map.entry("multiplier", 0),
+                Map.entry("risk_percent", 0),
+                Map.entry("rounding_mode", "DOWN"),
+                Map.entry("max_lot_per_trade", 1.0),
+                Map.entry("max_open_positions", 1),
+                Map.entry("max_slippage_pips", 1.0)),
+            attacker.accessToken());
+
+    assertThat(response.status()).isEqualTo(403);
+  }
+
+  // ==================== TICKET-116 — cross-relationship trade history ====================
+
+  @Test
+  void allTrades_scopesToTheCallersOwnRelationshipsOnly() {
+    Chain mine = insertCopyRelationship("ACTIVE", "BROKER_PARTNERSHIP");
+    insertCopyRelationship("ACTIVE", "BROKER_PARTNERSHIP");
+
+    HttpResult response =
+        request(
+            "GET",
+            "/api/v1/copy-relationships/trades?role=follower",
+            null,
+            mine.follower().accessToken());
+
+    assertThat(response.status()).isEqualTo(200);
+    assertThat(response.body().get("total")).isEqualTo(0);
+  }
+
+  @Test
+  void allTrades_filteredByASymbolNoTradeHas_returnsEmptyNotAnError() {
+    Chain chain = insertCopyRelationship("ACTIVE", "BROKER_PARTNERSHIP");
+
+    HttpResult response =
+        request(
+            "GET",
+            "/api/v1/copy-relationships/trades?role=follower&symbol=NOSUCHSYMBOL",
+            null,
+            chain.follower().accessToken());
+
+    assertThat(response.status()).isEqualTo(200);
+    assertThat(response.body().get("total")).isEqualTo(0);
+    assertThat((List<?>) response.body().get("trades")).isEmpty();
+  }
 }

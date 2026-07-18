@@ -1,6 +1,7 @@
 package com.nectrix.coreapp.invitations.web;
 
 import com.nectrix.coreapp.invitations.service.BrokerAccountAlreadyLinkedException;
+import com.nectrix.coreapp.invitations.service.BrokerAccountLimitExceededException;
 import com.nectrix.coreapp.invitations.service.InvalidConnectionRoleException;
 import com.nectrix.coreapp.invitations.service.InvalidIbLinkException;
 import com.nectrix.coreapp.invitations.service.InvalidLinkSessionException;
@@ -47,5 +48,15 @@ public class BrokerAccountOAuthExceptionHandler {
     return ResponseEntity.status(HttpStatus.FORBIDDEN).body(new ErrorBody("two_factor_required"));
   }
 
+  /** TICKET-114 — a clear upgrade prompt, not a bare 403 (AC4's own wording). */
+  @ExceptionHandler(BrokerAccountLimitExceededException.class)
+  public ResponseEntity<LimitErrorBody> handleBrokerAccountLimitExceeded(
+      BrokerAccountLimitExceededException e) {
+    return ResponseEntity.status(HttpStatus.FORBIDDEN)
+        .body(new LimitErrorBody("broker_account_limit_exceeded", e.connectionRole(), e.limit()));
+  }
+
   public record ErrorBody(String error) {}
+
+  public record LimitErrorBody(String error, String connectionRole, int limit) {}
 }

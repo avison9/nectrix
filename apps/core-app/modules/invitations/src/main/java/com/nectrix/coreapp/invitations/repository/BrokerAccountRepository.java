@@ -123,6 +123,23 @@ public class BrokerAccountRepository {
         openedViaIbLinkId);
   }
 
+  /**
+   * TICKET-114 — how many of the caller's own accounts already carry a given {@code
+   * connection_role}, for master-slot/follower-slot capability enforcement. {@code "BOTH"} counts
+   * toward both a master-slot and a follower-slot check (a single account acting as both) — callers
+   * pass {@code "MASTER_ONLY"} or {@code "FOLLOWER_ONLY"} and this matches accounts set to that
+   * role OR {@code "BOTH"}.
+   */
+  public int countForUserByConnectionRole(UUID userId, String connectionRole) {
+    Integer count =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM broker_accounts WHERE user_id = ? AND connection_role IN (?, 'BOTH')",
+            Integer.class,
+            userId,
+            connectionRole);
+    return count == null ? 0 : count;
+  }
+
   /** TICKET-110 — list endpoint's own query, scoped to the caller (never a bare findAll). */
   public List<BrokerAccount> findAllForUser(UUID userId) {
     return jdbcTemplate.query(

@@ -48,6 +48,18 @@ public class MasterProfileController {
     return service.getMasterProfile(id);
   }
 
+  /**
+   * TICKET-116 — the caller's own profile, by their own JWT subject. Registered as a distinct
+   * {@code @GetMapping} rather than folded into {@link #getById}'s {@code {id}} path variable —
+   * Spring's path-pattern matching prioritizes this literal {@code /me} segment over the variable
+   * one, so both routes coexist safely (same precedent {@code CopyRelationshipController}'s own
+   * {@code /copy-relationships/trades} vs {@code /copy-relationships/{id}} already established).
+   */
+  @GetMapping("/api/v1/master-profiles/me")
+  public MasterProfile getMyProfile(@AuthenticationPrincipal Jwt jwt) {
+    return service.getMyProfile(currentUserId(jwt));
+  }
+
   @PatchMapping("/api/v1/master-profiles/{id}")
   public MasterProfile patch(@PathVariable UUID id, @RequestBody PatchRequest request) {
     // Explicit fetch-then-check-then-mutate — see MasterProfileService's own Javadoc for why the

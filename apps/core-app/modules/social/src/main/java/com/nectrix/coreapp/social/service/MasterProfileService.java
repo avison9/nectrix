@@ -62,6 +62,33 @@ public class MasterProfileService {
     return repository.findById(id).orElseThrow(MasterProfileNotFoundException::new);
   }
 
+  /**
+   * TICKET-114 — the Individual-mode counterpart to {@link #create}: a system-created, private
+   * ({@code is_public=false}) profile backing a self-service "main account" copy setup, never
+   * user-role-gated (unlike {@link #create}'s {@code @PreAuthorize("hasRole('MASTER')")} on the
+   * controller) since nothing here is user-initiated in the marketplace sense. Idempotent — a
+   * second call for the same {@code userId} returns the existing row rather than a 409, since
+   * {@code IndividualCopySetupService} may call this again for a later slave-account addition.
+   */
+  public MasterProfile findOrCreatePrivateProfile(UUID userId, UUID mainBrokerAccountId) {
+    return repository
+        .findByUserId(userId)
+        .orElseGet(
+            () -> {
+              UUID id =
+                  repository.insert(
+                      userId,
+                      mainBrokerAccountId,
+                      "Individual",
+                      null,
+                      List.of(),
+                      BigDecimal.ZERO,
+                      "STRIPE_INVOICE",
+                      false);
+              return repository.findById(id).orElseThrow(MasterProfileNotFoundException::new);
+            });
+  }
+
   private BrokerAccountView lookupOwnedBrokerAccount(UUID userId, UUID brokerAccountId) {
     BrokerAccountView account;
     try {
@@ -78,6 +105,17 @@ public class MasterProfileService {
   @PostAuthorize("@perms.isOwnerOrStaff(authentication, returnObject.userId())")
   public MasterProfile getMasterProfile(UUID id) {
     return repository.findById(id).orElseThrow(MasterProfileNotFoundException::new);
+  }
+
+  /**
+   * TICKET-116 — the "do I already have one" lookup {@link #create}'s own Javadoc originally
+   * flagged as missing (previously only discoverable via a 409 on create). Needed so a Master-role
+   * caller can reach their own profile id without knowing it up front (e.g. the Analytics page).
+   * Inherently self-scoped (queries by the caller's own {@code userId}, never a client-supplied
+   * one) — no {@code @PostAuthorize} needed, unlike {@link #getMasterProfile}.
+   */
+  public MasterProfile getMyProfile(UUID userId) {
+    return repository.findByUserId(userId).orElseThrow(MasterProfileNotFoundException::new);
   }
 
   /**
