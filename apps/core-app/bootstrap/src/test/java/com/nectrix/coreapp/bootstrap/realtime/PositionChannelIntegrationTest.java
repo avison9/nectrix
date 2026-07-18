@@ -320,8 +320,11 @@ class PositionChannelIntegrationTest {
       webSocket.sendText(subscribeFrame, true).get(5, TimeUnit.SECONDS);
       Thread.sleep(1000);
 
+      // Widened from 90s to 180s -- the suite has grown to a couple dozen @SpringBootTest classes
+      // each joining/leaving their own consumer group against the same shared CI broker; see
+      // CopiedTradeNotificationConsumerIntegrationTest's own identical widening, hit the same way.
       String message = null;
-      long deadline = System.currentTimeMillis() + Duration.ofSeconds(90).toMillis();
+      long deadline = System.currentTimeMillis() + Duration.ofSeconds(180).toMillis();
       while (message == null && System.currentTimeMillis() < deadline) {
         publishTradeSignal(masterBrokerAccountId, UUID.randomUUID().toString());
         try {
@@ -365,8 +368,11 @@ class PositionChannelIntegrationTest {
       webSocket.sendText(subscribeFrame, true).get(5, TimeUnit.SECONDS);
       Thread.sleep(1000);
 
+      // Widened from 90s to 180s -- the suite has grown to a couple dozen @SpringBootTest classes
+      // each joining/leaving their own consumer group against the same shared CI broker; see
+      // CopiedTradeNotificationConsumerIntegrationTest's own identical widening, hit the same way.
       String message = null;
-      long deadline = System.currentTimeMillis() + Duration.ofSeconds(90).toMillis();
+      long deadline = System.currentTimeMillis() + Duration.ofSeconds(180).toMillis();
       while (message == null && System.currentTimeMillis() < deadline) {
         publishCopiedTradeOpened(chain.copyRelationshipId(), UUID.randomUUID().toString());
         try {

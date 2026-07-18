@@ -54,7 +54,10 @@ public class RiskNotificationConsumer {
         new IdempotentConsumer.Config<RiskEvent>()
             .topic(TOPIC)
             .parser(RiskEvent.parser())
-            .keyExtractor(event -> event.getEnvelope().getEventId())
+            // Prefixed with this consumer's own DEFAULT_GROUP_ID -- consistent with every other
+            // consumer in this app, see CopiedTradeNotificationConsumer's own Javadoc for why
+            // (RedisDeduplicator's key is a global namespace, not scoped per consumer group).
+            .keyExtractor(event -> DEFAULT_GROUP_ID + ":" + event.getEnvelope().getEventId())
             .handler(event -> handle(event, dispatchService))
             .deduplicator(new RedisDeduplicator(redisClient, Duration.ofMinutes(5)))
             .retryPolicy(RetryPolicy.defaultPolicy())

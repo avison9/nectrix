@@ -56,7 +56,14 @@ public class CopiedTradePositionConsumer {
         new IdempotentConsumer.Config<CopiedTradeEvent>()
             .topic(TOPIC)
             .parser(CopiedTradeEvent.parser())
-            .keyExtractor(event -> event.getEnvelope().getEventId())
+            // Prefixed with this consumer's own DEFAULT_GROUP_ID, not the bare event id --
+            // RedisDeduplicator's key is a global "events:dedup:<key>" namespace, and
+            // CopiedTradeNotificationConsumer (TICKET-115) reads this exact same topic with the
+            // exact same bare-eventId key shape; without a per-consumer prefix the two race for the
+            // same Redis slot and whichever polls first silently causes the other to skip a real
+            // event as a false "duplicate" (caught via a flaky
+            // CopiedTradeNotificationConsumerIntegrationTest failure once this consumer landed).
+            .keyExtractor(event -> DEFAULT_GROUP_ID + ":" + event.getEnvelope().getEventId())
             .handler(event -> handle(event, webSocketHandler))
             .deduplicator(new RedisDeduplicator(redisClient, Duration.ofMinutes(5)))
             .retryPolicy(RetryPolicy.defaultPolicy())

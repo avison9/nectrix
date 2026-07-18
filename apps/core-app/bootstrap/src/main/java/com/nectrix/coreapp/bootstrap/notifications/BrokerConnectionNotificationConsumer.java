@@ -56,7 +56,14 @@ public class BrokerConnectionNotificationConsumer {
         new IdempotentConsumer.Config<BrokerConnectionEvent>()
             .topic(TOPIC)
             .parser(BrokerConnectionEvent.parser())
-            .keyExtractor(event -> event.getEnvelope().getEventId())
+            // Prefixed with this consumer's own DEFAULT_GROUP_ID, not the bare event id --
+            // RedisDeduplicator's key is a global "events:dedup:<key>" namespace, and
+            // BrokerConnectionEventConsumer (TICKET-110) reads this exact same topic with the
+            // exact same bare-eventId key shape; without a per-consumer prefix the two race for
+            // the same Redis slot and whichever polls first silently causes the other to skip a
+            // real event as a false "duplicate" (see CopiedTradeNotificationConsumer's own
+            // identical fix for how this class of bug was actually caught).
+            .keyExtractor(event -> DEFAULT_GROUP_ID + ":" + event.getEnvelope().getEventId())
             .handler(event -> handle(event, dispatchService))
             .deduplicator(new RedisDeduplicator(redisClient, Duration.ofMinutes(5)))
             .retryPolicy(RetryPolicy.defaultPolicy())

@@ -66,7 +66,13 @@ public class TradeSignalPositionConsumer {
         new IdempotentConsumer.Config<NormalizedTradeEvent>()
             .topic(TOPIC)
             .parser(NormalizedTradeEvent.parser())
-            .keyExtractor(NormalizedTradeEvent::getEventId)
+            // Prefixed with this consumer's own DEFAULT_GROUP_ID, not the bare event id -- the
+            // only Java consumer of trade-signals today, but RedisDeduplicator's key is a global
+            // "events:dedup:<key>" namespace shared by every consumer in this app, so this stays
+            // consistent with every other consumer here rather than the one exception (see
+            // CopiedTradeNotificationConsumer's own Javadoc for how this class of bug was actually
+            // caught on a topic that does have two consumers).
+            .keyExtractor(event -> DEFAULT_GROUP_ID + ":" + event.getEventId())
             .handler(event -> handle(event, webSocketHandler))
             .deduplicator(new RedisDeduplicator(redisClient, Duration.ofMinutes(5)))
             .retryPolicy(RetryPolicy.defaultPolicy())
