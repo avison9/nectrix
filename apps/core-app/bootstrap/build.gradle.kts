@@ -102,12 +102,33 @@ application {
     mainClass.set("com.nectrix.coreapp.bootstrap.CoreAppApplication")
 }
 
+// The growing number of @SpringBootTest classes each get their own cached Spring context — many
+// deliberately, via a per-class @DynamicPropertySource consumer-group id, to avoid Kafka
+// partition-ownership races across tests (see BrokerConnectionEventConsumer's own comment).
+// Spring Boot's own HikariCP default (maximum-pool-size: 10, minimum-idle defaulting to match it)
+// means each of those contexts holds up to 10 idle connections open simultaneously; with dozens of
+// distinct contexts alive at once in one Gradle test JVM, that exceeds Postgres's own default
+// max_connections=100 well before any single test class is slow or broken — observed both locally
+// and in CI's "Main Pipeline" as a cascade of CannotGetJdbcConnectionException/PSQLException across
+// unrelated test classes, not a real regression in any of them. A system property (not a
+// src/test/resources/application.yml) — Spring Boot only loads ONE classpath:/application.yml
+// (whichever the classpath happens to put first), so a second one entirely REPLACES main's own
+// rather than merging with it, silently dropping datasource.url/username/password and every other
+// setting (caught the hard way: every context failed with "Failed to determine a suitable driver
+// class" once tried). A system property layers on top of application.yml instead of replacing it.
+val hikariTestPoolSizeProps =
+    mapOf(
+        "spring.datasource.hikari.maximum-pool-size" to "3",
+        "spring.datasource.hikari.minimum-idle" to "1",
+    )
+
 tasks.test {
     // Integration-tagged tests need ephemeral infra (docker-compose.yml) running —
     // excluded here so a plain `./gradlew build` never needs Postgres/Redis/Kafka up.
     useJUnitPlatform {
         excludeTags("integration")
     }
+    hikariTestPoolSizeProps.forEach { (k, v) -> systemProperty(k, v) }
 }
 
 tasks.register<Test>("integrationTest") {
@@ -118,4 +139,5 @@ tasks.register<Test>("integrationTest") {
     useJUnitPlatform {
         includeTags("integration")
     }
+    hikariTestPoolSizeProps.forEach { (k, v) -> systemProperty(k, v) }
 }
