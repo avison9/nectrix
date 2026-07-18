@@ -305,8 +305,74 @@ jobs:
             sudo docker compose -f docker-compose.yml up -d --wait
           "
 
-  db-migration-dev:
+  # KMS key creation + registration for the dev VM's LocalStack (the
+  # localstack service infra/gcp-dev-vm/docker-compose.yml now brings up) —
+  # the live-data half of infra/localstack/init-kms.sh's job, which this
+  # doesn't reuse directly since that script assumes a local `docker compose
+  # exec` context, not an IAP-tunneled SSH session against named containers.
+  # Without this, EnvelopeEncryptionService 500s outright on every 2FA/
+  # broker-credential call (KeyVersionRepository finds no row) — a real bug
+  # found by exercising the 2FA flow end-to-end against this VM, not a
+  # theoretical gap. Runs before db-migration-dev: kms_key_versions is real
+  # schema Liquibase already created on this persisted, long-running VM
+  # (unlike a brand-new environment, this ordering is safe here), and this
+  # way nothing that touches envelope encryption can race ahead of a key
+  # actually existing.
+  kms-init-dev:
     needs: [provision-dev-host-services]
+    runs-on: ubuntu-latest
+    if: vars.GCP_DEV_VM_NAME != ''
+    permissions:
+      contents: read
+      id-token: write # for the WIF auth step below
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: google-github-actions/auth@v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_CI_DEPLOY_SERVICE_ACCOUNT }}
+      - name: Create/register the envelope-encryption KMS key, idempotent
+        # Same "real script file, not an inlined --command string" precedent
+        # deploy-dev's own comment already established (nested single/double
+        # quotes — the SQL literal, the bash `[ -n ... ]` checks — are
+        # exactly the kind of thing that becomes unparseable once folded
+        # into an already double-quoted --command string).
+        run: |
+          cat > /tmp/kms-init-dev.sh <<'KMS_INIT_SCRIPT'
+          set -euo pipefail
+          ALIAS_NAME="alias/nectrix-local-envelope-v1"
+
+          echo "==> Checking for an existing '$ALIAS_NAME' key in LocalStack"
+          EXISTING_KEY_ID=$(sudo docker exec nectrix-dev-localstack-1 awslocal kms list-aliases \
+            --query "Aliases[?AliasName=='$ALIAS_NAME'].TargetKeyId" --output text)
+
+          if [ -n "$EXISTING_KEY_ID" ] && [ "$EXISTING_KEY_ID" != "None" ]; then
+            echo "==> Reusing existing key $EXISTING_KEY_ID"
+          else
+            echo "==> Creating a new KMS key"
+            KEY_ID=$(sudo docker exec nectrix-dev-localstack-1 awslocal kms create-key \
+              --description "nectrix-dev envelope-encryption KEK, version 1" \
+              --query "KeyMetadata.KeyId" --output text)
+            echo "==> Created key $KEY_ID, aliasing as $ALIAS_NAME"
+            sudo docker exec nectrix-dev-localstack-1 awslocal kms create-alias \
+              --alias-name "$ALIAS_NAME" --target-key-id "$KEY_ID"
+          fi
+
+          echo "==> Registering version 1 in kms_key_versions (idempotent)"
+          sudo docker exec nectrix-dev-postgres-1 psql -U nectrix_app -d nectrix -v ON_ERROR_STOP=1 -c "
+            INSERT INTO kms_key_versions (version, kms_key_id, is_current)
+            VALUES (1, '$ALIAS_NAME', true)
+            ON CONFLICT (version) DO NOTHING;
+          "
+          echo "==> Done."
+          KMS_INIT_SCRIPT
+          gcloud compute scp --tunnel-through-iap --zone="${{ vars.GCP_DEV_VM_ZONE }}" \
+            /tmp/kms-init-dev.sh "${{ vars.GCP_DEV_VM_NAME }}:/tmp/kms-init-dev.sh"
+          gcloud compute ssh --tunnel-through-iap --zone="${{ vars.GCP_DEV_VM_ZONE }}" "${{ vars.GCP_DEV_VM_NAME }}" \
+            --command="bash /tmp/kms-init-dev.sh && rm /tmp/kms-init-dev.sh"
+
+  db-migration-dev:
+    needs: [provision-dev-host-services, kms-init-dev]
     runs-on: ubuntu-latest
     if: vars.GCP_DEV_VM_NAME != ''
     permissions:
