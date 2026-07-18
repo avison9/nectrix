@@ -81,7 +81,7 @@ export default async function ProfilePage() {
           </div>
           <Link
             href="/2fa"
-            className="text-xs font-semibold text-[var(--accent)] underline-offset-2 hover:underline"
+            className="flex h-9 items-center rounded-[10px] border border-[var(--border)] px-4 text-[13px] font-semibold text-[var(--accent)] transition-colors hover:bg-[var(--surface-2)]"
           >
             {session.twoFactorEnabled ? "Manage" : "Enable"}
           </Link>

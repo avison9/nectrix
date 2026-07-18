@@ -231,6 +231,35 @@ class AuthIntegrationTest {
     assertThat(loginWithCode.status()).isEqualTo(200);
   }
 
+  // Re-enrolling an already-enabled account used to silently reset it: beginEnrollment
+  // unconditionally overwrote the confirmed secret and flipped two_factor_enabled back to false,
+  // with no confirmation step — a real bug (not just a missing feature) found while verifying
+  // apps/web's /2fa settings page, which decides which UI to show off a JWT claim that can be
+  // stale for a few minutes after enrollment. Now guarded: a second /2fa/enable call on an
+  // already-enabled account is rejected outright, and the account stays enabled.
+  @Test
+  void reEnrollingAnAlreadyEnabledAccount_isRejected_andDoesNotResetIt() {
+    String email = "reenroll-" + UUID.randomUUID() + "@example.com";
+    UUID userId = createTestUser(email, "correct horse battery staple");
+    String accessToken =
+        (String) login(email, "correct horse battery staple").body().get("access_token");
+
+    HttpResult enableResponse = post("/2fa/enable", Map.of(), accessToken);
+    String secret = (String) enableResponse.body().get("secret");
+    String validCode = generateTotpCode(secret);
+    assertThat(post("/2fa/verify", Map.of("totp_code", validCode), accessToken).status())
+        .isEqualTo(204);
+
+    HttpResult reEnableResponse = post("/2fa/enable", Map.of(), accessToken);
+    assertThat(reEnableResponse.status()).isEqualTo(409);
+    assertThat(reEnableResponse.body().get("error")).isEqualTo("two_factor_already_enabled");
+
+    Boolean twoFactorEnabled =
+        jdbcTemplate.queryForObject(
+            "SELECT two_factor_enabled FROM users WHERE id = ?", Boolean.class, userId);
+    assertThat(twoFactorEnabled).isTrue();
+  }
+
   @Test
   void ac6_rateLimitsRepeatedFailedLogins() {
     String email = "ac6-" + UUID.randomUUID() + "@example.com";

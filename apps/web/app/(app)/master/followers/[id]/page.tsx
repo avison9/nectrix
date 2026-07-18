@@ -1,5 +1,8 @@
 import Link from "next/link";
 import { requireSession } from "@/lib/auth";
+import { SampleLineChart } from "@/components/SampleLineChart";
+
+const SAMPLE_EQUITY = [11200, 11400, 11350, 11800, 11650, 12000, 12200, 12050, 12300, 12400];
 
 const SAMPLE_TRADES = [
   { side: "BUY", symbol: "XAUUSD", lots: "0.50", pnl: 214, time: "2h ago" },
@@ -78,9 +81,9 @@ export default async function MasterFollowerDetailPage({
         <div className="mb-3.5 text-[14px] font-semibold text-[var(--text)]">
           Copied equity · 30d
         </div>
-        <p className="flex h-[160px] items-center justify-center text-[13px] text-[var(--text-2)]">
-          Equity chart not available yet.
-        </p>
+        <div className="h-[160px]">
+          <SampleLineChart values={SAMPLE_EQUITY} height={160} gradientId="follower-detail-equity" />
+        </div>
       </div>
 
       <div className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)] opacity-70">

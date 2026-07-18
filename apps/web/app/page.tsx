@@ -6,8 +6,8 @@ import { LandingPage } from "@/components/LandingPage";
 /**
  * TICKET-114 — proxy.ts now allows "/" through unauthenticated (see its own PUBLIC_PATHS comment)
  * so the public landing page can render here; this is what does the equivalent auth check itself,
- * same verifyAccessToken call proxy.ts uses, so an authenticated visitor still lands on
- * /broker-accounts exactly as before — nothing about that path changes.
+ * same verifyAccessToken call proxy.ts uses. Redirects to /dashboard (not /broker-accounts, TICKET-
+ * 116's real dashboard now exists — see login/actions.ts's own identical fix).
  */
 export default async function Home() {
   const jar = await cookies();
@@ -15,7 +15,7 @@ export default async function Home() {
   const session = token ? await verifyAccessToken(token) : null;
 
   if (session) {
-    redirect("/broker-accounts");
+    redirect("/dashboard");
   }
 
   return <LandingPage />;

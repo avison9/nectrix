@@ -2,6 +2,8 @@ import { getPublicMasterProfile } from "@nectrix/api-client";
 import type { LeaderboardPeriod } from "@nectrix/api-client";
 import { coreAppBaseUrl } from "@/lib/core-app";
 import { fetchOrNotFound } from "@/lib/fetchOrNotFound";
+import { getOptionalSession } from "@/lib/auth";
+import { AppShell } from "@/components/AppShell";
 import { RiskDisclosureBanner } from "@/components/RiskDisclosureBanner";
 
 const PERIODS: LeaderboardPeriod[] = ["7D", "30D", "90D", "YTD", "ALL"];
@@ -14,18 +16,33 @@ function initials(name: string): string {
     .join("");
 }
 
+// Same reasoning as app/masters/page.tsx's own comment — public, but keeps the authenticated
+// Sidebar/Topbar shell around it for a logged-in visitor instead of dropping out of it entirely.
 export default async function MasterPublicProfilePage({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
+  const optionalSession = await getOptionalSession();
+  const content = await MasterProfileContent({ params });
+  if (optionalSession) {
+    return (
+      <AppShell session={optionalSession.session} accessToken={optionalSession.accessToken}>
+        {content}
+      </AppShell>
+    );
+  }
+  return <main>{content}</main>;
+}
+
+async function MasterProfileContent({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const profile = await fetchOrNotFound(getPublicMasterProfile(coreAppBaseUrl(), id));
 
   return (
     <>
       <RiskDisclosureBanner />
-      <main className="mx-auto max-w-[720px] px-4 py-10">
+      <div className="mx-auto max-w-[720px] px-4 py-10">
         <div className="mb-7 flex items-start gap-4">
           <div className="flex h-[58px] w-[58px] flex-none items-center justify-center rounded-full bg-[var(--accent)] text-lg font-semibold text-white">
             {initials(profile.displayName)}
@@ -128,7 +145,7 @@ export default async function MasterPublicProfilePage({
           ratio. Computed from actual copied-trade and account data on this platform, not
           self-reported.
         </p>
-      </main>
+      </div>
     </>
   );
 }

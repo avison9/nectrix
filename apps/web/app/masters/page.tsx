@@ -2,6 +2,8 @@ import Link from "next/link";
 import { listLeaderboard } from "@nectrix/api-client";
 import type { LeaderboardEntry, LeaderboardPeriod, LeaderboardSort } from "@nectrix/api-client";
 import { coreAppBaseUrl } from "@/lib/core-app";
+import { getOptionalSession } from "@/lib/auth";
+import { AppShell } from "@/components/AppShell";
 import { RiskDisclosureBanner } from "@/components/RiskDisclosureBanner";
 
 const PERIODS: LeaderboardPeriod[] = ["7D", "30D", "90D", "YTD", "ALL"];
@@ -35,7 +37,31 @@ function queryString(params: Record<string, string | number>): string {
   return `?${search.toString()}`;
 }
 
+/**
+ * Public masters directory (TICKET-112) — reachable by anonymous visitors, so this page can't live
+ * under `(app)/` (that group's layout forces a login redirect). Logged-in visitors reaching it via
+ * the Sidebar's own "Discover Masters" nav item still get the full authenticated shell around it
+ * (see components/AppShell.tsx's own comment) instead of dropping out of it entirely; anonymous
+ * visitors get the bare public version, unchanged.
+ */
 export default async function MastersDirectoryPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ period?: string; sort?: string; page?: string }>;
+}) {
+  const optionalSession = await getOptionalSession();
+  const content = await MastersDirectoryContent({ searchParams });
+  if (optionalSession) {
+    return (
+      <AppShell session={optionalSession.session} accessToken={optionalSession.accessToken}>
+        {content}
+      </AppShell>
+    );
+  }
+  return <main>{content}</main>;
+}
+
+async function MastersDirectoryContent({
   searchParams,
 }: {
   searchParams: Promise<{ period?: string; sort?: string; page?: string }>;
@@ -58,7 +84,7 @@ export default async function MastersDirectoryPage({
   return (
     <>
       <RiskDisclosureBanner />
-      <main className="mx-auto max-w-[1080px] px-4 py-10">
+      <div className="mx-auto max-w-[1080px] px-4 py-10">
         <div className="mb-7">
           <div className="mb-2.5 text-xs font-semibold uppercase tracking-wider text-[var(--accent)]">
             Browse masters
@@ -205,7 +231,7 @@ export default async function MastersDirectoryPage({
             </Link>
           )}
         </div>
-      </main>
+      </div>
     </>
   );
 }

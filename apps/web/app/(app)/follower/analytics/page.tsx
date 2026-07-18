@@ -1,4 +1,7 @@
 import { requireSession } from "@/lib/auth";
+import { SampleLineChart } from "@/components/SampleLineChart";
+
+const SAMPLE_EQUITY = [31200, 31800, 31400, 32600, 33100, 32800, 34500, 35200, 34900, 36800, 37600, 38200];
 
 const SAMPLE_STATS = [
   { label: "Total equity", value: "$38,200" },
@@ -57,9 +60,9 @@ export default async function FollowerAnalyticsPage() {
 
       <div className="mb-4 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-5 opacity-70">
         <div className="mb-4 text-[14px] font-semibold text-[var(--text)]">Equity growth</div>
-        <p className="flex h-[180px] items-center justify-center text-[13px] text-[var(--text-2)]">
-          Equity chart not available yet.
-        </p>
+        <div className="h-[180px]">
+          <SampleLineChart values={SAMPLE_EQUITY} height={180} gradientId="follower-analytics-equity" />
+        </div>
       </div>
 
       <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-5 opacity-70">
