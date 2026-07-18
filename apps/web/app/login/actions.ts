@@ -18,6 +18,10 @@ const isProduction = process.env.NODE_ENV === "production";
  * has to exist somehow to reach the broker-linking flow, and TICKET-118's
  * real invite-acceptance flow isn't built yet), not a polished Follower login
  * screen — that visual/UX work belongs to TICKET-116.
+ *
+ * Redirects to /dashboard, not /broker-accounts — that redirect predates
+ * TICKET-116's real dashboard existing at all, back when broker-accounts was
+ * the only authenticated page worth landing on.
  */
 export async function loginAction(
   _prevState: LoginActionState,
@@ -56,7 +60,7 @@ export async function loginAction(
     return { error: "Login failed — please try again." };
   }
 
-  redirect("/broker-accounts");
+  redirect("/dashboard");
 }
 
 export async function logoutAction() {

@@ -19,3 +19,21 @@ export async function requireSession(): Promise<{ session: Session; accessToken:
   }
   return { session, accessToken: token };
 }
+
+/**
+ * Same check as {@link requireSession}, but returns `null` instead of redirecting — for pages that
+ * work for both anonymous and logged-in visitors (the public masters directory/profile pages,
+ * reachable pre-login too) and need to know whether to render the authenticated Sidebar/Topbar
+ * shell (see components/AppShell.tsx's own comment) without forcing a login wall.
+ */
+export async function getOptionalSession(): Promise<
+  { session: Session; accessToken: string } | null
+> {
+  const jar = await cookies();
+  const token = jar.get("access_token")?.value;
+  const session = token ? await verifyAccessToken(token) : null;
+  if (!session || !token) {
+    return null;
+  }
+  return { session, accessToken: token };
+}

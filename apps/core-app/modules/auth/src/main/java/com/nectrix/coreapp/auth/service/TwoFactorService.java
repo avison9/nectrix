@@ -68,6 +68,10 @@ public class TwoFactorService {
   }
 
   public TwoFactorEnrollment beginEnrollment(UUID userId, String email) {
+    User existing = userRepository.findById(userId).orElseThrow(NoSuchElementException::new);
+    if (existing.twoFactorEnabled()) {
+      throw new TwoFactorAlreadyEnabledException();
+    }
     String secret = new DefaultSecretGenerator().generate();
     // TICKET-011 AC3 — deliberately logs the real plaintext secret, tagged for
     // bootstrap's MaskingJsonGeneratorDecorator to redact (see EnvelopeEncryptionRedactionTest).

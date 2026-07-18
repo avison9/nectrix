@@ -5,6 +5,7 @@ import com.nectrix.coreapp.auth.service.InvalidCredentialsException;
 import com.nectrix.coreapp.auth.service.InvalidRefreshTokenException;
 import com.nectrix.coreapp.auth.service.OAuthLoginRejectedException;
 import com.nectrix.coreapp.auth.service.RateLimitExceededException;
+import com.nectrix.coreapp.auth.service.TwoFactorAlreadyEnabledException;
 import com.nectrix.coreapp.auth.service.TwoFactorRequiredException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -53,6 +54,12 @@ public class AuthExceptionHandler {
   public ResponseEntity<ErrorBody> handleEmailAlreadyRegistered() {
     return ResponseEntity.status(HttpStatus.CONFLICT)
         .body(new ErrorBody("email_already_registered"));
+  }
+
+  @ExceptionHandler(TwoFactorAlreadyEnabledException.class)
+  public ResponseEntity<ErrorBody> handleTwoFactorAlreadyEnabled() {
+    return ResponseEntity.status(HttpStatus.CONFLICT)
+        .body(new ErrorBody("two_factor_already_enabled"));
   }
 
   public record ErrorBody(String error) {}
