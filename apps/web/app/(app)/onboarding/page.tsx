@@ -26,9 +26,13 @@ interface Step {
  *   is interactive but doesn't persist anywhere yet (TICKET-118 hasn't shipped a real endpoint).
  * - "Open a broker account" derives from `listBrokerAccounts` returning at least one row (covers
  *   both opening a brand-new account via the master's IB link and linking one you already have —
- *   `/broker-accounts/link` handles both through the same form; the mock's separate "I already
- *   have a broker account" checkbox has no real equivalent action in our system since either path
- *   converges on the same real linking flow).
+ *   `/broker-accounts/link` handles both through the same form). The mock's own "I already have a
+ *   broker account" checkbox (`:1469-1476` in the live design) is rendered here too, alongside the
+ *   "Open account via IB link" button — both route to the same real `/broker-accounts/link` flow,
+ *   since that's the only real way to attach either a brand-new or an existing account in this
+ *   system; the checkbox can't mark the step "done" on its own (no way to verify the attestation
+ *   without a real account row), so it stays a second real entry point into the same real action
+ *   rather than a fake local-only toggle.
  * - "Connect your MT5 login" is a DIFFERENT, stronger signal than step 2: MtLinkingService's own
  *   Javadoc is explicit that an MT4/MT5 account row starts `PENDING` and only flips to `CONNECTED`
  *   once a real EA session on the user's terminal actually presents its pairing token to
@@ -64,12 +68,24 @@ export default async function OnboardingPage() {
     {
       n: "2",
       title: "Open a broker account",
-      desc: "Use your master's IB link so trades can be copied and fees settled correctly — or link an account you already have. Either way works.",
+      desc: "Use your master's IB link so trades can be copied and fees settled correctly — or check the box below if you already have a broker account.",
       status: hasBrokerAccount ? "done" : hasRelationship ? "active" : "todo",
-      cta:
-        hasRelationship && !hasBrokerAccount
-          ? { href: "/broker-accounts/link", label: "Link a broker account" }
-          : undefined,
+      extra:
+        hasRelationship && !hasBrokerAccount ? (
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <Link
+              href="/broker-accounts/link"
+              className="inline-flex h-[38px] items-center gap-2 rounded-[10px] bg-[var(--accent)] px-4.5 text-[13px] font-semibold text-white transition-opacity hover:opacity-90"
+            >
+              Open account via IB link
+            </Link>
+            <span className="text-[12px] text-[var(--text-3)]">or</span>
+            <Link href="/broker-accounts/link" className="flex items-center gap-2.5 text-[12.5px] text-[var(--text)] hover:text-[var(--accent)]">
+              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[6px] border border-[var(--border)]" />
+              I already have a broker account
+            </Link>
+          </div>
+        ) : undefined,
     },
     {
       n: "3",
