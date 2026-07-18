@@ -4,6 +4,15 @@
 # datastore behind it yet, see db-migration-staging's own echo-only step) but
 # wrong here, where a real Postgres/Redis/Kafka genuinely need to be reached
 # at host-services.svc.cluster.local (see ./host-services).
+#
+# KMS_ENDPOINT_OVERRIDE: the base deployment deliberately leaves this unset
+# (assumes a real cluster has real KMS via IRSA) — wrong here too, this VM has
+# no real cloud KMS provisioned (infra/terraform/gcp has no kms module wired
+# into gcp-dev), so it needs the same LocalStack-emulated KMS local dev/CI
+# already use (see infra/gcp-dev-vm/docker-compose.yml's own localstack
+# service). Without this, EnvelopeEncryptionService 500s outright on every
+# call (2FA enrollment, broker credential storage) — KeyVersionRepository has
+# no row to find.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -24,3 +33,5 @@ spec:
               value: redis.host-services.svc.cluster.local
             - name: KAFKA_HOST
               value: kafka.host-services.svc.cluster.local
+            - name: KMS_ENDPOINT_OVERRIDE
+              value: http://localstack.host-services.svc.cluster.local:4566

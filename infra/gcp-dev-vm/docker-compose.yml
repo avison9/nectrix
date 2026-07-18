@@ -16,6 +16,25 @@ name: nectrix-dev
 # values from GitHub Secrets over the IAP-tunneled SSH session, never
 # committed here).
 services:
+  # core-app's EnvelopeEncryptionService (2FA secrets, broker credentials) needs
+  # a KMS behind it or it 500s outright (KeyVersionRepository.current() finds no
+  # row) — this dev VM has neither LocalStack nor a real GCP Cloud KMS key
+  # provisioned, so it was genuinely broken until this was added. Same
+  # LocalStack-emulated-KMS approach local dev/CI already use (see the root
+  # docker-compose.yml's own localstack service + infra/localstack/init-kms.sh),
+  # not a real cloud KMS — deliberately cheap/simple for a dev VM, not meant to
+  # exercise real KMS IAM semantics.
+  localstack:
+    image: localstack/localstack:3.8.1
+    network_mode: host
+    environment:
+      SERVICES: kms
+      GATEWAY_LISTEN: 0.0.0.0:4566
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
   postgres:
     image: postgres:17-alpine
     network_mode: host

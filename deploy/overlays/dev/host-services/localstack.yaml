@@ -1,0 +1,23 @@
+# Same no-selector-Service + hand-managed-Endpoints pattern as postgres.yaml —
+# routes in-cluster traffic to the docker-compose LocalStack container running
+# with network_mode: host on this same VM (see infra/gcp-dev-vm/docker-compose.yml).
+apiVersion: v1
+kind: Service
+metadata:
+  name: localstack
+  namespace: host-services
+spec:
+  ports:
+    - port: 4566
+      targetPort: 4566
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: localstack
+  namespace: host-services
+subsets:
+  - addresses:
+      - ip: NODE_INTERNAL_IP_REPLACED_BY_CI
+    ports:
+      - port: 4566
