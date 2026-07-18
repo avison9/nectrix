@@ -3,17 +3,22 @@ package com.nectrix.coreapp.bootstrap.invitations;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.nectrix.coreapp.auth.api.UserProvisioningApi;
+import com.sun.net.httpserver.HttpServer;
 import dev.samstevens.totp.code.CodeGenerator;
 import dev.samstevens.totp.code.DefaultCodeGenerator;
 import dev.samstevens.totp.code.HashingAlgorithm;
+import java.io.OutputStream;
+import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -39,9 +44,66 @@ class SymbolMappingIntegrationTest {
 
   private static final String TEST_INTERNAL_SERVICE_TOKEN = "test-internal-service-token";
 
+  /**
+   * TICKET-116 — {@code createOrConfirmMapping}'s own live-broker verification round trip
+   * (BrokerAdaptersInternalClient#resolveSymbol) has nowhere real to call in this test environment
+   * (apps/mt5-bridge-gateway isn't part of this docker-compose stack) — a minimal JDK {@link
+   * HttpServer} stub stands in for it, matching this ticket's own verification plan's "mocked
+   * broker-adapter internal call" wording. Recognizes exactly one broker symbol name ("EURUSD.a")
+   * as resolvable; any other name 404s, mirroring the real Go handler's own ResolveSymbol-failure
+   * contract.
+   */
+  private static final HttpServer brokerAdapterStub = startBrokerAdapterStub();
+
+  @AfterAll
+  static void stopBrokerAdapterStub() {
+    brokerAdapterStub.stop(0);
+  }
+
+  /**
+   * Started eagerly via a static field initializer, not {@code @BeforeAll} —
+   * {@code @DynamicPropertySource} methods run during context preparation, BEFORE
+   * {@code @BeforeAll}, and need the stub's port already known.
+   */
+  private static HttpServer startBrokerAdapterStub() {
+    try {
+      HttpServer server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+      server.createContext(
+          "/",
+          exchange -> {
+            String path = exchange.getRequestURI().getPath();
+            if (path.endsWith("/symbols/EURUSD.a/resolve")) {
+              String json =
+                  """
+                  {"symbol":{"canonicalCode":"EURUSD","assetClass":"FX"},"brokerSymbolName":"EURUSD.a",
+                   "contractSize":100000.0,"lotStep":0.01,"minLot":0.01,"maxLot":50.0,"pipSize":0.0001,
+                   "digits":5,"marginCurrency":"USD"}
+                  """;
+              byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
+              exchange.getResponseHeaders().add("Content-Type", "application/json");
+              exchange.sendResponseHeaders(200, bytes.length);
+              try (OutputStream os = exchange.getResponseBody()) {
+                os.write(bytes);
+              }
+            } else {
+              exchange.sendResponseHeaders(404, -1);
+            }
+            exchange.close();
+          });
+      server.start();
+      return server;
+    } catch (Exception e) {
+      throw new IllegalStateException(e);
+    }
+  }
+
   @DynamicPropertySource
   static void internalServiceToken(DynamicPropertyRegistry registry) {
     registry.add("nectrix.internal.service-token", () -> TEST_INTERNAL_SERVICE_TOKEN);
+    registry.add(
+        "nectrix.invitations.mt-bridge.internal-base-url",
+        () -> "http://localhost:" + brokerAdapterStub.getAddress().getPort());
+    registry.add("nectrix.invitations.mt-bridge.service-token", () -> TEST_INTERNAL_SERVICE_TOKEN);
   }
 
   @LocalServerPort private int port;
@@ -406,5 +468,85 @@ class SymbolMappingIntegrationTest {
             accountId);
     assertThat(row.get("broker_symbol_name")).isEqualTo("EURUSD.a");
     assertThat(row.get("is_confirmed")).isEqualTo(true);
+  }
+
+  // ==================== TICKET-116 — manual fallback (resolve) ====================
+
+  @Test
+  void resolve_withNoPriorSuggestion_verifiesAgainstTheBrokerAndCreatesAConfirmedRow() {
+    String email = "symmap-resolve-" + UUID.randomUUID() + "@example.com";
+    UUID user = createTestUser(email);
+    grantRole(user, "FOLLOWER");
+    String token = accessTokenFor(email);
+    UUID accountId = linkMt5Account(token, "600501");
+
+    // No auto-suggestion round ran for this account/symbol at all — confirm() would 404 here.
+    HttpResult response =
+        request(
+            "POST",
+            "/api/v1/broker-accounts/" + accountId + "/symbol-mappings/EURUSD/resolve",
+            Map.of("broker_symbol_name", "EURUSD.a"),
+            token);
+
+    assertThat(response.status()).isEqualTo(200);
+    assertThat(response.body().get("canonical_symbol")).isEqualTo("EURUSD");
+    assertThat(response.body().get("broker_symbol_name")).isEqualTo("EURUSD.a");
+    assertThat(response.body().get("is_confirmed")).isEqualTo(true);
+    // Spec numbers come from the stub broker adapter's own response, not anything the caller sent.
+    assertThat(response.body().get("contract_size")).isEqualTo(100000.0);
+
+    Map<String, Object> row =
+        jdbcTemplate.queryForMap(
+            "SELECT is_confirmed, contract_size FROM symbol_mappings WHERE broker_account_id = ? AND canonical_symbol = 'EURUSD'",
+            accountId);
+    assertThat(row.get("is_confirmed")).isEqualTo(true);
+  }
+
+  @Test
+  void resolve_withASymbolNameTheBrokerDoesNotRecognize_returns422AndWritesNoRow() {
+    String email = "symmap-resolve-fail-" + UUID.randomUUID() + "@example.com";
+    UUID user = createTestUser(email);
+    grantRole(user, "FOLLOWER");
+    String token = accessTokenFor(email);
+    UUID accountId = linkMt5Account(token, "600601");
+
+    HttpResult response =
+        request(
+            "POST",
+            "/api/v1/broker-accounts/" + accountId + "/symbol-mappings/EURUSD/resolve",
+            Map.of("broker_symbol_name", "totally-made-up-symbol"),
+            token);
+
+    assertThat(response.status()).isEqualTo(422);
+    assertThat(response.body().get("error")).isEqualTo("unresolved_broker_symbol");
+
+    Long count =
+        jdbcTemplate.queryForObject(
+            "SELECT count(*) FROM symbol_mappings WHERE broker_account_id = ? AND canonical_symbol = 'EURUSD'",
+            Long.class,
+            accountId);
+    assertThat(count).isEqualTo(0);
+  }
+
+  @Test
+  void resolve_byAnotherUsersAccount_isForbidden() {
+    String emailA = "symmap-resolve-a-" + UUID.randomUUID() + "@example.com";
+    String emailB = "symmap-resolve-b-" + UUID.randomUUID() + "@example.com";
+    UUID userA = createTestUser(emailA);
+    UUID userB = createTestUser(emailB);
+    grantRole(userA, "FOLLOWER");
+    grantRole(userB, "FOLLOWER");
+    String tokenA = accessTokenFor(emailA);
+    String tokenB = accessTokenFor(emailB);
+    UUID accountB = linkMt5Account(tokenB, "600701");
+
+    HttpResult response =
+        request(
+            "POST",
+            "/api/v1/broker-accounts/" + accountB + "/symbol-mappings/EURUSD/resolve",
+            Map.of("broker_symbol_name", "EURUSD.a"),
+            tokenA);
+
+    assertThat(response.status()).isEqualTo(403);
   }
 }

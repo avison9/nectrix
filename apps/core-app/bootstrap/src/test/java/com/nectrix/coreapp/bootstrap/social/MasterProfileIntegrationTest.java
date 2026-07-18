@@ -264,4 +264,34 @@ class MasterProfileIntegrationTest {
             UUID.fromString(profileId));
     assertThat(storedIsPublic).isTrue();
   }
+
+  // ==================== TICKET-116 — me ====================
+
+  @Test
+  void getMyProfile_returnsTheCallersOwnProfile_notSomeoneElses() {
+    NewUser master = newUser("MASTER");
+    UUID brokerAccountId = insertBrokerAccount(master.userId());
+    HttpResult created =
+        request(
+            "POST",
+            "/api/v1/master-profiles",
+            createRequestBody(brokerAccountId),
+            master.accessToken());
+    String profileId = (String) created.body().get("id");
+
+    HttpResult response = request("GET", "/api/v1/master-profiles/me", null, master.accessToken());
+
+    assertThat(response.status()).isEqualTo(200);
+    assertThat(response.body().get("id")).isEqualTo(profileId);
+  }
+
+  @Test
+  void getMyProfile_withNoProfileYet_returns404() {
+    NewUser master = newUser("MASTER");
+
+    HttpResult response = request("GET", "/api/v1/master-profiles/me", null, master.accessToken());
+
+    assertThat(response.status()).isEqualTo(404);
+    assertThat(response.body().get("error")).isEqualTo("master_profile_not_found");
+  }
 }

@@ -1,8 +1,11 @@
 package com.nectrix.coreapp.invitations.service;
 
+import com.nectrix.coreapp.invitations.client.BrokerAdaptersInternalClient;
+import com.nectrix.coreapp.invitations.domain.BrokerAccount;
 import com.nectrix.coreapp.invitations.domain.SymbolMapping;
 import com.nectrix.coreapp.invitations.repository.SymbolMappingRepository;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 
@@ -33,11 +36,15 @@ public class SymbolMappingService {
 
   private final SymbolMappingRepository repository;
   private final BrokerAccountService brokerAccountService;
+  private final BrokerAdaptersInternalClient brokerAdaptersInternalClient;
 
   public SymbolMappingService(
-      SymbolMappingRepository repository, BrokerAccountService brokerAccountService) {
+      SymbolMappingRepository repository,
+      BrokerAccountService brokerAccountService,
+      BrokerAdaptersInternalClient brokerAdaptersInternalClient) {
     this.repository = repository;
     this.brokerAccountService = brokerAccountService;
+    this.brokerAdaptersInternalClient = brokerAdaptersInternalClient;
   }
 
   public List<SymbolMapping> listMappings(UUID brokerAccountId) {
@@ -64,6 +71,47 @@ public class SymbolMappingService {
     if (updated == 0) {
       throw new SymbolMappingNotFoundException();
     }
+    return repository
+        .findByBrokerAccountIdAndCanonicalSymbol(brokerAccountId, canonicalSymbol)
+        .orElseThrow(SymbolMappingNotFoundException::new);
+  }
+
+  /**
+   * TICKET-116 — the manual fallback: unlike {@link #confirmMapping} (which requires a
+   * pre-existing, auto-suggested row), this creates a mapping outright for a canonical symbol
+   * TICKET-103's probe list never covered. Never trusts the user-typed {@code brokerSymbolName} at
+   * face value — verifies it against a live broker round trip first ({@link
+   * BrokerAdaptersInternalClient#resolveSymbol}), and only writes a row using the ADAPTER's own
+   * returned spec numbers, never anything the caller supplied beyond the symbol name itself.
+   *
+   * @throws UnresolvedBrokerSymbolException if the broker doesn't recognize {@code
+   *     brokerSymbolName} — no row is written.
+   */
+  public SymbolMapping createOrConfirmMapping(
+      UUID brokerAccountId,
+      String canonicalSymbol,
+      String brokerSymbolName,
+      UUID confirmedByUserId) {
+    BrokerAccount account =
+        brokerAccountService.getBrokerAccount(
+            brokerAccountId); // ownership-check gate, see class doc
+    Optional<BrokerAdaptersInternalClient.SymbolSpec> spec =
+        brokerAdaptersInternalClient.resolveSymbol(
+            account.brokerType(), brokerAccountId.toString(), brokerSymbolName);
+    BrokerAdaptersInternalClient.SymbolSpec resolved =
+        spec.orElseThrow(UnresolvedBrokerSymbolException::new);
+    repository.upsertConfirmed(
+        brokerAccountId,
+        canonicalSymbol,
+        resolved.brokerSymbolName(),
+        resolved.contractSize(),
+        resolved.lotStep(),
+        resolved.minLot(),
+        resolved.maxLot(),
+        resolved.pipSize(),
+        (short) resolved.digits(),
+        resolved.marginCurrency(),
+        confirmedByUserId);
     return repository
         .findByBrokerAccountIdAndCanonicalSymbol(brokerAccountId, canonicalSymbol)
         .orElseThrow(SymbolMappingNotFoundException::new);

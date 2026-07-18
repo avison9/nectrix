@@ -11,7 +11,11 @@ import { verifyAccessToken } from "@/lib/session";
 // path); "/register" is the self-serve Individual registration form, also public by design (the
 // one deliberate exception to "no self-registration anywhere" — see core-app's
 // UserProvisioningApi).
-const PUBLIC_PATHS = ["/", "/login", "/masters", "/register"];
+// TICKET-116 — "/request-invite" is PUBLIC · REQUEST INVITE, sitting between TICKET-112
+// (discovery, real) and TICKET-118 (invitation acceptance, not built) — the form itself is
+// reachable by anyone, its submit action is inert until that ticket lands (see the page's own
+// Javadoc-equivalent comment).
+const PUBLIC_PATHS = ["/", "/login", "/masters", "/register", "/request-invite"];
 
 /**
  * TICKET-110 AC6 — this app's real gate: a missing/invalid/expired access_token

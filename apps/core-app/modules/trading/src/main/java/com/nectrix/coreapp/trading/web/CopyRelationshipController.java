@@ -71,6 +71,38 @@ public class CopyRelationshipController {
             existing, request.moneyManagementProfileId(), request.riskProfileId()));
   }
 
+  /**
+   * TICKET-116 — edits the relationship's money-management/risk profile rows IN PLACE (full-row
+   * update via each repository's own {@code update} method), distinct from {@link #patch}'s "swap
+   * to a different existing profile id" shape. Matches {@code
+   * MoneyManagementProfileRepository#delete}'s own documented "superseded via update, not
+   * delete+recreate" 1:1 cardinality with a relationship. Drawdown pause/close-all percentages
+   * aren't part of this form — {@code RiskProfileRepository#update} deliberately doesn't touch
+   * those columns (TICKET-108's own scope, see that repository's Javadoc), so they stay read-only
+   * here too.
+   */
+  @PatchMapping("/api/v1/copy-relationships/{id}/copy-settings")
+  public CopyRelationshipView updateCopySettings(
+      @PathVariable UUID id, @RequestBody CopySettingsRequest request) {
+    CopyRelationship existing = service.getCopyRelationship(id); // ownership-check gate
+    moneyManagementProfileRepository.update(
+        existing.moneyManagementProfileId(),
+        request.method(),
+        request.fixedLotSize(),
+        request.multiplier(),
+        request.riskPercent(),
+        null, // customFormulaExpr — not part of this form
+        request.roundingMode());
+    riskProfileRepository.update(
+        existing.riskProfileId(),
+        request.maxLotPerTrade(),
+        request.maxOpenPositions(),
+        null, // maxExposurePerSymbolLots — not part of this form
+        null, // maxTotalExposureLots — not part of this form
+        request.maxSlippagePips());
+    return toView(service.getCopyRelationship(id));
+  }
+
   @PostMapping("/api/v1/copy-relationships/{id}/acknowledge-risk")
   public CopyRelationshipView acknowledgeRisk(@PathVariable UUID id) {
     CopyRelationship existing = service.getCopyRelationship(id);
@@ -118,6 +150,36 @@ public class CopyRelationshipController {
     return new TradesPage(trades, total, page, pageSize);
   }
 
+  /**
+   * TICKET-116 — cross-relationship trade history (the mock's own Trade History screen spans every
+   * relationship the caller has, not just one). Ownership is enforced entirely at the SQL layer
+   * (never a bare {@code findAll}) — same {@code role="follower"|"master"} shape {@link
+   * CopyRelationshipService#listForUser} already uses, not a per-row {@code @PostAuthorize}
+   * (there's no single {@code CopyRelationship} to check against here). {@code relationshipId}, if
+   * given, further narrows to one relationship without changing which ones the caller is allowed to
+   * see — a relationship outside the caller's own set simply yields zero rows, not a 403/404 (same
+   * "narrowing filter" shape {@code status} already has).
+   */
+  @GetMapping("/api/v1/copy-relationships/trades")
+  public TradesPage allTrades(
+      @AuthenticationPrincipal Jwt jwt,
+      @RequestParam(defaultValue = "follower") String role,
+      @RequestParam(required = false) String symbol,
+      @RequestParam(required = false) Instant from,
+      @RequestParam(required = false) Instant to,
+      @RequestParam(required = false) String status,
+      @RequestParam(required = false) UUID relationshipId,
+      @RequestParam(defaultValue = "0") int page,
+      @RequestParam(defaultValue = "20") int pageSize) {
+    UUID userId = currentUserId(jwt);
+    List<CopiedTrade> trades =
+        copiedTradeRepository.findPageForUser(
+            userId, role, symbol, from, to, status, relationshipId, page, pageSize);
+    long total =
+        copiedTradeRepository.countForUser(userId, role, symbol, from, to, status, relationshipId);
+    return new TradesPage(trades, total, page, pageSize);
+  }
+
   private CopyRelationshipView toView(CopyRelationship cr) {
     MoneyManagementProfile mm =
         moneyManagementProfileRepository
@@ -154,6 +216,17 @@ public class CopyRelationshipController {
 
   public record PatchRequest(
       UUID moneyManagementProfileId, UUID riskProfileId, BigDecimal allocationWeight) {}
+
+  /** TICKET-116 — {@link #updateCopySettings}'s own request shape; always a full-object submit. */
+  public record CopySettingsRequest(
+      String method,
+      BigDecimal fixedLotSize,
+      BigDecimal multiplier,
+      BigDecimal riskPercent,
+      String roundingMode,
+      BigDecimal maxLotPerTrade,
+      Integer maxOpenPositions,
+      BigDecimal maxSlippagePips) {}
 
   public record MoneyManagementProfileView(
       String method,

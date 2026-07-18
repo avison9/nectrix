@@ -23,4 +23,9 @@ dependencyManagement {
 dependencies {
     implementation("org.springframework.boot:spring-boot-starter-jdbc") // JdbcTemplate
     implementation("org.springframework:spring-context") // @Scheduled/@EnableScheduling annotations
+    // TICKET-116 — MasterAnalyticsController (@RestController) + MasterAnalyticsService's
+    // @PostAuthorize("@perms.isOwnerOrStaff(...)") ownership check, same convention
+    // modules:trading/modules:social already use for their own ownership-gated endpoints.
+    implementation("org.springframework.boot:spring-boot-starter-web")
+    implementation("org.springframework.security:spring-security-core")
 }

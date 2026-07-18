@@ -14,6 +14,7 @@ import type {
   BrokerType,
   CopiedTrade,
   CopiedTradesPage,
+  CopiedTradeStatus,
   ConnectionRole,
   ConnectionStatus,
   CopyRelationship,
@@ -41,6 +42,7 @@ export type {
   BrokerType,
   CopiedTrade,
   CopiedTradesPage,
+  CopiedTradeStatus,
   ConnectionRole,
   ConnectionStatus,
   CopyRelationship,
@@ -431,6 +433,25 @@ export async function confirmSymbolMapping(
 }
 
 /**
+ * TICKET-116 — the manual fallback for a canonical symbol {@link confirmSymbolMapping} can't reach
+ * (no auto-suggested row exists yet). {@code brokerSymbolName} is verified against a live broker
+ * round trip server-side before anything is written — a 422 means the broker didn't recognize it.
+ */
+export async function createOrConfirmSymbolMapping(
+  baseUrl: string,
+  accessToken: string,
+  brokerAccountId: string,
+  canonicalSymbol: string,
+  brokerSymbolName: string,
+): Promise<SymbolMappingEntry> {
+  return coreAppFetch<SymbolMappingEntry>(
+    baseUrl,
+    `/api/v1/broker-accounts/${brokerAccountId}/symbol-mappings/${canonicalSymbol}/resolve`,
+    { method: "POST", accessToken, body: JSON.stringify({ broker_symbol_name: brokerSymbolName }) },
+  );
+}
+
+/**
  * Returns [] gracefully when a Master has no active IB links (TICKET-119 isn't built yet — this
  * is TICKET-110's own narrow, additive read, see BrokerIbLinkController's Javadoc).
  */
@@ -488,6 +509,17 @@ export async function getMasterProfile(
   });
 }
 
+/** TICKET-116 — the caller's own profile, by JWT subject (was only 409-discoverable before). */
+export async function getMyMasterProfile(
+  baseUrl: string,
+  accessToken: string,
+): Promise<MasterProfile> {
+  return coreAppFetch<MasterProfile>(baseUrl, "/api/v1/master-profiles/me", {
+    method: "GET",
+    accessToken,
+  });
+}
+
 export async function patchMasterProfile(
   baseUrl: string,
   accessToken: string,
@@ -537,6 +569,44 @@ export async function getCopyRelationship(
   return coreAppFetch<CopyRelationship>(baseUrl, `/api/v1/copy-relationships/${id}`, {
     method: "GET",
     accessToken,
+  });
+}
+
+export interface CopySettingsInput {
+  method: string;
+  fixedLotSize: number | null;
+  multiplier: number | null;
+  riskPercent: number | null;
+  roundingMode: string;
+  maxLotPerTrade: number | null;
+  maxOpenPositions: number | null;
+  maxSlippagePips: number | null;
+}
+
+/**
+ * TICKET-116 — edits the relationship's money-management/risk profile rows in place, distinct from
+ * {@link patchCopyRelationship}'s "swap to a different existing profile id" shape. Always a
+ * full-object submit (mirrors the form it backs, pre-filled with the relationship's current values).
+ */
+export async function updateCopySettings(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+  input: CopySettingsInput,
+): Promise<CopyRelationship> {
+  return coreAppFetch<CopyRelationship>(baseUrl, `/api/v1/copy-relationships/${id}/copy-settings`, {
+    method: "PATCH",
+    accessToken,
+    body: JSON.stringify({
+      method: input.method,
+      fixed_lot_size: input.fixedLotSize,
+      multiplier: input.multiplier,
+      risk_percent: input.riskPercent,
+      rounding_mode: input.roundingMode,
+      max_lot_per_trade: input.maxLotPerTrade,
+      max_open_positions: input.maxOpenPositions,
+      max_slippage_pips: input.maxSlippagePips,
+    }),
   });
 }
 
@@ -630,6 +700,80 @@ export async function listCopyRelationshipTrades(
   );
 }
 
+/**
+ * TICKET-116 — cross-relationship trade history (every relationship the caller has, not just one),
+ * backing both the dashboard's "recent activity" and the dedicated trade-history page.
+ */
+export async function listAllCopiedTrades(
+  baseUrl: string,
+  accessToken: string,
+  filter: {
+    role?: "follower" | "master";
+    symbol?: string;
+    from?: string;
+    to?: string;
+    status?: CopiedTradeStatus;
+    relationshipId?: string;
+    page?: number;
+    pageSize?: number;
+  } = {},
+): Promise<CopiedTradesPage> {
+  const params = new URLSearchParams();
+  if (filter.role) params.set("role", filter.role);
+  if (filter.symbol) params.set("symbol", filter.symbol);
+  if (filter.from) params.set("from", filter.from);
+  if (filter.to) params.set("to", filter.to);
+  if (filter.status) params.set("status", filter.status);
+  if (filter.relationshipId) params.set("relationshipId", filter.relationshipId);
+  if (filter.page !== undefined) params.set("page", String(filter.page));
+  if (filter.pageSize !== undefined) params.set("pageSize", String(filter.pageSize));
+  const query = params.toString();
+  return coreAppFetch<CopiedTradesPage>(
+    baseUrl,
+    `/api/v1/copy-relationships/trades${query ? `?${query}` : ""}`,
+    { method: "GET", accessToken },
+  );
+}
+
+// ==================== TICKET-116 — Master Analytics ====================
+
+export type AnalyticsPeriod = "7D" | "30D" | "90D" | "YTD" | "ALL";
+
+export interface DailyEquityPoint {
+  day: string;
+  equity: number;
+}
+
+export interface MonthlyReturn {
+  month: string;
+  returnPct: number;
+}
+
+export interface InstrumentPnl {
+  canonicalSymbol: string;
+  totalPnl: number;
+  tradeCount: number;
+}
+
+export interface MasterAnalytics {
+  equityCurve: DailyEquityPoint[];
+  monthlyReturns: MonthlyReturn[];
+  pnlByInstrument: InstrumentPnl[];
+}
+
+export async function getMasterAnalytics(
+  baseUrl: string,
+  accessToken: string,
+  masterProfileId: string,
+  period: AnalyticsPeriod = "30D",
+): Promise<MasterAnalytics> {
+  return coreAppFetch<MasterAnalytics>(
+    baseUrl,
+    `/api/v1/master-profiles/${masterProfileId}/analytics?period=${period}`,
+    { method: "GET", accessToken },
+  );
+}
+
 // ==================== TICKET-112 — Public Discovery (Leaderboard) ====================
 // Both functions below deliberately take no accessToken — docs/14-api-specification.md §14.4:
 // "Discovery endpoints remain public/unauthenticated" (same no-token precedent as
@@ -684,7 +828,6 @@ export async function registerUser(
 
 export type SubscriptionPlanCode = "STARTER" | "INDIVIDUAL" | "PRO";
 
-/** Every plan (including the entry tier) requires a card on file — always returns a Checkout URL. */
 // ==================== TICKET-115 — Notification Preferences ====================
 
 export type NotificationChannel = "IN_APP" | "PUSH" | "EMAIL" | "SMS";
@@ -725,6 +868,58 @@ export async function updateNotificationPreference(
   });
 }
 
+// ==================== TICKET-116 — Notification Center ====================
+// The IN_APP notification_log rows themselves — distinct from the preferences above. `payload` is
+// a JSON-encoded string (core-app's NotificationDispatchService serializes {event_type,title,body}
+// into it) — callers parse it themselves via parseNotificationPayload below, this client doesn't
+// assume a shape core-app is free to evolve.
+
+export interface NotificationLogItem {
+  id: string;
+  eventType: string;
+  payload: string;
+  createdAt: string;
+  readAt: string | null;
+}
+
+export interface NotificationPayload {
+  eventType: string;
+  title: string;
+  body: string;
+}
+
+export function parseNotificationPayload(item: NotificationLogItem): NotificationPayload {
+  try {
+    return JSON.parse(item.payload) as NotificationPayload;
+  } catch {
+    return { eventType: item.eventType, title: item.eventType, body: "" };
+  }
+}
+
+export async function listNotifications(
+  baseUrl: string,
+  accessToken: string,
+  unreadOnly = false,
+): Promise<NotificationLogItem[]> {
+  return coreAppFetch<NotificationLogItem[]>(
+    baseUrl,
+    `/api/v1/notifications${unreadOnly ? "?unread=true" : ""}`,
+    { method: "GET", accessToken },
+  );
+}
+
+export async function markNotificationRead(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<void> {
+  await coreAppFetch<null>(baseUrl, `/api/v1/notifications/${id}/read`, {
+    method: "POST",
+    accessToken,
+  });
+}
+
+/** Every plan (including the entry tier) requires a card on file — always returns a Checkout URL. */
 export async function startSubscriptionCheckout(
   baseUrl: string,
   accessToken: string,

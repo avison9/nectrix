@@ -190,6 +190,11 @@ public class SecurityConfig {
                     .authenticated()
                     .requestMatchers(HttpMethod.PUT, "/api/v1/broker-accounts/*/symbol-mappings/*")
                     .authenticated()
+                    // TICKET-116 — manual symbol-mapping fallback (creates a row for a canonical
+                    // symbol the auto-suggestion probe list never covered).
+                    .requestMatchers(
+                        HttpMethod.POST, "/api/v1/broker-accounts/*/symbol-mappings/*/resolve")
+                    .authenticated()
                     // TICKET-111 — Master profile self-service creation (role check is
                     // @PreAuthorize("hasRole('MASTER')") method-security, see
                     // MasterProfileController) + the CopyRelationship state machine (ownership is
@@ -201,11 +206,18 @@ public class SecurityConfig {
                     .authenticated()
                     .requestMatchers(HttpMethod.PATCH, "/api/v1/master-profiles/*")
                     .authenticated()
+                    // TICKET-116 — MasterAnalyticsController, ownership enforced by
+                    // MasterAnalyticsService's own @PostAuthorize, not this matcher.
+                    .requestMatchers(HttpMethod.GET, "/api/v1/master-profiles/*/analytics")
+                    .authenticated()
                     .requestMatchers(HttpMethod.GET, "/api/v1/copy-relationships")
                     .authenticated()
                     .requestMatchers(HttpMethod.GET, "/api/v1/copy-relationships/*")
                     .authenticated()
                     .requestMatchers(HttpMethod.PATCH, "/api/v1/copy-relationships/*")
+                    .authenticated()
+                    // TICKET-116 — in-place money-management/risk profile editing.
+                    .requestMatchers(HttpMethod.PATCH, "/api/v1/copy-relationships/*/copy-settings")
                     .authenticated()
                     .requestMatchers(HttpMethod.GET, "/api/v1/copy-relationships/*/trades")
                     .authenticated()

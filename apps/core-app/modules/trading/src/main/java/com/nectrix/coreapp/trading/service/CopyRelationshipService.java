@@ -33,9 +33,12 @@ import org.springframework.stereotype.Service;
 public class CopyRelationshipService {
 
   private final CopyRelationshipRepository repository;
+  private final CopyRelationshipUpdatePublisher updatePublisher;
 
-  public CopyRelationshipService(CopyRelationshipRepository repository) {
+  public CopyRelationshipService(
+      CopyRelationshipRepository repository, CopyRelationshipUpdatePublisher updatePublisher) {
     this.repository = repository;
+    this.updatePublisher = updatePublisher;
   }
 
   @PostAuthorize("@perms.isOwnerOrStaff(authentication, returnObject.followerUserId())")
@@ -73,13 +76,13 @@ public class CopyRelationshipService {
   public CopyRelationship pause(CopyRelationship existing) {
     requireStatus(existing, "ACTIVE", "pause");
     repository.updateStatus(existing.id(), "PAUSED");
-    return reload(existing.id());
+    return reloadAndPublish(existing.id());
   }
 
   public CopyRelationship resume(CopyRelationship existing) {
     requireStatus(existing, "PAUSED", "resume");
     repository.updateStatus(existing.id(), "ACTIVE");
-    return reload(existing.id());
+    return reloadAndPublish(existing.id());
   }
 
   /**
@@ -91,7 +94,7 @@ public class CopyRelationshipService {
       throw new InvalidCopyRelationshipTransitionException("copy relationship is already STOPPED");
     }
     repository.markStopped(existing.id());
-    return reload(existing.id());
+    return reloadAndPublish(existing.id());
   }
 
   /**
@@ -113,5 +116,24 @@ public class CopyRelationshipService {
 
   private CopyRelationship reload(UUID id) {
     return repository.findById(id).orElseThrow(CopyRelationshipNotFoundException::new);
+  }
+
+  /**
+   * TICKET-116 — pushes the new status onto the {@code copy-relationships.{id}} WS channel
+   * (docs/14-api-specification.md §14.11) right after a successful pause/resume/stop transition, a
+   * same-request push rather than a Kafka round-trip. Hand-built JSON, not a library: every field
+   * is a server-controlled UUID/status-enum value, nothing user-supplied to escape (same reasoning
+   * {@code NotificationDispatchService} doesn't need for its own free-text title/body).
+   */
+  private CopyRelationship reloadAndPublish(UUID id) {
+    CopyRelationship reloaded = reload(id);
+    String json =
+        "{\"channel\":\"copy-relationships\",\"type\":\"status_changed\",\"copyRelationshipId\":\""
+            + reloaded.id()
+            + "\",\"status\":\""
+            + reloaded.status()
+            + "\"}";
+    updatePublisher.publish(id, json);
+    return reloaded;
   }
 }

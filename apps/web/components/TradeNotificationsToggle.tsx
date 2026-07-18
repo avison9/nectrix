@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { updateTradeNotificationsAction } from "@/app/profile/actions";
+import { updateTradeNotificationsAction } from "@/app/(app)/profile/actions";
 
 export function TradeNotificationsToggle({ initialEnabled }: { initialEnabled: boolean }) {
   const [enabled, setEnabled] = useState(initialEnabled);

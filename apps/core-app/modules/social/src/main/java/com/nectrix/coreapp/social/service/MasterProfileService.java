@@ -108,6 +108,17 @@ public class MasterProfileService {
   }
 
   /**
+   * TICKET-116 — the "do I already have one" lookup {@link #create}'s own Javadoc originally
+   * flagged as missing (previously only discoverable via a 409 on create). Needed so a Master-role
+   * caller can reach their own profile id without knowing it up front (e.g. the Analytics page).
+   * Inherently self-scoped (queries by the caller's own {@code userId}, never a client-supplied
+   * one) — no {@code @PostAuthorize} needed, unlike {@link #getMasterProfile}.
+   */
+  public MasterProfile getMyProfile(UUID userId) {
+    return repository.findByUserId(userId).orElseThrow(MasterProfileNotFoundException::new);
+  }
+
+  /**
    * {@code existing} must already have passed {@link #getMasterProfile}'s ownership check — same
    * fetch-then-check-then-mutate discipline {@code BrokerAccountService} established
    * (self-invocation bypasses Spring AOP's {@code @PostAuthorize} proxy, so it can't live inside
