@@ -2,12 +2,14 @@ import Link from "next/link";
 import { ApiError, beginTwoFactorEnrollment } from "@nectrix/api-client";
 import { coreAppBaseUrl } from "@/lib/core-app";
 import { requireSession } from "@/lib/auth";
+import { DisableTwoFactorForm } from "./DisableTwoFactorForm";
 import { TwoFactorVerifyForm } from "./TwoFactorVerifyForm";
 
 // Sample codes only — TwoFactorService has no real backup-code generation yet, matching
-// TwoFactorController's own scope (docs/14-api-specification.md §14.2 lists only /2fa/enable and
-// /2fa/verify, no disable/backup-codes endpoint). "Disable two-factor authentication" is real UI,
-// permanently disabled with a tooltip, for the same reason.
+// TwoFactorController's original scope (docs/14-api-specification.md §14.2 lists only /2fa/enable
+// and /2fa/verify). "Disable two-factor authentication" (DisableTwoFactorForm) IS real, wired to a
+// real /2fa/disable endpoint added as a TICKET-117 bugfix — it used to ship as a permanently inert
+// button before that endpoint existed.
 const SAMPLE_BACKUP_CODES = ["7K2M-9QLX", "4RT8-2FCN", "L9X1-6VBQ", "P3W7-0ZDK"];
 
 function BackToProfile() {
@@ -62,14 +64,7 @@ function EnabledView() {
               </div>
             ))}
           </div>
-          <button
-            type="button"
-            disabled
-            title="Disabling 2FA isn't available yet — no backend endpoint exists for it"
-            className="h-[42px] cursor-not-allowed rounded-[11px] border border-[var(--border)] px-4.5 text-[13.5px] font-semibold text-[var(--neg)] opacity-60"
-          >
-            Disable two-factor authentication
-          </button>
+          <DisableTwoFactorForm />
         </div>
       </div>
     </div>

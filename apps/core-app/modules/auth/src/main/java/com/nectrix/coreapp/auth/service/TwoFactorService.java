@@ -134,4 +134,24 @@ public class TwoFactorService {
             user.twoFactorSecretCiphertext(), user.twoFactorSecretKeyVersion());
     return codeVerifier.isValidCode(secret, totpCode);
   }
+
+  /**
+   * TICKET-117 bugfix — the settings-page "Disable two-factor authentication" button shipped
+   * permanently disabled ("no backend endpoint exists for it") even though nothing about
+   * TICKET-005's own scope actually excluded one; this is that endpoint. Requires a currently-valid
+   * TOTP code (the same proof-of-possession the login challenge itself requires) rather than a bare
+   * click, so a stolen/left-open session alone can't turn off 2FA. Returns false (no change made)
+   * for an invalid code or an account that isn't currently enabled.
+   */
+  public boolean disable(UUID userId, String totpCode) {
+    User user =
+        userRepository
+            .findById(userId)
+            .orElseThrow(() -> new NoSuchElementException("No such user: " + userId));
+    if (!verifyLoginCode(user, totpCode)) {
+      return false;
+    }
+    userRepository.clearTwoFactor(userId);
+    return true;
+  }
 }

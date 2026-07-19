@@ -10,6 +10,7 @@ import type {
   AuditLogPage,
   BrokerAccountSnapshot,
   BrokerAccountSummary,
+  BrokerConnectionCount,
   BrokerIbLink,
   BrokerType,
   CopiedTrade,
@@ -17,10 +18,18 @@ import type {
   CopiedTradeStatus,
   ConnectionRole,
   ConnectionStatus,
+  ConsumerGroupLag,
+  CopyEngineHealth,
   CopyRelationship,
   CopyRelationshipStatus,
   CtraderAccountOption,
   FeeCollectionMethod,
+  FeeLedgerDetail,
+  FeeLedgerDetailPage,
+  FeeLedgerEntry,
+  FeeLedgerResolution,
+  FeeLedgerStatus,
+  FeeLedgerUnderlyingTrade,
   LeaderboardEntry,
   LeaderboardPeriod,
   LeaderboardSort,
@@ -29,6 +38,10 @@ import type {
   NormalizedTradeEvent,
   PublicMasterProfile,
   SymbolMappingEntry,
+  SystemHealthSnapshot,
+  UserDetail,
+  UserStatus,
+  UserSummary,
 } from "@nectrix/domain-model";
 
 export type {
@@ -38,6 +51,7 @@ export type {
   AuditLogPage,
   BrokerAccountSnapshot,
   BrokerAccountSummary,
+  BrokerConnectionCount,
   BrokerIbLink,
   BrokerType,
   CopiedTrade,
@@ -45,16 +59,28 @@ export type {
   CopiedTradeStatus,
   ConnectionRole,
   ConnectionStatus,
+  ConsumerGroupLag,
+  CopyEngineHealth,
   CopyRelationship,
   CopyRelationshipStatus,
   CtraderAccountOption,
   FeeCollectionMethod,
+  FeeLedgerDetail,
+  FeeLedgerDetailPage,
+  FeeLedgerEntry,
+  FeeLedgerResolution,
+  FeeLedgerStatus,
+  FeeLedgerUnderlyingTrade,
   LeaderboardEntry,
   LeaderboardPeriod,
   LeaderboardSort,
   MasterProfile,
   PublicMasterProfile,
   SymbolMappingEntry,
+  SystemHealthSnapshot,
+  UserDetail,
+  UserStatus,
+  UserSummary,
 };
 
 export const API_CLIENT_VERSION = "0.2.0";
@@ -169,6 +195,23 @@ export async function verifyTwoFactor(
   totpCode: string,
 ): Promise<void> {
   await coreAppFetch<null>(baseUrl, "/api/v1/auth/2fa/verify", {
+    method: "POST",
+    accessToken,
+    body: JSON.stringify({ totp_code: totpCode }),
+  });
+}
+
+/**
+ * TICKET-117 bugfix — the real /2fa/disable endpoint (was permanently a dead button on the
+ * frontend). 204 on success; a rejected (wrong/expired) TOTP code throws ApiError with status 422,
+ * same shape as {@link verifyTwoFactor}.
+ */
+export async function disableTwoFactor(
+  baseUrl: string,
+  accessToken: string,
+  totpCode: string,
+): Promise<void> {
+  await coreAppFetch<null>(baseUrl, "/api/v1/auth/2fa/disable", {
     method: "POST",
     accessToken,
     body: JSON.stringify({ totp_code: totpCode }),
@@ -929,5 +972,129 @@ export async function startSubscriptionCheckout(
     method: "POST",
     accessToken,
     body: JSON.stringify({ plan_code: planCode }),
+  });
+}
+
+// TICKET-117 — Admin MVP (System Health + User Management + Disputes). ADMIN/SUPPORT
+// server-side calls, same convention every other admin-portal-facing function above uses.
+
+/** A blank/absent `search` returns every user (newest first) — see UserRepository#search's own Javadoc. */
+export async function searchUsers(
+  baseUrl: string,
+  accessToken: string,
+  search = "",
+  page = 0,
+  pageSize = 25,
+): Promise<UserSummary[]> {
+  const params = new URLSearchParams({ search, page: String(page), pageSize: String(pageSize) });
+  return coreAppFetch<UserSummary[]>(baseUrl, `/api/v1/admin/users?${params.toString()}`, {
+    method: "GET",
+    accessToken,
+  });
+}
+
+export async function getUserDetail(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<UserDetail> {
+  return coreAppFetch<UserDetail>(baseUrl, `/api/v1/admin/users/${id}`, {
+    method: "GET",
+    accessToken,
+  });
+}
+
+/** ADMIN-only server-side — SecurityConfig/AdminController both enforce this, not just the UI. */
+export async function suspendUser(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<UserSummary> {
+  return coreAppFetch<UserSummary>(baseUrl, `/api/v1/admin/users/${id}/suspend`, {
+    method: "PATCH",
+    accessToken,
+  });
+}
+
+export async function reinstateUser(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<UserSummary> {
+  return coreAppFetch<UserSummary>(baseUrl, `/api/v1/admin/users/${id}/reinstate`, {
+    method: "PATCH",
+    accessToken,
+  });
+}
+
+/** `status` defaults to DISPUTED server-side — see the ticket's own scope note. */
+export async function listDisputedLedgerEntries(
+  baseUrl: string,
+  accessToken: string,
+  status: FeeLedgerStatus = "DISPUTED",
+  page = 0,
+  pageSize = 25,
+): Promise<FeeLedgerEntry[]> {
+  const params = new URLSearchParams({ status, page: String(page), pageSize: String(pageSize) });
+  return coreAppFetch<FeeLedgerEntry[]>(baseUrl, `/api/v1/admin/fee-ledger?${params.toString()}`, {
+    method: "GET",
+    accessToken,
+  });
+}
+
+export async function getFeeLedgerDetail(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<FeeLedgerDetailPage> {
+  return coreAppFetch<FeeLedgerDetailPage>(baseUrl, `/api/v1/admin/fee-ledger/${id}`, {
+    method: "GET",
+    accessToken,
+  });
+}
+
+/** ADMIN+SUPPORT — the only real way performance_fee_ledger.status can ever become DISPUTED. */
+export async function raiseDispute(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+  reason: string,
+): Promise<void> {
+  await coreAppFetch<null>(baseUrl, `/api/v1/admin/fee-ledger/${id}/dispute`, {
+    method: "POST",
+    accessToken,
+    body: JSON.stringify({ reason }),
+  });
+}
+
+/** ADMIN-only server-side — matches the ticket's own RBAC line (financial-ledger action). */
+export async function resolveDispute(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+  input: { resolution: FeeLedgerResolution; note: string; adjustedAmount?: number },
+): Promise<void> {
+  await coreAppFetch<null>(baseUrl, `/api/v1/admin/fee-ledger/${id}/resolve`, {
+    method: "POST",
+    accessToken,
+    body: JSON.stringify({
+      resolution: input.resolution,
+      note: input.note,
+      adjusted_amount: input.adjustedAmount ?? null,
+    }),
+  });
+}
+
+/**
+ * Built from Postgres + a real Kafka AdminClient, not Prometheus — see AdminController's own
+ * Javadoc for why (no Prometheus anywhere outside local dev/CI, including nectrix-dev).
+ */
+export async function getSystemHealth(
+  baseUrl: string,
+  accessToken: string,
+): Promise<SystemHealthSnapshot> {
+  return coreAppFetch<SystemHealthSnapshot>(baseUrl, "/api/v1/admin/system-health", {
+    method: "GET",
+    accessToken,
   });
 }

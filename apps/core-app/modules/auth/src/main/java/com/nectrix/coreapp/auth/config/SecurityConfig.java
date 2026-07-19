@@ -130,6 +130,9 @@ public class SecurityConfig {
                     .authenticated()
                     .requestMatchers(HttpMethod.POST, "/api/v1/auth/2fa/verify")
                     .authenticated()
+                    // TICKET-117 bugfix — real 2FA disable (was permanently a dead button).
+                    .requestMatchers(HttpMethod.POST, "/api/v1/auth/2fa/disable")
+                    .authenticated()
                     // TICKET-006 — role/ownership enforcement itself is method-security
                     // (@PreAuthorize/@PostAuthorize on the controller/service), but these still
                     // need to be listed here as .authenticated() so a request with no bearer
@@ -163,6 +166,30 @@ public class SecurityConfig {
                     .requestMatchers(HttpMethod.POST, "/api/v1/admin/users")
                     .authenticated()
                     .requestMatchers(HttpMethod.GET, "/api/v1/admin/audit-log")
+                    .authenticated()
+                    // TICKET-117 — admin user search/detail/suspend/reinstate. RBAC split
+                    // (SUPPORT can view, only ADMIN can suspend/reinstate) is method-security
+                    // on AdminController, same reasoning as every other admin matcher above.
+                    .requestMatchers(HttpMethod.GET, "/api/v1/admin/users")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.GET, "/api/v1/admin/users/*")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.PATCH, "/api/v1/admin/users/*/suspend")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.PATCH, "/api/v1/admin/users/*/reinstate")
+                    .authenticated()
+                    // TICKET-117 — admin dispute raise/list/detail/resolve. RBAC split (resolve
+                    // is ADMIN-only, the rest ADMIN+SUPPORT) is method-security on AdminController.
+                    .requestMatchers(HttpMethod.GET, "/api/v1/admin/fee-ledger")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.GET, "/api/v1/admin/fee-ledger/*")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.POST, "/api/v1/admin/fee-ledger/*/dispute")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.POST, "/api/v1/admin/fee-ledger/*/resolve")
+                    .authenticated()
+                    // TICKET-117 — System Health.
+                    .requestMatchers(HttpMethod.GET, "/api/v1/admin/system-health")
                     .authenticated()
                     // TICKET-101 — cTrader OAuth broker-linking flow. The callback is permitAll:
                     // the browser's redirect back from cTrader carries no bearer token, so the

@@ -302,3 +302,114 @@ export interface PublicMasterProfile {
   verifiedAt: string | null;
   metricsByPeriod: Partial<Record<LeaderboardPeriod, LeaderboardEntry>>;
 }
+
+// TICKET-117 — admin MVP (System Health + User Management + Disputes). Mirrors
+// apps/core-app/modules/admin's AdminController/AdminRepository/UserAdminApi/FeeLedgerAdminApi
+// response records.
+
+export type UserStatus = "ACTIVE" | "SUSPENDED" | "DELETED";
+
+// Mirrors auth.api.UserView.
+export interface UserSummary {
+  id: string;
+  email: string;
+  displayName: string;
+  twoFactorEnabled: boolean;
+  status: UserStatus;
+  createdAt: string; // ISO-8601
+}
+
+// Mirrors AdminController.UserDetailResponse.
+export interface UserDetail {
+  user: UserSummary;
+  brokerAccounts: BrokerAccountSummary[];
+}
+
+export type FeeLedgerStatus =
+  | "PENDING"
+  | "INVOICED"
+  | "PAID"
+  | "REPORTED_TO_BROKER"
+  | "BROKER_CONFIRMED_DEDUCTED"
+  | "BROKER_CONFIRMED_PAID"
+  | "DISPUTED"
+  | "VOID";
+
+// Mirrors billing.api.FeeLedgerAdminApi.FeeLedgerSummaryView.
+export interface FeeLedgerEntry {
+  id: string;
+  copyRelationshipId: string;
+  periodStart: string; // ISO-8601
+  periodEnd: string; // ISO-8601
+  masterFeeAmount: number;
+  platformTakeAmount: number;
+  netToMasterAmount: number;
+  status: FeeLedgerStatus;
+}
+
+// Mirrors billing.api.FeeLedgerAdminApi.FeeLedgerDetailView — computationDetailJson is the raw
+// JSON text (self-contained by design, see SettlementComputation's own Javadoc); render it as a
+// real line-item breakdown, not a passthrough JSON dump.
+export interface FeeLedgerDetail {
+  id: string;
+  copyRelationshipId: string;
+  periodStart: string;
+  periodEnd: string;
+  startingHwm: number;
+  endingEquity: number;
+  newProfitAboveHwm: number;
+  masterFeeAmount: number;
+  platformTakeAmount: number;
+  netToMasterAmount: number;
+  computationDetailJson: string;
+  status: FeeLedgerStatus;
+}
+
+// Mirrors billing.api.FeeLedgerAdminApi.UnderlyingTradeView.
+export interface FeeLedgerUnderlyingTrade {
+  id: string;
+  canonicalSymbol: string;
+  direction: "BUY" | "SELL";
+  computedVolumeLots: number;
+  status: CopiedTradeStatus;
+  realizedPnl: number | null;
+  openedAt: string | null;
+  closedAt: string | null;
+}
+
+// Mirrors AdminController.FeeLedgerDetailResponse.
+export interface FeeLedgerDetailPage {
+  ledger: FeeLedgerDetail;
+  trades: FeeLedgerUnderlyingTrade[];
+}
+
+export type FeeLedgerResolution = "UPHOLD" | "ADJUST" | "VOID";
+
+// Mirrors admin.repository.AdminRepository.BrokerConnectionCount.
+export interface BrokerConnectionCount {
+  brokerType: BrokerType;
+  connectionStatus: ConnectionStatus;
+  count: number;
+}
+
+// Mirrors AdminController.CopyEngineHealth.
+export interface CopyEngineHealth {
+  windowMinutes: number;
+  tradesInWindow: number;
+  failedInWindow: number;
+}
+
+// Mirrors admin.service.KafkaConsumerLagService.ConsumerGroupLag.
+export interface ConsumerGroupLag {
+  groupId: string;
+  topic: string;
+  lag: number;
+}
+
+// Mirrors AdminController.SystemHealthResponse.
+export interface SystemHealthSnapshot {
+  brokerConnections: BrokerConnectionCount[];
+  copyEngine: CopyEngineHealth;
+  reconciliationDriftLastHour: number;
+  kafkaConsumerLag: ConsumerGroupLag[];
+}

@@ -3,6 +3,7 @@ package com.nectrix.coreapp.invitations.api;
 import com.nectrix.coreapp.invitations.domain.BrokerAccount;
 import com.nectrix.coreapp.invitations.service.BrokerAccountNotFoundException;
 import com.nectrix.coreapp.invitations.service.BrokerAccountService;
+import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
@@ -33,6 +34,26 @@ public class BrokerAccountLookupApiImpl implements BrokerAccountLookupApi {
       // to import anything but this interface.
       throw new NoSuchElementException("No such broker account: " + id);
     }
+    return new BrokerAccountView(
+        account.id(),
+        account.userId(),
+        account.brokerType(),
+        account.brokerAccountLogin(),
+        account.displayLabel(),
+        account.isDemo(),
+        account.currency(),
+        account.connectionRole(),
+        account.openedViaIbLinkId(),
+        account.connectionStatus(),
+        account.lastHealthCheckAt());
+  }
+
+  @Override
+  public List<BrokerAccountView> listForUser(UUID userId) {
+    return service.listForUser(userId).stream().map(this::toView).toList();
+  }
+
+  private BrokerAccountView toView(BrokerAccount account) {
     return new BrokerAccountView(
         account.id(),
         account.userId(),

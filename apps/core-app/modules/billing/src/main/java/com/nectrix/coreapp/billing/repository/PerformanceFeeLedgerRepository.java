@@ -5,10 +5,12 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
 
 /**
@@ -120,5 +122,141 @@ public class PerformanceFeeLedgerRepository {
             id)
         .stream()
         .findFirst();
+  }
+
+  /**
+   * TICKET-117 — the Disputes list view. Newest period first, same convention as
+   * UserRepository#search.
+   */
+  public List<LedgerSummary> findByStatus(String status, int page, int pageSize) {
+    return jdbcTemplate.query(
+        """
+        SELECT id, copy_relationship_id, period_start, period_end, master_fee_amount,
+               platform_take_amount, net_to_master_amount, status
+        FROM performance_fee_ledger
+        WHERE status = ?
+        ORDER BY period_end DESC
+        LIMIT ? OFFSET ?
+        """,
+        LEDGER_SUMMARY_MAPPER,
+        status,
+        pageSize,
+        page * pageSize);
+  }
+
+  public record LedgerSummary(
+      UUID id,
+      UUID copyRelationshipId,
+      Instant periodStart,
+      Instant periodEnd,
+      BigDecimal masterFeeAmount,
+      BigDecimal platformTakeAmount,
+      BigDecimal netToMasterAmount,
+      String status) {}
+
+  private static final RowMapper<LedgerSummary> LEDGER_SUMMARY_MAPPER =
+      (rs, rowNum) ->
+          new LedgerSummary(
+              UUID.fromString(rs.getString("id")),
+              UUID.fromString(rs.getString("copy_relationship_id")),
+              rs.getTimestamp("period_start").toInstant(),
+              rs.getTimestamp("period_end").toInstant(),
+              rs.getBigDecimal("master_fee_amount"),
+              rs.getBigDecimal("platform_take_amount"),
+              rs.getBigDecimal("net_to_master_amount"),
+              rs.getString("status"));
+
+  /**
+   * TICKET-117 — the Dispute detail view. {@code computationDetailJson} is the raw JSONB text,
+   * self-contained by design (see class Javadoc's own reference to SettlementComputation) — callers
+   * render it as a real line-item breakdown, not a passthrough JSON dump.
+   */
+  public record LedgerDetail(
+      UUID id,
+      UUID copyRelationshipId,
+      Instant periodStart,
+      Instant periodEnd,
+      BigDecimal startingHwm,
+      BigDecimal endingEquity,
+      BigDecimal newProfitAboveHwm,
+      BigDecimal masterFeeAmount,
+      BigDecimal platformTakeAmount,
+      BigDecimal netToMasterAmount,
+      String computationDetailJson,
+      String status) {}
+
+  public Optional<LedgerDetail> findDetailById(UUID id) {
+    return jdbcTemplate
+        .query(
+            """
+            SELECT id, copy_relationship_id, period_start, period_end, starting_hwm, ending_equity,
+                   new_profit_above_hwm, master_fee_amount, platform_take_amount,
+                   net_to_master_amount, computation_detail::text AS computation_detail, status
+            FROM performance_fee_ledger WHERE id = ?
+            """,
+            (rs, rowNum) ->
+                new LedgerDetail(
+                    UUID.fromString(rs.getString("id")),
+                    UUID.fromString(rs.getString("copy_relationship_id")),
+                    rs.getTimestamp("period_start").toInstant(),
+                    rs.getTimestamp("period_end").toInstant(),
+                    rs.getBigDecimal("starting_hwm"),
+                    rs.getBigDecimal("ending_equity"),
+                    rs.getBigDecimal("new_profit_above_hwm"),
+                    rs.getBigDecimal("master_fee_amount"),
+                    rs.getBigDecimal("platform_take_amount"),
+                    rs.getBigDecimal("net_to_master_amount"),
+                    rs.getString("computation_detail"),
+                    rs.getString("status")),
+            id)
+        .stream()
+        .findFirst();
+  }
+
+  /**
+   * TICKET-117 — the underlying {@code copied_trades} in a disputed period, joined to {@code
+   * trade_signals} for the symbol/direction the ledger's own rows don't carry directly (see
+   * 006-copy-trading.sql). Windowed on {@code opened_at}, matching how a settlement period is
+   * actually defined (docs/11-fee-engine-billing.md).
+   */
+  public record UnderlyingTrade(
+      UUID id,
+      String canonicalSymbol,
+      String direction,
+      BigDecimal computedVolumeLots,
+      String status,
+      BigDecimal realizedPnl,
+      Instant openedAt,
+      Instant closedAt) {}
+
+  public List<UnderlyingTrade> findUnderlyingTrades(
+      UUID copyRelationshipId, Instant periodStart, Instant periodEnd) {
+    return jdbcTemplate.query(
+        """
+        SELECT ct.id, ts.canonical_symbol, ts.direction, ct.computed_volume_lots, ct.status,
+               ct.realized_pnl, ct.opened_at, ct.closed_at
+        FROM copied_trades ct
+        JOIN trade_signals ts ON ts.id = ct.trade_signal_id
+        WHERE ct.copy_relationship_id = ?
+          AND ct.opened_at >= ? AND ct.opened_at < ?
+        ORDER BY ct.opened_at
+        """,
+        (rs, rowNum) ->
+            new UnderlyingTrade(
+                UUID.fromString(rs.getString("id")),
+                rs.getString("canonical_symbol"),
+                rs.getString("direction"),
+                rs.getBigDecimal("computed_volume_lots"),
+                rs.getString("status"),
+                rs.getBigDecimal("realized_pnl"),
+                rs.getTimestamp("opened_at") == null
+                    ? null
+                    : rs.getTimestamp("opened_at").toInstant(),
+                rs.getTimestamp("closed_at") == null
+                    ? null
+                    : rs.getTimestamp("closed_at").toInstant()),
+        copyRelationshipId,
+        Timestamp.from(periodStart),
+        Timestamp.from(periodEnd));
   }
 }

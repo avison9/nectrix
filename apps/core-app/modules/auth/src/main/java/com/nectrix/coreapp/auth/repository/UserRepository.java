@@ -88,6 +88,44 @@ public class UserRepository {
         userId);
   }
 
+  /**
+   * A real, full disable — wipes the stored secret entirely (not just flipping the flag), so a
+   * subsequent re-enable always starts from a fresh {@code beginEnrollment} secret rather than
+   * silently reactivating an old one.
+   */
+  public void clearTwoFactor(UUID userId) {
+    jdbcTemplate.update(
+        "UPDATE users SET two_factor_enabled = false, two_factor_secret = NULL, two_factor_secret_key_version = NULL, updated_at = now() WHERE id = ?",
+        userId);
+  }
+
+  /** TICKET-117 — suspend/reinstate. Mirrors {@link #updateTwoFactor}'s single-UPDATE shape. */
+  public void updateStatus(UUID userId, String status) {
+    jdbcTemplate.update(
+        "UPDATE users SET status = ?, updated_at = now() WHERE id = ?", status, userId);
+  }
+
+  /**
+   * TICKET-117 — admin user search. {@code query} matches against email or display_name,
+   * case-insensitively, substring — a blank/null query returns every user (newest first), matching
+   * the mock's own "browse everyone, narrow as you type" behavior.
+   */
+  public List<User> search(String query, int page, int pageSize) {
+    String pattern = "%" + (query == null ? "" : query.trim()) + "%";
+    return jdbcTemplate.query(
+        """
+        SELECT * FROM users
+        WHERE email ILIKE ? OR display_name ILIKE ?
+        ORDER BY created_at DESC
+        LIMIT ? OFFSET ?
+        """,
+        ROW_MAPPER,
+        pattern,
+        pattern,
+        pageSize,
+        page * pageSize);
+  }
+
   public List<String> findRoleNames(UUID userId) {
     return jdbcTemplate.queryForList(
         """

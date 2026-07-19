@@ -160,7 +160,16 @@ public class AuthService {
     };
   }
 
+  /**
+   * TICKET-117 — the single choke point {@link #login} and {@link #refresh} both funnel through, so
+   * a suspended/deleted account is blocked from both paths in one place rather than duplicating the
+   * check. Checked before any session/refresh-token row is written, not after — a rejected caller
+   * shouldn't leave an orphan session row behind.
+   */
   private TokenPair issueNewSession(User user, String deviceInfoJson, String ipAddress) {
+    if (!"ACTIVE".equals(user.status())) {
+      throw new AccountSuspendedException();
+    }
     String refreshToken = generateOpaqueToken();
     String hash = hashToken(refreshToken);
     Instant expiresAt = Instant.now().plus(REFRESH_TOKEN_TTL_DAYS, ChronoUnit.DAYS);

@@ -1,12 +1,23 @@
 package com.nectrix.coreapp.admin.web;
 
+import com.nectrix.coreapp.admin.repository.AdminRepository;
+import com.nectrix.coreapp.admin.repository.AdminRepository.BrokerConnectionCount;
+import com.nectrix.coreapp.admin.service.KafkaConsumerLagService;
+import com.nectrix.coreapp.admin.service.KafkaConsumerLagService.ConsumerGroupLag;
 import com.nectrix.coreapp.audit.repository.AuditLogRepository;
 import com.nectrix.coreapp.auth.api.ImpersonationApi;
 import com.nectrix.coreapp.auth.api.ImpersonationResult;
+import com.nectrix.coreapp.auth.api.UserAdminApi;
 import com.nectrix.coreapp.auth.api.UserProvisioningApi;
+import com.nectrix.coreapp.auth.api.UserView;
+import com.nectrix.coreapp.billing.api.FeeLedgerAdminApi;
+import com.nectrix.coreapp.billing.api.FeeLedgerAdminApi.FeeLedgerDetailView;
+import com.nectrix.coreapp.billing.api.FeeLedgerAdminApi.FeeLedgerSummaryView;
+import com.nectrix.coreapp.billing.api.FeeLedgerAdminApi.UnderlyingTradeView;
 import com.nectrix.coreapp.invitations.api.BrokerAccountLookupApi;
 import com.nectrix.coreapp.invitations.api.BrokerAccountView;
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -18,6 +29,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -48,18 +60,33 @@ public class AdminController {
   private final ImpersonationApi impersonationApi;
   private final BrokerAccountLookupApi brokerAccountLookupApi;
   private final UserProvisioningApi userProvisioningApi;
+  private final UserAdminApi userAdminApi;
+  private final FeeLedgerAdminApi feeLedgerAdminApi;
+  private final AdminRepository adminRepository;
+  private final KafkaConsumerLagService kafkaConsumerLagService;
   private final AuditLogRepository auditLogRepository;
   private final ObjectMapper objectMapper;
+
+  /** System Health's Copy Engine throughput/error-rate window — see {@link #getSystemHealth}. */
+  private static final Duration COPY_ENGINE_WINDOW = Duration.ofMinutes(15);
 
   public AdminController(
       ImpersonationApi impersonationApi,
       BrokerAccountLookupApi brokerAccountLookupApi,
       UserProvisioningApi userProvisioningApi,
+      UserAdminApi userAdminApi,
+      FeeLedgerAdminApi feeLedgerAdminApi,
+      AdminRepository adminRepository,
+      KafkaConsumerLagService kafkaConsumerLagService,
       AuditLogRepository auditLogRepository,
       ObjectMapper objectMapper) {
     this.impersonationApi = impersonationApi;
     this.brokerAccountLookupApi = brokerAccountLookupApi;
     this.userProvisioningApi = userProvisioningApi;
+    this.userAdminApi = userAdminApi;
+    this.feeLedgerAdminApi = feeLedgerAdminApi;
+    this.adminRepository = adminRepository;
+    this.kafkaConsumerLagService = kafkaConsumerLagService;
     this.auditLogRepository = auditLogRepository;
     this.objectMapper = objectMapper;
   }
@@ -159,6 +186,151 @@ public class AdminController {
     return new AuditLogPageResponse(entries, total, page, pageSize);
   }
 
+  /**
+   * TICKET-117 — admin user search. A blank/absent {@code search} returns every user (newest
+   * first), see {@code UserRepository#search}'s own Javadoc.
+   */
+  @GetMapping("/api/v1/admin/users")
+  @PreAuthorize("hasAnyRole('ADMIN','SUPPORT')")
+  public List<UserView> searchUsers(
+      @RequestParam(required = false, defaultValue = "") String search,
+      @RequestParam(defaultValue = "0") int page,
+      @RequestParam(defaultValue = "25") int pageSize) {
+    return userAdminApi.search(search, page, pageSize);
+  }
+
+  /**
+   * TICKET-117 — admin user detail, including linked broker accounts (via {@link
+   * BrokerAccountLookupApi#listForUser}) with each account's real {@code connectionStatus}/{@code
+   * lastHealthCheckAt} — the whole reason this endpoint exists rather than just reusing {@link
+   * #searchUsers}'s summary rows.
+   */
+  @GetMapping("/api/v1/admin/users/{id}")
+  @PreAuthorize("hasAnyRole('ADMIN','SUPPORT')")
+  public UserDetailResponse getUser(@PathVariable UUID id) {
+    UserView user = userAdminApi.getUser(id);
+    List<BrokerAccountView> brokerAccounts = brokerAccountLookupApi.listForUser(id);
+    return new UserDetailResponse(user, brokerAccounts);
+  }
+
+  /**
+   * ADMIN-only (not SUPPORT) — same "SUPPORT cannot action platform state" distinction {@code
+   * /ledger-adjustments} demonstrates. Suspension is enforced for real at {@code
+   * AuthService#issueNewSession} — both a fresh login AND an existing refresh token stop working
+   * immediately, not just future logins.
+   */
+  @PatchMapping("/api/v1/admin/users/{id}/suspend")
+  @PreAuthorize("hasRole('ADMIN')")
+  public UserView suspendUser(@PathVariable UUID id, @AuthenticationPrincipal Jwt jwt) {
+    UUID actingAdminId = currentUserId(jwt);
+    userAdminApi.updateStatus(id, "SUSPENDED");
+    auditLogRepository.insert(
+        actingAdminId, "ADMIN", "USER_SUSPENDED", "USER", id.toString(), null);
+    return userAdminApi.getUser(id);
+  }
+
+  @PatchMapping("/api/v1/admin/users/{id}/reinstate")
+  @PreAuthorize("hasRole('ADMIN')")
+  public UserView reinstateUser(@PathVariable UUID id, @AuthenticationPrincipal Jwt jwt) {
+    UUID actingAdminId = currentUserId(jwt);
+    userAdminApi.updateStatus(id, "ACTIVE");
+    auditLogRepository.insert(
+        actingAdminId, "ADMIN", "USER_REINSTATED", "USER", id.toString(), null);
+    return userAdminApi.getUser(id);
+  }
+
+  /**
+   * TICKET-117 — the Disputes list view. {@code status} defaults to {@code DISPUTED} — see the
+   * ticket's own scope note.
+   */
+  @GetMapping("/api/v1/admin/fee-ledger")
+  @PreAuthorize("hasAnyRole('ADMIN','SUPPORT')")
+  public List<FeeLedgerSummaryView> listFeeLedger(
+      @RequestParam(defaultValue = "DISPUTED") String status,
+      @RequestParam(defaultValue = "0") int page,
+      @RequestParam(defaultValue = "25") int pageSize) {
+    return feeLedgerAdminApi.listByStatus(status, page, pageSize);
+  }
+
+  @GetMapping("/api/v1/admin/fee-ledger/{id}")
+  @PreAuthorize("hasAnyRole('ADMIN','SUPPORT')")
+  public FeeLedgerDetailResponse getFeeLedgerDetail(@PathVariable UUID id) {
+    FeeLedgerDetailView detail = feeLedgerAdminApi.getDetail(id);
+    List<UnderlyingTradeView> trades = feeLedgerAdminApi.listUnderlyingTrades(id);
+    return new FeeLedgerDetailResponse(detail, trades);
+  }
+
+  /**
+   * TICKET-117 — the only real way {@code performance_fee_ledger.status} can ever become {@code
+   * DISPUTED}. ADMIN+SUPPORT (view/assist is within SUPPORT's scope, same as impersonation above) —
+   * only {@link #resolveFeeLedgerDispute} is ADMIN-only.
+   */
+  @PostMapping("/api/v1/admin/fee-ledger/{id}/dispute")
+  @PreAuthorize("hasAnyRole('ADMIN','SUPPORT')")
+  public ResponseEntity<Void> raiseDispute(
+      @PathVariable UUID id,
+      @RequestBody DisputeRequest request,
+      @AuthenticationPrincipal Jwt jwt) {
+    UUID actingUserId = currentUserId(jwt);
+    feeLedgerAdminApi.dispute(id);
+    auditLogRepository.insert(
+        actingUserId,
+        "ADMIN",
+        "FEE_LEDGER_DISPUTED",
+        "FEE_LEDGER",
+        id.toString(),
+        objectMapper.writeValueAsString(Map.of("reason", request.reason())));
+    return ResponseEntity.status(HttpStatus.NO_CONTENT).build();
+  }
+
+  /**
+   * ADMIN-only — matches the ticket's own RBAC line (dispute resolution is a financial-ledger
+   * action, same "SUPPORT cannot adjust financial ledgers" distinction {@code /ledger-adjustments}
+   * demonstrates). See {@link FeeLedgerAdminApi#resolve}'s own Javadoc for the status-transition
+   * rules.
+   */
+  @PostMapping("/api/v1/admin/fee-ledger/{id}/resolve")
+  @PreAuthorize("hasRole('ADMIN')")
+  public ResponseEntity<Void> resolveFeeLedgerDispute(
+      @PathVariable UUID id,
+      @RequestBody ResolveRequest request,
+      @AuthenticationPrincipal Jwt jwt) {
+    UUID actingAdminId = currentUserId(jwt);
+    feeLedgerAdminApi.resolve(
+        id, request.resolution(), request.note(), request.adjustedAmount(), actingAdminId);
+    auditLogRepository.insert(
+        actingAdminId,
+        "ADMIN",
+        "FEE_LEDGER_RESOLVED",
+        "FEE_LEDGER",
+        id.toString(),
+        objectMapper.writeValueAsString(Map.of("resolution", request.resolution())));
+    return ResponseEntity.status(HttpStatus.NO_CONTENT).build();
+  }
+
+  /**
+   * TICKET-117 — System Health. Built from Postgres + a real Kafka consumer/AdminClient, not
+   * Prometheus queries — the {@code nectrix-dev} VM's own docker-compose.yml explicitly excludes
+   * the observability stack, so there's no Prometheus anywhere outside local dev/CI to query
+   * against the one persistent environment that exists (see this ticket's own plan Context). Every
+   * number here is real: a genuinely-empty table/topic reports a real zero, never a placeholder.
+   */
+  @GetMapping("/api/v1/admin/system-health")
+  @PreAuthorize("hasAnyRole('ADMIN','SUPPORT')")
+  public SystemHealthResponse getSystemHealth() {
+    Instant windowStart = Instant.now().minus(COPY_ENGINE_WINDOW);
+    List<BrokerConnectionCount> brokerConnections =
+        adminRepository.countBrokerConnectionsByTypeAndStatus();
+    long tradesInWindow = adminRepository.countCopiedTradesSince(windowStart);
+    long failedInWindow = adminRepository.countFailedCopiedTradesSince(windowStart);
+    long driftLastHour =
+        adminRepository.countReconciliationDriftSince(Instant.now().minus(Duration.ofHours(1)));
+    List<ConsumerGroupLag> consumerLag = kafkaConsumerLagService.currentLag();
+    CopyEngineHealth copyEngine =
+        new CopyEngineHealth((int) COPY_ENGINE_WINDOW.toMinutes(), tradesInWindow, failedInWindow);
+    return new SystemHealthResponse(brokerConnections, copyEngine, driftLastHour, consumerLag);
+  }
+
   private UUID currentUserId(Jwt jwt) {
     return UUID.fromString(jwt.getSubject());
   }
@@ -173,4 +345,21 @@ public class AdminController {
 
   public record AuditLogPageResponse(
       List<AuditLogRepository.AuditLogEntry> entries, long total, int page, int pageSize) {}
+
+  public record UserDetailResponse(UserView user, List<BrokerAccountView> brokerAccounts) {}
+
+  public record FeeLedgerDetailResponse(
+      FeeLedgerDetailView ledger, List<UnderlyingTradeView> trades) {}
+
+  public record DisputeRequest(String reason) {}
+
+  public record ResolveRequest(String resolution, String note, BigDecimal adjustedAmount) {}
+
+  public record CopyEngineHealth(int windowMinutes, long tradesInWindow, long failedInWindow) {}
+
+  public record SystemHealthResponse(
+      List<BrokerConnectionCount> brokerConnections,
+      CopyEngineHealth copyEngine,
+      long reconciliationDriftLastHour,
+      List<ConsumerGroupLag> kafkaConsumerLag) {}
 }

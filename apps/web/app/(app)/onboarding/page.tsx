@@ -32,7 +32,12 @@ interface Step {
  *   since that's the only real way to attach either a brand-new or an existing account in this
  *   system; the checkbox can't mark the step "done" on its own (no way to verify the attestation
  *   without a real account row), so it stays a second real entry point into the same real action
- *   rather than a fake local-only toggle.
+ *   rather than a fake local-only toggle. TICKET-117 bugfix — this step used to only surface once
+ *   `hasRelationship` was true, but step 1's own accept-invite gate has no real persisting endpoint
+ *   yet (TICKET-118), so `hasRelationship` can never actually become true through this page's own
+ *   UI — that made step 2 permanently unreachable for a real follower. Linking a broker account has
+ *   no actual dependency on invitation-acceptance state, so this step is now gated purely on
+ *   `hasBrokerAccount` instead.
  * - "Connect your MT5 login" is a DIFFERENT, stronger signal than step 2: MtLinkingService's own
  *   Javadoc is explicit that an MT4/MT5 account row starts `PENDING` and only flips to `CONNECTED`
  *   once a real EA session on the user's terminal actually presents its pairing token to
@@ -69,9 +74,9 @@ export default async function OnboardingPage() {
       n: "2",
       title: "Open a broker account",
       desc: "Use your master's IB link so trades can be copied and fees settled correctly — or check the box below if you already have a broker account.",
-      status: hasBrokerAccount ? "done" : hasRelationship ? "active" : "todo",
+      status: hasBrokerAccount ? "done" : "active",
       extra:
-        hasRelationship && !hasBrokerAccount ? (
+        !hasBrokerAccount ? (
           <div className="mt-3 flex flex-wrap items-center gap-3">
             <Link
               href="/broker-accounts/link"
