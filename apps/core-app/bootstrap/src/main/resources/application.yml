@@ -134,3 +134,8 @@ nectrix:
     ses:
       region: ${SES_REGION:}
       sender-email: ${SES_SENDER_EMAIL:}
+    # TICKET-118 — local/dev-only escape hatch (see SesEmailSender's own Javadoc): when set,
+    # bypasses real SES and POSTs to the webhook-catcher dev container's /email route instead.
+    # Empty in every real deployment (prod/CI never set LOCAL_EMAIL_CATCHER_URL).
+    local-email-catcher:
+      url: ${LOCAL_EMAIL_CATCHER_URL:}
