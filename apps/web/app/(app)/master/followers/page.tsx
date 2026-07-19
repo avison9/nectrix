@@ -38,9 +38,28 @@ function timeAgo(iso: string): string {
  * (PENDING/ACCEPTED/EXPIRED/REVOKED) rather than the mock's own 4-stage sent/opened/funded/copying
  * — this app has no cheap way to distinguish "opened"/"funded"/"copying" without a new backend
  * query, so it shows the real, honest status instead of fabricating that granularity.
+ *
+ * <p>Master-only (Sidebar only ever links here for a MASTER session) — the actual enforcement is
+ * server-side (`InvitationController`'s own `@PreAuthorize("hasRole('MASTER')")`), this page's own
+ * role check is just the UX-level redirect-to-explanation, same pattern `analytics/page.tsx`
+ * already established, rather than letting a stale tab/bookmark surface a raw 403 after a browser's
+ * session cookie has since moved to a different (non-Master) account — e.g. right after using
+ * `/accept-invite` in the same browser, which replaces the session cookie with the new Follower's.
  */
 export default async function MasterFollowersPage() {
-  const { accessToken } = await requireSession();
+  const { session, accessToken } = await requireSession();
+
+  if (!session.roles.includes("MASTER")) {
+    return (
+      <div className="mx-auto max-w-[480px] py-16 text-center">
+        <h1 className="text-[20px] font-semibold text-[var(--text)]">Invite followers</h1>
+        <p className="mt-2 text-[13.5px] text-[var(--text-2)]">
+          This page is only available to Master accounts.
+        </p>
+      </div>
+    );
+  }
+
   const invitations = await listMyInvitations(coreAppBaseUrl(), accessToken);
 
   const sent = invitations.length;
