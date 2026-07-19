@@ -86,7 +86,10 @@ public class InvitationService {
     return repository.findByMasterProfileId(masterProfileId, status);
   }
 
-  /** No-ops safely if the invitation is already non-{@code PENDING} — repeat revokes aren't an error. */
+  /**
+   * No-ops safely if the invitation is already non-{@code PENDING} — repeat revokes aren't an
+   * error.
+   */
   public void revoke(UUID callerUserId, UUID invitationId) {
     UUID masterProfileId = requireMasterProfileId(callerUserId);
     Invitation invitation =

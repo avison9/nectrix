@@ -77,7 +77,8 @@ public class InvitationCopySetupService {
       return Optional.empty(); // already actioned
     }
     InvitationView invitation = lookupInvitation(invitationId.get());
-    MasterProfileSummaryView master = masterProfileLookupApi.getMasterProfile(invitation.masterProfileId());
+    MasterProfileSummaryView master =
+        masterProfileLookupApi.getMasterProfile(invitation.masterProfileId());
     return Optional.of(
         new PendingInvitation(
             invitation.id(),
@@ -107,7 +108,8 @@ public class InvitationCopySetupService {
       throw new InvitationAlreadyUsedException();
     }
     BrokerAccountView followerAccount = lookupOwned(callerUserId, followerBrokerAccountId);
-    MasterProfileSummaryView master = masterProfileLookupApi.getMasterProfile(invitation.masterProfileId());
+    MasterProfileSummaryView master =
+        masterProfileLookupApi.getMasterProfile(invitation.masterProfileId());
 
     UUID moneyManagementProfileId =
         insertMoneyManagementProfile(
@@ -125,7 +127,9 @@ public class InvitationCopySetupService {
             maxSlippagePips);
 
     String status =
-        "BROKER_PARTNERSHIP".equals(master.feeCollectionMethod()) ? "PENDING_AGREEMENT" : "PENDING_RISK_ACK";
+        "BROKER_PARTNERSHIP".equals(master.feeCollectionMethod())
+            ? "PENDING_AGREEMENT"
+            : "PENDING_RISK_ACK";
     UUID copyRelationshipId =
         copyRelationshipRepository.insertFromInvitation(
             master.id(),
@@ -143,7 +147,11 @@ public class InvitationCopySetupService {
         .orElseThrow(CopyRelationshipNotFoundException::new);
   }
 
-  /** Always inserts a fresh row (never reuses an existing profile id) — see this class's Javadoc. */
+  /**
+   * Always inserts a fresh row (never reuses an existing profile id) — see this class's Javadoc.
+   * {@code suggestedId} is null for an invitation with no suggested profile, in which case every
+   * field falls through to a plain hardcoded default.
+   */
   private UUID insertMoneyManagementProfile(
       UUID suggestedId,
       String method,
@@ -152,14 +160,22 @@ public class InvitationCopySetupService {
       BigDecimal riskPercent,
       String roundingMode) {
     MoneyManagementProfile suggested =
-        suggestedId != null ? moneyManagementProfileRepository.findById(suggestedId).orElse(null) : null;
+        suggestedId == null
+            ? null
+            : moneyManagementProfileRepository.findById(suggestedId).orElse(null);
+    String sMethod = suggested == null ? null : suggested.method();
+    BigDecimal sFixedLotSize = suggested == null ? null : suggested.fixedLotSize();
+    BigDecimal sMultiplier = suggested == null ? null : suggested.multiplier();
+    BigDecimal sRiskPercent = suggested == null ? null : suggested.riskPercent();
+    String sRoundingMode = suggested == null ? null : suggested.roundingMode();
+    String sCustomFormulaExpr = suggested == null ? null : suggested.customFormulaExpr();
     return moneyManagementProfileRepository.insert(
-        method != null ? method : (suggested != null ? suggested.method() : "MULTIPLIER"),
-        fixedLotSize != null ? fixedLotSize : (suggested != null ? suggested.fixedLotSize() : null),
-        multiplier != null ? multiplier : (suggested != null ? suggested.multiplier() : BigDecimal.ONE),
-        riskPercent != null ? riskPercent : (suggested != null ? suggested.riskPercent() : null),
-        suggested != null ? suggested.customFormulaExpr() : null,
-        roundingMode != null ? roundingMode : (suggested != null ? suggested.roundingMode() : null));
+        method != null ? method : (sMethod != null ? sMethod : "MULTIPLIER"),
+        fixedLotSize != null ? fixedLotSize : sFixedLotSize,
+        multiplier != null ? multiplier : (sMultiplier != null ? sMultiplier : BigDecimal.ONE),
+        riskPercent != null ? riskPercent : sRiskPercent,
+        sCustomFormulaExpr,
+        roundingMode != null ? roundingMode : sRoundingMode);
   }
 
   private UUID insertRiskProfile(
@@ -168,15 +184,19 @@ public class InvitationCopySetupService {
       Integer maxOpenPositions,
       BigDecimal maxSlippagePips) {
     RiskProfile suggested =
-        suggestedId != null ? riskProfileRepository.findById(suggestedId).orElse(null) : null;
+        suggestedId == null ? null : riskProfileRepository.findById(suggestedId).orElse(null);
+    BigDecimal sMaxLotPerTrade = suggested == null ? null : suggested.maxLotPerTrade();
+    Integer sMaxOpenPositions = suggested == null ? null : suggested.maxOpenPositions();
+    BigDecimal sMaxExposurePerSymbolLots =
+        suggested == null ? null : suggested.maxExposurePerSymbolLots();
+    BigDecimal sMaxTotalExposureLots = suggested == null ? null : suggested.maxTotalExposureLots();
+    BigDecimal sMaxSlippagePips = suggested == null ? null : suggested.maxSlippagePips();
     return riskProfileRepository.insert(
-        maxLotPerTrade != null ? maxLotPerTrade : (suggested != null ? suggested.maxLotPerTrade() : null),
-        maxOpenPositions != null
-            ? maxOpenPositions
-            : (suggested != null ? suggested.maxOpenPositions() : null),
-        suggested != null ? suggested.maxExposurePerSymbolLots() : null,
-        suggested != null ? suggested.maxTotalExposureLots() : null,
-        maxSlippagePips != null ? maxSlippagePips : (suggested != null ? suggested.maxSlippagePips() : null));
+        maxLotPerTrade != null ? maxLotPerTrade : sMaxLotPerTrade,
+        maxOpenPositions != null ? maxOpenPositions : sMaxOpenPositions,
+        sMaxExposurePerSymbolLots,
+        sMaxTotalExposureLots,
+        maxSlippagePips != null ? maxSlippagePips : sMaxSlippagePips);
   }
 
   private InvitationView lookupInvitation(UUID invitationId) {
