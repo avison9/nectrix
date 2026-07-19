@@ -82,6 +82,55 @@ public class CopyRelationshipRepository {
         feeCollectionMethod);
   }
 
+  /**
+   * TICKET-118 — the second real INSERT into this table (alongside {@link #insert}'s
+   * Individual-mode-only path): a Follower's invitation-acceptance flow, {@code
+   * originating_invitation_id} set instead of {@code originating_individual_setup}, satisfying the
+   * same {@code chk_exactly_one_origin} CHECK.
+   */
+  public UUID insertFromInvitation(
+      UUID masterProfileId,
+      UUID masterBrokerAccountId,
+      UUID followerUserId,
+      UUID followerBrokerAccountId,
+      UUID moneyManagementProfileId,
+      UUID riskProfileId,
+      BigDecimal performanceFeePercent,
+      String feeCollectionMethod,
+      String status,
+      UUID originatingInvitationId) {
+    return jdbcTemplate.queryForObject(
+        """
+        INSERT INTO copy_relationships
+          (master_profile_id, master_broker_account_id, follower_user_id, follower_broker_account_id,
+           money_management_profile_id, risk_profile_id, performance_fee_percent,
+           fee_collection_method, status, originating_invitation_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        RETURNING id
+        """,
+        UUID.class,
+        masterProfileId,
+        masterBrokerAccountId,
+        followerUserId,
+        followerBrokerAccountId,
+        moneyManagementProfileId,
+        riskProfileId,
+        performanceFeePercent,
+        feeCollectionMethod,
+        status,
+        originatingInvitationId);
+  }
+
+  /** {@code GET /users/me/pending-invitation}'s own "has this already been actioned?" check. */
+  public boolean existsByOriginatingInvitationId(UUID invitationId) {
+    Integer count =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM copy_relationships WHERE originating_invitation_id = ?",
+            Integer.class,
+            invitationId);
+    return count != null && count > 0;
+  }
+
   public Optional<CopyRelationship> findById(UUID id) {
     return jdbcTemplate
         .query("SELECT * FROM copy_relationships WHERE id = ?", ROW_MAPPER, id)

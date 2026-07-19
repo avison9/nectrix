@@ -29,6 +29,16 @@ dependencyManagement {
 dependencies {
     // TICKET-114 — CapabilityLimitsApi, for master/follower-slot enforcement at link time.
     implementation(project(":modules:billing"))
+    // TICKET-118 — UserProvisioningApi/AuthSessionApi, for AcceptInviteController (creates the
+    // User if none exists, then issues a real session — see those interfaces' own Javadoc). This
+    // is a safe one-way edge: auth has zero dependencies of its own on any bounded-context module
+    // (by design, per auth/build.gradle.kts's own comment), so invitations -> auth can never cycle
+    // back. Same precedent modules:admin already established for depending on auth.api.
+    implementation(project(":modules:auth"))
+    // TICKET-118 — EmailApi, for InvitationService to send the invite email to an address with no
+    // userId yet. notifications also has zero dependencies of its own on any bounded-context
+    // module, so this is equally safe.
+    implementation(project(":modules:notifications"))
     // TICKET-101 — EnvelopeEncryptionService, for BrokerLinkingService.
     implementation(project(":modules:crypto"))
     // Nectrix-hosted MT5/MT4 terminal-provisioning — AuditLogRepository, for

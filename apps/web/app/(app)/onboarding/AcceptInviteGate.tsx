@@ -72,22 +72,25 @@ function TermsBox({
 
 /**
  * Mirrors Nectrix.dc.html's onboarding accept-gate (`showAcceptGate`, `:1473-1512` in the live
- * design) — the checkbox UI is real and interactive (both boxes must be checked to enable the
- * button), and so is the button itself once enabled: clicking it flips local `accepted` state and
- * shows a confirmation, the same "real interaction, no backend persistence yet" pattern the
- * checkboxes already use — there's no real invitation-acceptance endpoint yet (TICKET-118 hasn't
- * shipped), so nothing round-trips to the server, but the UI itself isn't a dead end. Nectrix
- * platform terms are the real, static platform terms; the master's terms are generic sample clauses
- * (see this file's own comment) since no relationship exists yet to pull real per-master clauses
- * from.
+ * design). TICKET-118 — the checkbox UI is unchanged, but the button now marks a real, meaningful
+ * milestone: on `/accept-invite` (before a session exists), checking both boxes and clicking
+ * through is the actual gate in front of submitting the real `POST /auth/accept-invite` call (via
+ * `onAccepted`, see AcceptInviteForm) — the checkboxes' state isn't itself persisted anywhere
+ * (there's no `accepted_terms` column), but the account creation this gates now is real. When
+ * rendered inside `/onboarding` (no `onAccepted` passed) it keeps its original, purely-local
+ * behavior for a Follower who somehow reaches onboarding without evidence of already having
+ * accepted (organic/individual-mode paths never had an invitation to accept in the first place).
+ * Nectrix platform terms are the real, static platform terms; the master's terms are generic sample
+ * clauses since a real per-relationship clause set doesn't exist until step 4's copy-relationship
+ * creation.
  */
-export function AcceptInviteGate() {
+export function AcceptInviteGate({ onAccepted }: { onAccepted?: () => void }) {
   const [acceptedNectrix, setAcceptedNectrix] = useState(false);
   const [acceptedMaster, setAcceptedMaster] = useState(false);
   const [accepted, setAccepted] = useState(false);
   const bothAccepted = acceptedNectrix && acceptedMaster;
 
-  if (accepted) {
+  if (accepted && !onAccepted) {
     return (
       <div className="mt-3.5 flex items-center gap-2.5 rounded-[10px] bg-[var(--pos)]/10 px-4 py-3 text-[13px] font-medium text-[var(--pos)]">
         <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
@@ -96,6 +99,10 @@ export function AcceptInviteGate() {
         Accepted — this applies once your account is matched with a master.
       </div>
     );
+  }
+
+  if (accepted) {
+    return null;
   }
 
   return (
@@ -117,7 +124,10 @@ export function AcceptInviteGate() {
       <button
         type="button"
         disabled={!bothAccepted}
-        onClick={() => setAccepted(true)}
+        onClick={() => {
+          setAccepted(true);
+          onAccepted?.();
+        }}
         className={`inline-flex h-10 w-fit items-center gap-2 rounded-[10px] px-5 text-[13px] font-semibold transition-opacity ${
           bothAccepted
             ? "bg-[var(--accent)] text-white hover:opacity-90"

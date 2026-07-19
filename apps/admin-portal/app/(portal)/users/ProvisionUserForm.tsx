@@ -11,7 +11,7 @@ export function ProvisionUserForm() {
   return (
     <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-5">
       <div className="mb-4 text-[14px] font-semibold text-[var(--text)]">
-        Provision a new Admin or Support account
+        Provision a new account
       </div>
       <form action={formAction} className="flex flex-wrap items-end gap-3">
         <label className="flex min-w-[200px] flex-1 flex-col gap-1.5">
@@ -51,6 +51,8 @@ export function ProvisionUserForm() {
           >
             <option value="SUPPORT">Support</option>
             <option value="ADMIN">Admin</option>
+            <option value="MASTER">Master</option>
+            <option value="FOLLOWER">Follower</option>
           </select>
         </label>
         <button

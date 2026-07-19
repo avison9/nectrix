@@ -161,6 +161,18 @@ public class AuthService {
   }
 
   /**
+   * TICKET-118 — {@code accept-invite}'s own "log the user in" step (a brand-new or a
+   * pre-existing user, either way accept-invite issues a real session exactly like {@link #login}
+   * does, just without a password check — the token itself is the credential). Public wrapper
+   * around {@link #issueNewSession} so {@code AuthSessionApiImpl} can call it without duplicating
+   * the suspended-account guard/refresh-token/JWT-issuance logic.
+   */
+  public TokenPair issueSessionForExistingUser(UUID userId, String deviceInfoJson, String ipAddress) {
+    User user = userRepository.findById(userId).orElseThrow(NoSuchElementException::new);
+    return issueNewSession(user, deviceInfoJson, ipAddress);
+  }
+
+  /**
    * TICKET-117 — the single choke point {@link #login} and {@link #refresh} both funnel through, so
    * a suspended/deleted account is blocked from both paths in one place rather than duplicating the
    * check. Checked before any session/refresh-token row is written, not after — a rejected caller

@@ -58,6 +58,12 @@ public class FeeLedgerAdminApiImpl implements FeeLedgerAdminApi {
     ledgerRepository.updateStatus(ledgerId, "DISPUTED");
   }
 
+  /**
+   * Requires the row to currently be DISPUTED — resolving an already-resolved row would insert a
+   * second, spurious compensating record and silently re-flip the status. The frontend also guards
+   * this (the resolve form disappears once a row's status leaves DISPUTED), but this is the real
+   * enforcement, not just a UI nicety.
+   */
   @Override
   public void resolve(
       UUID ledgerId,
@@ -65,6 +71,14 @@ public class FeeLedgerAdminApiImpl implements FeeLedgerAdminApi {
       String note,
       BigDecimal adjustedAmount,
       UUID resolvedByUserId) {
+    PerformanceFeeLedgerRepository.LedgerRow row =
+        ledgerRepository
+            .findById(ledgerId)
+            .orElseThrow(() -> new NoSuchElementException("No such fee ledger row: " + ledgerId));
+    if (!"DISPUTED".equals(row.status())) {
+      throw new IllegalStateException(
+          "Fee ledger row " + ledgerId + " is not DISPUTED (status=" + row.status() + ")");
+    }
     resolutionRepository.insert(ledgerId, resolution, note, adjustedAmount, resolvedByUserId);
     String newStatus = "VOID".equals(resolution) ? "VOID" : "INVOICED";
     ledgerRepository.updateStatus(ledgerId, newStatus);

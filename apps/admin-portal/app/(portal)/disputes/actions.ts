@@ -50,9 +50,17 @@ export async function raiseDisputeAction(
 
 export interface ResolveDisputeState {
   error?: string;
+  resolved?: boolean;
 }
 
-/** ADMIN-only server-side — matches the ticket's own RBAC line (financial-ledger action). */
+/**
+ * ADMIN-only server-side — matches the ticket's own RBAC line (financial-ledger action).
+ * TICKET-117 bugfix — {@code resolved: true} on success lets the form show real confirmation and
+ * disable itself instead of silently doing nothing from the caller's perspective (the prior
+ * version returned {} either way, indistinguishable from "did this even run?" — see
+ * FeeLedgerAdminApi#resolve's own 409 guard for the matching backend-side fix, since a caller
+ * double-clicking before that confirmation lands used to insert a second, spurious resolution row).
+ */
 export async function resolveDisputeAction(
   ledgerId: string,
   input: { resolution: FeeLedgerResolution; note: string; adjustedAmount?: number },
@@ -69,10 +77,13 @@ export async function resolveDisputeAction(
     if (error instanceof ApiError && error.status === 403) {
       return { error: "You don't have permission to resolve disputes." };
     }
+    if (error instanceof ApiError && error.status === 409) {
+      return { error: "This dispute was already resolved (in another tab, perhaps)." };
+    }
     return { error: "Failed to resolve this dispute — please try again." };
   }
 
   revalidatePath("/disputes");
   revalidatePath(`/disputes/${ledgerId}`);
-  return {};
+  return { resolved: true };
 }

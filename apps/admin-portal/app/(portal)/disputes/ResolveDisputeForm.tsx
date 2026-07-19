@@ -12,6 +12,7 @@ export function ResolveDisputeForm({ ledgerId }: { ledgerId: string }) {
   const [note, setNote] = useState("");
   const [adjustedAmount, setAdjustedAmount] = useState("");
   const [error, setError] = useState<string | undefined>();
+  const [resolved, setResolved] = useState(false);
   const [pending, startTransition] = useTransition();
 
   function submit(event: React.FormEvent<HTMLFormElement>) {
@@ -28,8 +29,21 @@ export function ResolveDisputeForm({ ledgerId }: { ledgerId: string }) {
         setError(result.error);
         return;
       }
+      // TICKET-117 bugfix — real, immediate confirmation before the parent Server Component's
+      // own router.refresh()-triggered re-render lands (which is what actually removes this form
+      // once ledger.status is no longer DISPUTED) — the prior version gave zero feedback here,
+      // which is why repeated clicks used to insert multiple resolution rows for one dispute.
+      setResolved(true);
       router.refresh();
     });
+  }
+
+  if (resolved) {
+    return (
+      <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-5 text-[13.5px] text-[var(--pos)]">
+        Resolution submitted ({resolution.toLowerCase()}).
+      </div>
+    );
   }
 
   return (

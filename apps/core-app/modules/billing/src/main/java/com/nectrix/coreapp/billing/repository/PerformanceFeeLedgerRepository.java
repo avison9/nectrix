@@ -229,6 +229,70 @@ public class PerformanceFeeLedgerRepository {
       Instant openedAt,
       Instant closedAt) {}
 
+  /**
+   * TICKET-117 follow-up — self-service settlement history for a Master or Follower, "either party"
+   * (the same query serves both roles without needing a role param: a caller sees rows where
+   * they're the follower directly, or the master via {@code master_profiles} ownership — same join
+   * shape {@code CopyRelationshipRepository#findAllForUser} already establishes for {@code
+   * copy_relationships} itself).
+   */
+  public List<LedgerSummary> findAllForUser(UUID userId, int page, int pageSize) {
+    return jdbcTemplate.query(
+        """
+        SELECT pfl.id, pfl.copy_relationship_id, pfl.period_start, pfl.period_end,
+               pfl.master_fee_amount, pfl.platform_take_amount, pfl.net_to_master_amount, pfl.status
+        FROM performance_fee_ledger pfl
+        JOIN copy_relationships cr ON cr.id = pfl.copy_relationship_id
+        JOIN master_profiles mp ON mp.id = cr.master_profile_id
+        WHERE cr.follower_user_id = ? OR mp.user_id = ?
+        ORDER BY pfl.period_end DESC
+        LIMIT ? OFFSET ?
+        """,
+        LEDGER_SUMMARY_MAPPER,
+        userId,
+        userId,
+        pageSize,
+        page * pageSize);
+  }
+
+  /**
+   * Same ownership shape as {@link #findAllForUser} — empty if the row exists but isn't the
+   * caller's.
+   */
+  public Optional<LedgerDetail> findDetailForUser(UUID ledgerId, UUID userId) {
+    return jdbcTemplate
+        .query(
+            """
+            SELECT pfl.id, pfl.copy_relationship_id, pfl.period_start, pfl.period_end,
+                   pfl.starting_hwm, pfl.ending_equity, pfl.new_profit_above_hwm,
+                   pfl.master_fee_amount, pfl.platform_take_amount, pfl.net_to_master_amount,
+                   pfl.computation_detail::text AS computation_detail, pfl.status
+            FROM performance_fee_ledger pfl
+            JOIN copy_relationships cr ON cr.id = pfl.copy_relationship_id
+            JOIN master_profiles mp ON mp.id = cr.master_profile_id
+            WHERE pfl.id = ? AND (cr.follower_user_id = ? OR mp.user_id = ?)
+            """,
+            (rs, rowNum) ->
+                new LedgerDetail(
+                    UUID.fromString(rs.getString("id")),
+                    UUID.fromString(rs.getString("copy_relationship_id")),
+                    rs.getTimestamp("period_start").toInstant(),
+                    rs.getTimestamp("period_end").toInstant(),
+                    rs.getBigDecimal("starting_hwm"),
+                    rs.getBigDecimal("ending_equity"),
+                    rs.getBigDecimal("new_profit_above_hwm"),
+                    rs.getBigDecimal("master_fee_amount"),
+                    rs.getBigDecimal("platform_take_amount"),
+                    rs.getBigDecimal("net_to_master_amount"),
+                    rs.getString("computation_detail"),
+                    rs.getString("status")),
+            ledgerId,
+            userId,
+            userId)
+        .stream()
+        .findFirst();
+  }
+
   public List<UnderlyingTrade> findUnderlyingTrades(
       UUID copyRelationshipId, Instant periodStart, Instant periodEnd) {
     return jdbcTemplate.query(

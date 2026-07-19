@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState, useTransition } from "react";
 import type { UserSummary } from "@nectrix/api-client";
 import { searchUsersAction } from "./actions";
-import { SuspendReinstateButton } from "./SuspendReinstateButton";
+import { UserActions } from "./UserActions";
 
 const DEBOUNCE_MS = 300;
 
@@ -71,7 +71,9 @@ export function UserSearch({ isAdmin }: { isAdmin: boolean }) {
                     className={`rounded-full px-2.5 py-1 text-[12px] font-semibold ${
                       user.status === "ACTIVE"
                         ? "bg-[var(--pos)]/15 text-[var(--pos)]"
-                        : "bg-[var(--neg)]/15 text-[var(--neg)]"
+                        : user.status === "DELETED"
+                          ? "bg-[var(--surface-2)] text-[var(--text-3)]"
+                          : "bg-[var(--neg)]/15 text-[var(--neg)]"
                     }`}
                   >
                     {user.status}
@@ -81,7 +83,14 @@ export function UserSearch({ isAdmin }: { isAdmin: boolean }) {
                   {user.twoFactorEnabled ? "Enabled" : "—"}
                 </td>
                 <td className="px-5 py-2.5 text-right">
-                  {isAdmin && <SuspendReinstateButton userId={user.id} status={user.status} />}
+                  {isAdmin && (
+                    <UserActions
+                      user={user}
+                      onUpdated={(updated) =>
+                        setResults((prev) => prev.map((r) => (r.id === updated.id ? updated : r)))
+                      }
+                    />
+                  )}
                 </td>
               </tr>
             ))}

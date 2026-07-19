@@ -1,7 +1,9 @@
 package com.nectrix.coreapp.auth.api;
 
+import com.nectrix.coreapp.auth.domain.User;
 import com.nectrix.coreapp.auth.repository.UserRepository;
 import com.nectrix.coreapp.auth.service.PasswordService;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 
@@ -39,5 +41,10 @@ public class UserProvisioningApiImpl implements UserProvisioningApi {
   @Override
   public void grantRole(UUID userId, String roleName) {
     userRepository.insertUserRole(userId, roleName);
+  }
+
+  @Override
+  public Optional<UUID> findUserIdByEmail(String email) {
+    return userRepository.findByEmail(email).map(User::id);
   }
 }

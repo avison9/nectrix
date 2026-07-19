@@ -160,9 +160,32 @@ class AdminPortalIntegrationTest {
     assertThat(auditLog.status()).isEqualTo(200);
   }
 
+  /**
+   * TICKET-117 follow-up — {@code PROVISIONABLE_ROLES} was widened to {@code ADMIN, SUPPORT,
+   * MASTER, FOLLOWER} (AdminController's own Javadoc explains why: self-service {@code
+   * master_profiles} creation via TICKET-111 already covers the profile itself, this endpoint only
+   * ever grants the role). {@code SUPER_ADMIN} stays deliberately excluded per an explicit user
+   * security decision; {@code PARTNER} has no provisioning ticket of its own yet.
+   */
   @Test
-  void adminUser_provisioningRejectsAnyRoleOutsideAdminOrSupport() {
+  void adminUser_provisioningRejectsSuperAdminButAllowsMasterAndFollower() {
     String adminToken = adminToken();
+
+    HttpResult superAdminAttempt =
+        request(
+            "POST",
+            "/api/v1/admin/users",
+            Map.of(
+                "email",
+                "super-admin-" + UUID.randomUUID() + "@example.com",
+                "password",
+                "correct horse battery staple",
+                "display_name",
+                "Should Be Rejected",
+                "role",
+                "SUPER_ADMIN"),
+            adminToken);
+    assertThat(superAdminAttempt.status()).isEqualTo(400);
 
     HttpResult masterAttempt =
         request(
@@ -174,11 +197,27 @@ class AdminPortalIntegrationTest {
                 "password",
                 "correct horse battery staple",
                 "display_name",
-                "Should Be Rejected",
+                "Should Be Allowed",
                 "role",
                 "MASTER"),
             adminToken);
-    assertThat(masterAttempt.status()).isEqualTo(400);
+    assertThat(masterAttempt.status()).isEqualTo(201);
+
+    HttpResult followerAttempt =
+        request(
+            "POST",
+            "/api/v1/admin/users",
+            Map.of(
+                "email",
+                "follower-" + UUID.randomUUID() + "@example.com",
+                "password",
+                "correct horse battery staple",
+                "display_name",
+                "Should Be Allowed",
+                "role",
+                "FOLLOWER"),
+            adminToken);
+    assertThat(followerAttempt.status()).isEqualTo(201);
   }
 
   @Test

@@ -28,6 +28,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -51,11 +52,23 @@ import tools.jackson.databind.ObjectMapper;
 public class AdminController {
 
   /**
-   * TICKET-012 — the only roles {@code POST /api/v1/admin/users} may grant. MASTER is deliberately
-   * excluded: {@code POST /api/v1/admin/masters} (which also creates a {@code master_profiles} row)
-   * is a separate, deferred Phase 1 endpoint — see the ticket's own scope note.
+   * TICKET-012 — the only roles {@code POST /api/v1/admin/users} may grant. TICKET-012's own text
+   * originally deferred MASTER to a separate {@code POST /api/v1/admin/masters} endpoint (since
+   * {@code master_profiles} didn't exist yet, and creating one requires a {@code
+   * primary_broker_account_id} — a real, encrypted-credential-backed row an admin can't fabricate
+   * on a user's behalf). Now that TICKET-111 has shipped a real self-service {@code
+   * MasterProfileController} (`hasRole('MASTER')`, the caller creates their own profile against
+   * their own already-linked broker account), that gap is closed differently than originally
+   * planned: provisioning here only ever grants the bare role, exactly like ADMIN/SUPPORT — the
+   * newly-Master/Follower user completes their own profile/onboarding afterward through the
+   * already-real self-service flows (master-profile creation, broker linking, accept-invite), same
+   * as any other account reaching that role. {@code SUPER_ADMIN} and {@code PARTNER} are
+   * deliberately still excluded — SUPER_ADMIN is bootstrap/migration-only (granting it through a
+   * self-service dropdown would let any ADMIN mint a peer/superior), and PARTNER has no
+   * provisioning ticket of its own yet.
    */
-  private static final Set<String> PROVISIONABLE_ROLES = Set.of("ADMIN", "SUPPORT");
+  private static final Set<String> PROVISIONABLE_ROLES =
+      Set.of("ADMIN", "SUPPORT", "MASTER", "FOLLOWER");
 
   private final ImpersonationApi impersonationApi;
   private final BrokerAccountLookupApi brokerAccountLookupApi;
@@ -236,6 +249,24 @@ public class AdminController {
     userAdminApi.updateStatus(id, "ACTIVE");
     auditLogRepository.insert(
         actingAdminId, "ADMIN", "USER_REINSTATED", "USER", id.toString(), null);
+    return userAdminApi.getUser(id);
+  }
+
+  /**
+   * TICKET-117 bugfix — a real delete, alongside suspend. Sets {@code users.status = 'DELETED'}
+   * (the third real value in the CHECK constraint, 002-identity-access.sql) via the same {@code
+   * updateStatus} path suspend/reinstate already use — blocked from login/refresh at {@code
+   * AuthService#issueNewSession} exactly like SUSPENDED is, no separate enforcement needed. Not a
+   * hard row delete: the account, its audit trail, and any FK-referencing rows (broker accounts,
+   * copy relationships, audit_log) all stay intact — "deleted" here means deactivated for real,
+   * matching how every other account-state transition in this codebase already works.
+   */
+  @DeleteMapping("/api/v1/admin/users/{id}")
+  @PreAuthorize("hasRole('ADMIN')")
+  public UserView deleteUser(@PathVariable UUID id, @AuthenticationPrincipal Jwt jwt) {
+    UUID actingAdminId = currentUserId(jwt);
+    userAdminApi.updateStatus(id, "DELETED");
+    auditLogRepository.insert(actingAdminId, "ADMIN", "USER_DELETED", "USER", id.toString(), null);
     return userAdminApi.getUser(id);
   }
 

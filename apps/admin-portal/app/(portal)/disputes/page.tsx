@@ -66,7 +66,7 @@ export default async function DisputesPage() {
                 <td className="px-5 py-2.5 text-right">
                   <Link
                     href={`/disputes/${entry.id}`}
-                    className="text-[12.5px] font-semibold text-[var(--accent)] hover:underline"
+                    className="inline-block rounded-full bg-[var(--surface-2)] px-2.5 py-1 text-[12px] font-semibold text-[var(--text-2)] transition-colors hover:bg-[var(--border)] hover:text-[var(--text)]"
                   >
                     Review
                   </Link>

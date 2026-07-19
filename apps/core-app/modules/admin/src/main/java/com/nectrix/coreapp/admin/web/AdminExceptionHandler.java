@@ -31,5 +31,16 @@ public class AdminExceptionHandler {
     return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(new ErrorBody("invalid_request"));
   }
 
+  /**
+   * TICKET-117 bugfix — thrown by {@code FeeLedgerAdminApi#resolve} when the target row isn't
+   * currently DISPUTED (e.g. a second resolve attempt on an already-resolved row, most often from a
+   * double-click/resubmit before the UI caught up) — a real 409, not a silent duplicate
+   * compensating record.
+   */
+  @ExceptionHandler(IllegalStateException.class)
+  public ResponseEntity<ErrorBody> handleInvalidState() {
+    return ResponseEntity.status(HttpStatus.CONFLICT).body(new ErrorBody("invalid_state"));
+  }
+
   public record ErrorBody(String error) {}
 }

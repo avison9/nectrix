@@ -3,7 +3,7 @@ import Link from "next/link";
 import { getUserDetail } from "@nectrix/api-client";
 import { coreAppBaseUrl } from "@/lib/core-app";
 import { verifyAccessToken } from "@/lib/session";
-import { SuspendReinstateButton } from "../SuspendReinstateButton";
+import { UserActions } from "../UserActions";
 
 /**
  * TICKET-117 — real user detail: profile + every linked broker account (via
@@ -36,7 +36,7 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
           </h1>
           <p className="mt-1 text-[14px] text-[var(--text-2)]">{user.email}</p>
         </div>
-        {isAdmin && <SuspendReinstateButton userId={user.id} status={user.status} />}
+        {isAdmin && <UserActions user={user} />}
       </div>
 
       <div className="mt-4 flex flex-wrap gap-2">
@@ -44,7 +44,9 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
           className={`rounded-full px-2.5 py-1 text-[12px] font-semibold ${
             user.status === "ACTIVE"
               ? "bg-[var(--pos)]/15 text-[var(--pos)]"
-              : "bg-[var(--neg)]/15 text-[var(--neg)]"
+              : user.status === "DELETED"
+                ? "bg-[var(--surface-2)] text-[var(--text-3)]"
+                : "bg-[var(--neg)]/15 text-[var(--neg)]"
           }`}
         >
           {user.status}

@@ -15,7 +15,8 @@ public record InvitationsProperties(
     CtraderOauth ctraderOauth,
     BrokerAdapters brokerAdapters,
     TokenRefresh tokenRefresh,
-    MtBridge mtBridge) {
+    MtBridge mtBridge,
+    String acceptUrlBase) {
 
   /**
    * clientId/clientSecret identify THIS platform's own registered cTrader Open API application

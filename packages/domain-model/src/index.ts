@@ -413,3 +413,43 @@ export interface SystemHealthSnapshot {
   reconciliationDriftLastHour: number;
   kafkaConsumerLag: ConsumerGroupLag[];
 }
+
+// TICKET-118 — Invitation System (Master invites a Follower). Mirrors
+// apps/core-app/modules/invitations's Invitation domain record / InvitationController /
+// PublicInvitationController, and modules/trading's InvitationCopySetupController.
+
+export type InvitationStatus = "PENDING" | "ACCEPTED" | "EXPIRED" | "REVOKED";
+
+// Mirrors invitations.domain.Invitation — never carries the raw token, only its hash (see that
+// record's own Javadoc for why).
+export interface Invitation {
+  id: string;
+  masterProfileId: string;
+  invitedEmail: string;
+  tokenHash: string;
+  status: InvitationStatus;
+  suggestedBrokerIbLinkId: string | null;
+  suggestedMoneyManagementProfileId: string | null;
+  suggestedRiskProfileId: string | null;
+  createdByUserId: string;
+  expiresAt: string;
+  acceptedAt: string | null;
+  acceptedByUserId: string | null;
+  createdAt: string;
+}
+
+// Mirrors PublicInvitationController.InvitationPreview — the public by-token accept-screen data.
+export interface InvitationPreview {
+  id: string;
+  invitedEmail: string;
+  masterDisplayName: string | null;
+  expiresAt: string;
+}
+
+// Mirrors InvitationCopySetupService.PendingInvitation.
+export interface PendingInvitation {
+  invitationId: string;
+  masterDisplayName: string;
+  suggestedMoneyManagementProfileId: string | null;
+  suggestedRiskProfileId: string | null;
+}

@@ -47,7 +47,15 @@ export default async function DisputeDetailPage({
         <h1 className="text-[23px] font-semibold tracking-tight text-[var(--text)]">
           Ledger {ledger.id}
         </h1>
-        <span className="rounded-full bg-[var(--neg)]/15 px-2.5 py-1 text-[12px] font-semibold text-[var(--neg)]">
+        <span
+          className={`rounded-full px-2.5 py-1 text-[12px] font-semibold ${
+            ledger.status === "DISPUTED"
+              ? "bg-[var(--neg)]/15 text-[var(--neg)]"
+              : ledger.status === "VOID"
+                ? "bg-[var(--surface-2)] text-[var(--text-3)]"
+                : "bg-[var(--pos)]/15 text-[var(--pos)]"
+          }`}
+        >
           {ledger.status}
         </span>
       </div>
@@ -166,9 +174,15 @@ export default async function DisputeDetailPage({
         </table>
       </div>
 
-      {isAdmin && (
+      {isAdmin && ledger.status === "DISPUTED" && (
         <div className="mt-6">
           <ResolveDisputeForm ledgerId={ledger.id} />
+        </div>
+      )}
+      {ledger.status !== "DISPUTED" && (
+        <div className="mt-6 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-5 text-[13.5px] text-[var(--text-2)]">
+          This dispute has been resolved — current status is{" "}
+          <span className="font-semibold text-[var(--text)]">{ledger.status}</span>.
         </div>
       )}
     </div>
