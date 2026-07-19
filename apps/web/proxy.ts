@@ -1,8 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { verifyAccessToken } from "@/lib/session";
 
-// TICKET-118 (invitation acceptance) isn't built yet — when it lands, its own
-// /invite/{token} route adds itself here; this ticket doesn't need to pre-guess its shape.
+// TICKET-118 — "/accept-invite" is the invitation-acceptance entry point: a Follower clicks the
+// emailed link before they have any session at all, so it must be public. It calls the real
+// public GET /invitations/by-token/{token} and POST /auth/accept-invite endpoints itself.
 // TICKET-112 — /masters (leaderboard) and /masters/{id} (public profile) are the platform's
 // public discovery/marketing surface (docs/10-portfolio-social-trading.md §10.2): reachable by
 // anyone, logged in or not.
@@ -15,7 +16,7 @@ import { verifyAccessToken } from "@/lib/session";
 // (discovery, real) and TICKET-118 (invitation acceptance, not built) — the form itself is
 // reachable by anyone, its submit action is inert until that ticket lands (see the page's own
 // Javadoc-equivalent comment).
-const PUBLIC_PATHS = ["/", "/login", "/masters", "/register", "/request-invite"];
+const PUBLIC_PATHS = ["/", "/login", "/masters", "/register", "/request-invite", "/accept-invite"];
 
 /**
  * TICKET-110 AC6 — this app's real gate: a missing/invalid/expired access_token

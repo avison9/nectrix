@@ -1,5 +1,6 @@
 package com.nectrix.coreapp.auth.web;
 
+import com.nectrix.coreapp.auth.service.AccountSuspendedException;
 import com.nectrix.coreapp.auth.service.EmailAlreadyRegisteredException;
 import com.nectrix.coreapp.auth.service.InvalidCredentialsException;
 import com.nectrix.coreapp.auth.service.InvalidRefreshTokenException;
@@ -60,6 +61,11 @@ public class AuthExceptionHandler {
   public ResponseEntity<ErrorBody> handleTwoFactorAlreadyEnabled() {
     return ResponseEntity.status(HttpStatus.CONFLICT)
         .body(new ErrorBody("two_factor_already_enabled"));
+  }
+
+  @ExceptionHandler(AccountSuspendedException.class)
+  public ResponseEntity<ErrorBody> handleAccountSuspended() {
+    return ResponseEntity.status(HttpStatus.FORBIDDEN).body(new ErrorBody("account_suspended"));
   }
 
   public record ErrorBody(String error) {}

@@ -11,8 +11,20 @@
 //
 // POST /alert    -- Alertmanager's webhook_configs target; records the raw
 //                   request body and logs it.
-// GET  /received -- returns every captured body so far, one JSON object per
-//                   line, for infra/observability/verify.sh to poll against.
+// GET  /received -- returns every captured alert body so far, one JSON
+//                   object per line, for infra/observability/verify.sh to
+//                   poll against.
+//
+// TICKET-118 — the same stand-in role for outbound email, since no real SES/
+// GCP-Mail credentials exist locally either (SesEmailSender is a documented
+// no-op when unconfigured). A dev-only EmailSender implementation POSTs here
+// instead of calling AWS SES, so an invitation email's real link is visible
+// locally without needing real cloud credentials.
+//
+// POST /email  -- the dev EmailSender's target; records the raw JSON body
+//                 ({"recipient_email":..., "subject":..., "body":...}).
+// GET  /emails -- returns every captured email body so far, one JSON object
+//                 per line, newest last (same shape as /received).
 package main
 
 import (
@@ -24,38 +36,55 @@ import (
 
 const addr = ":9099"
 
-var (
+type store struct {
 	mu       sync.Mutex
 	received [][]byte
-)
+}
 
-func main() {
-	mux := http.NewServeMux()
+func (s *store) add(body []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.received = append(s.received, body)
+}
 
-	mux.HandleFunc("POST /alert", func(w http.ResponseWriter, r *http.Request) {
+func (s *store) writeAll(w http.ResponseWriter) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	w.Header().Set("Content-Type", "text/plain")
+	for _, body := range s.received {
+		_, _ = w.Write(body)
+		_, _ = w.Write([]byte("\n"))
+	}
+}
+
+func captureHandler(s *store, label string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		defer func() { _ = r.Body.Close() }()
 		if err != nil {
 			http.Error(w, "reading body: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-
-		mu.Lock()
-		received = append(received, body)
-		mu.Unlock()
-
-		log.Printf("webhook-catcher: received alert POST (%d bytes)", len(body))
+		s.add(body)
+		log.Printf("webhook-catcher: received %s POST (%d bytes)", label, len(body))
 		w.WriteHeader(http.StatusOK)
+	}
+}
+
+func main() {
+	alerts := &store{}
+	emails := &store{}
+
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("POST /alert", captureHandler(alerts, "alert"))
+	mux.HandleFunc("GET /received", func(w http.ResponseWriter, r *http.Request) {
+		alerts.writeAll(w)
 	})
 
-	mux.HandleFunc("GET /received", func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		defer mu.Unlock()
-		w.Header().Set("Content-Type", "text/plain")
-		for _, body := range received {
-			_, _ = w.Write(body)
-			_, _ = w.Write([]byte("\n"))
-		}
+	mux.HandleFunc("POST /email", captureHandler(emails, "email"))
+	mux.HandleFunc("GET /emails", func(w http.ResponseWriter, r *http.Request) {
+		emails.writeAll(w)
 	})
 
 	log.Printf("webhook-catcher listening on %s", addr)

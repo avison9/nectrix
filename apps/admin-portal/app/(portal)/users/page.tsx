@@ -1,6 +1,16 @@
+import { cookies } from "next/headers";
+import { verifyAccessToken } from "@/lib/session";
 import { ProvisionUserForm } from "./ProvisionUserForm";
+import { UserSearch } from "./UserSearch";
 
-export default function UsersPage() {
+// TICKET-117 — extends TICKET-012's provisioning-only page with a real search + suspend/
+// reinstate directory (previously a "coming soon" placeholder).
+export default async function UsersPage() {
+  const jar = await cookies();
+  const token = jar.get("access_token")?.value;
+  const session = token ? await verifyAccessToken(token) : null;
+  const isAdmin = !!session?.roles.includes("ADMIN");
+
   return (
     <div className="max-w-3xl">
       <h1 className="text-[25px] font-semibold tracking-tight text-[var(--text)]">Users</h1>
@@ -13,13 +23,9 @@ export default function UsersPage() {
         <ProvisionUserForm />
       </div>
 
-      <div className="mt-6 rounded-2xl border border-dashed border-[var(--border)] bg-[var(--surface)] px-6 py-10 text-center">
-        <p className="text-[13.5px] font-medium text-[var(--text-2)]">
-          Search, view, and suspend/impersonate — coming soon
-        </p>
-        <p className="mt-1 text-[12.5px] text-[var(--text-3)]">
-          The full user directory and account actions are Phase 1 work.
-        </p>
+      <h2 className="mt-8 text-[16px] font-semibold text-[var(--text)]">All users</h2>
+      <div className="mt-3">
+        <UserSearch isAdmin={isAdmin} />
       </div>
     </div>
   );

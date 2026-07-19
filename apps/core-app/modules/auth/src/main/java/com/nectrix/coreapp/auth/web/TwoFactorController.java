@@ -55,6 +55,26 @@ public class TwoFactorController {
     return ResponseEntity.noContent().build();
   }
 
+  /**
+   * TICKET-117 bugfix — see {@link TwoFactorService#disable}'s Javadoc for why this requires a
+   * fresh TOTP code rather than a bare authenticated click. Rate-limited the same way {@code
+   * /2fa/verify} is (same brute-force concern against a real, currently-active secret).
+   */
+  @PostMapping("/api/v1/auth/2fa/disable")
+  public ResponseEntity<Void> disable(
+      @AuthenticationPrincipal Jwt jwt, @RequestBody VerifyRequest request) {
+    UUID userId = currentUserId(jwt);
+    if (!rateLimiterService.tryConsume("2fa-disable:" + userId)) {
+      throw new RateLimitExceededException();
+    }
+    boolean disabled = twoFactorService.disable(userId, request.totpCode());
+    if (!disabled) {
+      return ResponseEntity.status(org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY)
+          .build();
+    }
+    return ResponseEntity.noContent().build();
+  }
+
   private UUID currentUserId(Jwt jwt) {
     return UUID.fromString(jwt.getSubject());
   }

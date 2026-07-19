@@ -1,5 +1,6 @@
 package com.nectrix.coreapp.auth.api;
 
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -49,4 +50,12 @@ public interface UserProvisioningApi {
    *     silently a no-op here, not an error.
    */
   void grantRole(UUID userId, String roleName);
+
+  /**
+   * TICKET-118 — {@code accept-invite}'s own "does this email already have an account?" check (AC:
+   * accepting a second Master's invite for an already-registered email must not create a second
+   * {@code User} row). Deliberately exact-match only, unlike {@code UserAdminApi#search}'s
+   * substring/ILIKE behavior — this is an existence check, not a browse.
+   */
+  Optional<UUID> findUserIdByEmail(String email);
 }

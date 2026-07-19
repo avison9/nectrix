@@ -1,3 +1,6 @@
+import Link from "next/link";
+import { listMySettlements } from "@nectrix/api-client";
+import { coreAppBaseUrl } from "@/lib/core-app";
 import { requireSession } from "@/lib/auth";
 
 const SAMPLE_TIERS = [
@@ -8,13 +11,16 @@ const SAMPLE_TIERS = [
 
 /**
  * Mirrors Nectrix.dc.html's `MASTER · COMMISSION` (`vMasterCommission`, `:861-945`). TICKET-120
- * (broker fee reports/agreements) hasn't been built anywhere yet — this page mirrors the mock's own
- * static sample fee schedule; the actual fee engine (HWM, profit-only billing) is real and already
- * live server-side (TICKET-113), it's only this Master-facing *setup* UI that's missing. Same
- * "rendered but inert" precedent app/(app)/master/followers/[id]/page.tsx already established.
+ * (broker fee reports/agreements, the fee-rate *setup* form below) hasn't been built anywhere
+ * yet — that section mirrors the mock's own static sample fee schedule and stays inert. TICKET-117
+ * follow-up added the real "Settlement history" section beneath it: real
+ * performance_fee_ledger rows for this Master's own relationships, each linking to a detail page
+ * with a "Raise a dispute" action — the fee engine itself (HWM, profit-only billing) has been real
+ * and live server-side since TICKET-113.
  */
 export default async function MasterCommissionPage() {
-  await requireSession();
+  const { accessToken } = await requireSession();
+  const settlements = await listMySettlements(coreAppBaseUrl(), accessToken);
 
   return (
     <div className="mx-auto max-w-[1000px]">
@@ -108,6 +114,48 @@ export default async function MasterCommissionPage() {
             ))}
           </div>
         </div>
+      </div>
+
+      <h2 className="mt-8 text-[16px] font-semibold text-[var(--text)]">Settlement history</h2>
+      <div className="mt-3 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)]">
+        {settlements.length === 0 && (
+          <p className="px-5 py-6 text-[13px] text-[var(--text-3)]">
+            No settlements yet — this fills in once your first billing period closes.
+          </p>
+        )}
+        {settlements.map((r) => (
+          <Link
+            key={r.id}
+            href={`/commission/${r.id}`}
+            className="flex items-center gap-3.5 border-t border-[var(--border)] px-5 py-3.5 first:border-t-0 hover:bg-[var(--surface-2)]"
+          >
+            <div className="flex-1">
+              <div className="text-[13.5px] font-semibold text-[var(--text)]">
+                {new Date(r.periodStart).toLocaleDateString(undefined, {
+                  month: "short",
+                  year: "numeric",
+                })}
+              </div>
+              <span
+                className={`mt-0.5 inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                  r.status === "DISPUTED"
+                    ? "bg-[var(--neg)]/15 text-[var(--neg)]"
+                    : r.status === "VOID"
+                      ? "bg-[var(--surface-2)] text-[var(--text-3)]"
+                      : "bg-[var(--pos)]/15 text-[var(--pos)]"
+                }`}
+              >
+                {r.status}
+              </span>
+            </div>
+            <div className="w-24 text-right">
+              <div className="text-[11px] text-[var(--text-3)]">Net to master</div>
+              <div className="mt-0.5 font-mono text-[13.5px] font-semibold text-[var(--text)]">
+                ${r.netToMasterAmount.toFixed(2)}
+              </div>
+            </div>
+          </Link>
+        ))}
       </div>
     </div>
   );

@@ -19,6 +19,16 @@ dependencyManagement {
 
 dependencies {
     implementation("org.springframework.boot:spring-boot-starter-web") // @RestController
+    // TICKET-117 — AdminRepository's own real Postgres queries (broker connection
+    // counts, Copy Engine throughput/error-rate, reconciliation-drift rate) — this
+    // module's AdminRepository was a placeholder interface until now, never needed
+    // JdbcTemplate on its own classpath before.
+    implementation("org.springframework.boot:spring-boot-starter-jdbc")
+    // TICKET-117 — KafkaConsumerLagService's org.apache.kafka.clients.admin.AdminClient
+    // (System Health's Kafka-lag card). Pulls in the same vanilla kafka-clients:3.8.0
+    // this composite build already pins everywhere (see event-contracts/java's own
+    // build.gradle.kts comment) — not declared for its own event types.
+    implementation("com.nectrix:event-contracts")
     // Same Jackson-3-not-2 landmine as modules/auth — spring-boot-starter-web
     // pulls this in transitively but only onto the RUNTIME classpath unless
     // declared here too, and this module's own code (AdminController)
@@ -37,6 +47,8 @@ dependencies {
     // ImpersonationApi (auth) and BrokerAccountLookupApi (invitations).
     implementation(project(":modules:auth"))
     implementation(project(":modules:invitations"))
+    // TICKET-117 — FeeLedgerAdminApi (dispute raise/list/detail/resolve).
+    implementation(project(":modules:billing"))
     // AuditLogRepository — extracted into this shared-kernel module (same tier as
     // modules:crypto) once modules:invitations also needed to write audit_log
     // (the Nectrix-hosted MT5/MT4 terminal-provisioning work), exactly as that

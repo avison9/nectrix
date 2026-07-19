@@ -10,6 +10,7 @@ import type {
   AuditLogPage,
   BrokerAccountSnapshot,
   BrokerAccountSummary,
+  BrokerConnectionCount,
   BrokerIbLink,
   BrokerType,
   CopiedTrade,
@@ -17,18 +18,33 @@ import type {
   CopiedTradeStatus,
   ConnectionRole,
   ConnectionStatus,
+  ConsumerGroupLag,
+  CopyEngineHealth,
   CopyRelationship,
   CopyRelationshipStatus,
   CtraderAccountOption,
   FeeCollectionMethod,
+  FeeLedgerDetail,
+  FeeLedgerDetailPage,
+  FeeLedgerEntry,
+  FeeLedgerResolution,
+  FeeLedgerStatus,
+  FeeLedgerUnderlyingTrade,
+  Invitation,
+  InvitationPreview,
   LeaderboardEntry,
   LeaderboardPeriod,
   LeaderboardSort,
   MasterProfile,
   NormalizedPosition,
   NormalizedTradeEvent,
+  PendingInvitation,
   PublicMasterProfile,
   SymbolMappingEntry,
+  SystemHealthSnapshot,
+  UserDetail,
+  UserStatus,
+  UserSummary,
 } from "@nectrix/domain-model";
 
 export type {
@@ -38,6 +54,7 @@ export type {
   AuditLogPage,
   BrokerAccountSnapshot,
   BrokerAccountSummary,
+  BrokerConnectionCount,
   BrokerIbLink,
   BrokerType,
   CopiedTrade,
@@ -45,16 +62,31 @@ export type {
   CopiedTradeStatus,
   ConnectionRole,
   ConnectionStatus,
+  ConsumerGroupLag,
+  CopyEngineHealth,
   CopyRelationship,
   CopyRelationshipStatus,
   CtraderAccountOption,
   FeeCollectionMethod,
+  FeeLedgerDetail,
+  FeeLedgerDetailPage,
+  FeeLedgerEntry,
+  FeeLedgerResolution,
+  FeeLedgerStatus,
+  FeeLedgerUnderlyingTrade,
+  Invitation,
+  InvitationPreview,
   LeaderboardEntry,
   LeaderboardPeriod,
   LeaderboardSort,
   MasterProfile,
+  PendingInvitation,
   PublicMasterProfile,
   SymbolMappingEntry,
+  SystemHealthSnapshot,
+  UserDetail,
+  UserStatus,
+  UserSummary,
 };
 
 export const API_CLIENT_VERSION = "0.2.0";
@@ -175,15 +207,40 @@ export async function verifyTwoFactor(
   });
 }
 
+/**
+ * TICKET-117 bugfix — the real /2fa/disable endpoint (was permanently a dead button on the
+ * frontend). 204 on success; a rejected (wrong/expired) TOTP code throws ApiError with status 422,
+ * same shape as {@link verifyTwoFactor}.
+ */
+export async function disableTwoFactor(
+  baseUrl: string,
+  accessToken: string,
+  totpCode: string,
+): Promise<void> {
+  await coreAppFetch<null>(baseUrl, "/api/v1/auth/2fa/disable", {
+    method: "POST",
+    accessToken,
+    body: JSON.stringify({ totp_code: totpCode }),
+  });
+}
+
 export interface ProvisionedUser {
   id: string;
 }
 
-/** ADMIN-only server-side call (TICKET-012's account-provisioning form). */
+/**
+ * ADMIN-only server-side call (TICKET-012's account-provisioning form). SUPER_ADMIN/PARTNER are
+ * deliberately not provisionable this way — see AdminController#PROVISIONABLE_ROLES's own Javadoc.
+ */
 export async function createAdminUser(
   baseUrl: string,
   accessToken: string,
-  input: { email: string; password: string; displayName: string; role: "ADMIN" | "SUPPORT" },
+  input: {
+    email: string;
+    password: string;
+    displayName: string;
+    role: "ADMIN" | "SUPPORT" | "MASTER" | "FOLLOWER";
+  },
 ): Promise<ProvisionedUser> {
   return coreAppFetch<ProvisionedUser>(baseUrl, "/api/v1/admin/users", {
     method: "POST",
@@ -929,5 +986,317 @@ export async function startSubscriptionCheckout(
     method: "POST",
     accessToken,
     body: JSON.stringify({ plan_code: planCode }),
+  });
+}
+
+// TICKET-117 — Admin MVP (System Health + User Management + Disputes). ADMIN/SUPPORT
+// server-side calls, same convention every other admin-portal-facing function above uses.
+
+/** A blank/absent `search` returns every user (newest first) — see UserRepository#search's own Javadoc. */
+export async function searchUsers(
+  baseUrl: string,
+  accessToken: string,
+  search = "",
+  page = 0,
+  pageSize = 25,
+): Promise<UserSummary[]> {
+  const params = new URLSearchParams({ search, page: String(page), pageSize: String(pageSize) });
+  return coreAppFetch<UserSummary[]>(baseUrl, `/api/v1/admin/users?${params.toString()}`, {
+    method: "GET",
+    accessToken,
+  });
+}
+
+export async function getUserDetail(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<UserDetail> {
+  return coreAppFetch<UserDetail>(baseUrl, `/api/v1/admin/users/${id}`, {
+    method: "GET",
+    accessToken,
+  });
+}
+
+/** ADMIN-only server-side — SecurityConfig/AdminController both enforce this, not just the UI. */
+export async function suspendUser(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<UserSummary> {
+  return coreAppFetch<UserSummary>(baseUrl, `/api/v1/admin/users/${id}/suspend`, {
+    method: "PATCH",
+    accessToken,
+  });
+}
+
+export async function reinstateUser(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<UserSummary> {
+  return coreAppFetch<UserSummary>(baseUrl, `/api/v1/admin/users/${id}/reinstate`, {
+    method: "PATCH",
+    accessToken,
+  });
+}
+
+/** ADMIN-only server-side — sets users.status = 'DELETED', same enforcement path as suspend. */
+export async function deleteUser(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<UserSummary> {
+  return coreAppFetch<UserSummary>(baseUrl, `/api/v1/admin/users/${id}`, {
+    method: "DELETE",
+    accessToken,
+  });
+}
+
+/** `status` defaults to DISPUTED server-side — see the ticket's own scope note. */
+export async function listDisputedLedgerEntries(
+  baseUrl: string,
+  accessToken: string,
+  status: FeeLedgerStatus = "DISPUTED",
+  page = 0,
+  pageSize = 25,
+): Promise<FeeLedgerEntry[]> {
+  const params = new URLSearchParams({ status, page: String(page), pageSize: String(pageSize) });
+  return coreAppFetch<FeeLedgerEntry[]>(baseUrl, `/api/v1/admin/fee-ledger?${params.toString()}`, {
+    method: "GET",
+    accessToken,
+  });
+}
+
+export async function getFeeLedgerDetail(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<FeeLedgerDetailPage> {
+  return coreAppFetch<FeeLedgerDetailPage>(baseUrl, `/api/v1/admin/fee-ledger/${id}`, {
+    method: "GET",
+    accessToken,
+  });
+}
+
+/** ADMIN+SUPPORT — the only real way performance_fee_ledger.status can ever become DISPUTED. */
+export async function raiseDispute(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+  reason: string,
+): Promise<void> {
+  await coreAppFetch<null>(baseUrl, `/api/v1/admin/fee-ledger/${id}/dispute`, {
+    method: "POST",
+    accessToken,
+    body: JSON.stringify({ reason }),
+  });
+}
+
+/** ADMIN-only server-side — matches the ticket's own RBAC line (financial-ledger action). */
+export async function resolveDispute(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+  input: { resolution: FeeLedgerResolution; note: string; adjustedAmount?: number },
+): Promise<void> {
+  await coreAppFetch<null>(baseUrl, `/api/v1/admin/fee-ledger/${id}/resolve`, {
+    method: "POST",
+    accessToken,
+    body: JSON.stringify({
+      resolution: input.resolution,
+      note: input.note,
+      adjusted_amount: input.adjustedAmount ?? null,
+    }),
+  });
+}
+
+/**
+ * Built from Postgres + a real Kafka AdminClient, not Prometheus — see AdminController's own
+ * Javadoc for why (no Prometheus anywhere outside local dev/CI, including nectrix-dev).
+ */
+export async function getSystemHealth(
+  baseUrl: string,
+  accessToken: string,
+): Promise<SystemHealthSnapshot> {
+  return coreAppFetch<SystemHealthSnapshot>(baseUrl, "/api/v1/admin/system-health", {
+    method: "GET",
+    accessToken,
+  });
+}
+
+// TICKET-117 follow-up — a real Master or Follower's own settlement/invoice history + self-
+// service dispute-raising (apps/web). Ownership-scoped server-side (FeeLedgerService) — distinct
+// from the admin/staff-only functions above, which see every caller's rows.
+
+export async function listMySettlements(
+  baseUrl: string,
+  accessToken: string,
+  page = 0,
+  pageSize = 25,
+): Promise<FeeLedgerEntry[]> {
+  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+  return coreAppFetch<FeeLedgerEntry[]>(baseUrl, `/api/v1/fee-ledger?${params.toString()}`, {
+    method: "GET",
+    accessToken,
+  });
+}
+
+export async function getMySettlementDetail(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<FeeLedgerDetailPage> {
+  return coreAppFetch<FeeLedgerDetailPage>(baseUrl, `/api/v1/fee-ledger/${id}`, {
+    method: "GET",
+    accessToken,
+  });
+}
+
+/** Either party (Master or Follower) — 409s if the row is already DISPUTED or VOID. */
+export async function raiseMySettlementDispute(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<void> {
+  await coreAppFetch<null>(baseUrl, `/api/v1/fee-ledger/${id}/dispute`, {
+    method: "POST",
+    accessToken,
+  });
+}
+
+// ==================== TICKET-118 — Invitation System (Master invites a Follower) ====================
+
+/** MASTER-only server-side call — scoped to the caller's own master_profile_id (InvitationController). */
+export async function createInvitation(
+  baseUrl: string,
+  accessToken: string,
+  input: {
+    invitedEmail: string;
+    suggestedBrokerIbLinkId?: string;
+    suggestedMoneyManagementProfileId?: string;
+    suggestedRiskProfileId?: string;
+  },
+): Promise<Invitation> {
+  return coreAppFetch<Invitation>(baseUrl, "/api/v1/master/invitations", {
+    method: "POST",
+    accessToken,
+    body: JSON.stringify({
+      invited_email: input.invitedEmail,
+      suggested_broker_ib_link_id: input.suggestedBrokerIbLinkId ?? null,
+      suggested_money_management_profile_id: input.suggestedMoneyManagementProfileId ?? null,
+      suggested_risk_profile_id: input.suggestedRiskProfileId ?? null,
+    }),
+  });
+}
+
+export async function listMyInvitations(
+  baseUrl: string,
+  accessToken: string,
+  status?: string,
+): Promise<Invitation[]> {
+  const query = status ? `?status=${status}` : "";
+  return coreAppFetch<Invitation[]>(baseUrl, `/api/v1/master/invitations${query}`, {
+    method: "GET",
+    accessToken,
+  });
+}
+
+/** No-ops safely (204) if the invitation is already non-PENDING — see InvitationService's own Javadoc. */
+export async function revokeInvitation(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<void> {
+  await coreAppFetch<null>(baseUrl, `/api/v1/master/invitations/${id}/revoke`, {
+    method: "POST",
+    accessToken,
+  });
+}
+
+/**
+ * Public, unauthenticated — the accept screen's own "who invited me?" preview. A 400
+ * ({@code invalid_or_expired_invitation}) covers not-found/expired/revoked/already-accepted alike
+ * (deliberately, never leaking which case applies).
+ */
+export async function getInvitationByToken(baseUrl: string, token: string): Promise<InvitationPreview> {
+  return coreAppFetch<InvitationPreview>(baseUrl, `/api/v1/invitations/by-token/${token}`, {
+    method: "GET",
+  });
+}
+
+/**
+ * Public, unauthenticated — creates the User (if none exists for the invited email) or reuses the
+ * existing one, then issues a real session exactly like {@link login} does (see
+ * AcceptInviteController's own Javadoc). Reuses {@link LoginResult}'s shape — same
+ * accessToken/refreshToken/expiresIn fields core-app's TokenPairView returns.
+ */
+export async function acceptInvite(
+  baseUrl: string,
+  input: { token: string; password: string; displayName?: string },
+): Promise<LoginResult> {
+  return coreAppFetch<LoginResult>(baseUrl, "/api/v1/auth/accept-invite", {
+    method: "POST",
+    body: JSON.stringify({
+      token: input.token,
+      password: input.password,
+      ...(input.displayName ? { display_name: input.displayName } : {}),
+    }),
+  });
+}
+
+/**
+ * The caller's own not-yet-actioned invitation (from `users.created_via_invitation_id`), if any —
+ * `null` on a 204 (no pending invitation, or already actioned). Only reliably covers the invitation
+ * that created the caller's very first account; see InvitationCopySetupService's own Javadoc for
+ * the multi-master case, which the frontend instead threads through explicitly.
+ */
+export async function getPendingInvitation(
+  baseUrl: string,
+  accessToken: string,
+): Promise<PendingInvitation | null> {
+  return coreAppFetch<PendingInvitation | null>(baseUrl, "/api/v1/users/me/pending-invitation", {
+    method: "GET",
+    accessToken,
+  });
+}
+
+/**
+ * The invitation-acceptance flow's own copy-relationship creation step, after broker linking.
+ * Every field past `invitationId`/`followerBrokerAccountId` is optional — omitted ones default to
+ * the invitation's own suggested profile's values server-side (same request shape as
+ * {@link updateCopySettings}'s CopySettingsRequest, deliberately reused).
+ */
+export async function createCopyRelationshipFromInvitation(
+  baseUrl: string,
+  accessToken: string,
+  input: {
+    invitationId: string;
+    followerBrokerAccountId: string;
+    method?: string;
+    fixedLotSize?: number;
+    multiplier?: number;
+    riskPercent?: number;
+    roundingMode?: string;
+    maxLotPerTrade?: number;
+    maxOpenPositions?: number;
+    maxSlippagePips?: number;
+  },
+): Promise<CopyRelationship> {
+  return coreAppFetch<CopyRelationship>(baseUrl, "/api/v1/copy-relationships/from-invitation", {
+    method: "POST",
+    accessToken,
+    body: JSON.stringify({
+      invitation_id: input.invitationId,
+      follower_broker_account_id: input.followerBrokerAccountId,
+      method: input.method ?? null,
+      fixed_lot_size: input.fixedLotSize ?? null,
+      multiplier: input.multiplier ?? null,
+      risk_percent: input.riskPercent ?? null,
+      rounding_mode: input.roundingMode ?? null,
+      max_lot_per_trade: input.maxLotPerTrade ?? null,
+      max_open_positions: input.maxOpenPositions ?? null,
+      max_slippage_pips: input.maxSlippagePips ?? null,
+    }),
   });
 }

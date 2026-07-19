@@ -1,5 +1,6 @@
 package com.nectrix.coreapp.invitations.api;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -14,4 +15,12 @@ import java.util.UUID;
 public interface BrokerAccountLookupApi {
 
   BrokerAccountView getBrokerAccount(UUID id);
+
+  /**
+   * TICKET-117 — admin user-detail view's linked-broker-accounts list. Unlike {@link
+   * #getBrokerAccount}, this has no ownership check to defer to (there's no single account's
+   * {@code @PostAuthorize} to reuse) — callers are expected to already be route-gated to
+   * ADMIN/SUPPORT before reaching this.
+   */
+  List<BrokerAccountView> listForUser(UUID userId);
 }

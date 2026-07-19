@@ -130,6 +130,9 @@ public class SecurityConfig {
                     .authenticated()
                     .requestMatchers(HttpMethod.POST, "/api/v1/auth/2fa/verify")
                     .authenticated()
+                    // TICKET-117 bugfix — real 2FA disable (was permanently a dead button).
+                    .requestMatchers(HttpMethod.POST, "/api/v1/auth/2fa/disable")
+                    .authenticated()
                     // TICKET-006 — role/ownership enforcement itself is method-security
                     // (@PreAuthorize/@PostAuthorize on the controller/service), but these still
                     // need to be listed here as .authenticated() so a request with no bearer
@@ -163,6 +166,33 @@ public class SecurityConfig {
                     .requestMatchers(HttpMethod.POST, "/api/v1/admin/users")
                     .authenticated()
                     .requestMatchers(HttpMethod.GET, "/api/v1/admin/audit-log")
+                    .authenticated()
+                    // TICKET-117 — admin user search/detail/suspend/reinstate. RBAC split
+                    // (SUPPORT can view, only ADMIN can suspend/reinstate) is method-security
+                    // on AdminController, same reasoning as every other admin matcher above.
+                    .requestMatchers(HttpMethod.GET, "/api/v1/admin/users")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.GET, "/api/v1/admin/users/*")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.PATCH, "/api/v1/admin/users/*/suspend")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.PATCH, "/api/v1/admin/users/*/reinstate")
+                    .authenticated()
+                    // TICKET-117 bugfix — real delete, alongside suspend.
+                    .requestMatchers(HttpMethod.DELETE, "/api/v1/admin/users/*")
+                    .authenticated()
+                    // TICKET-117 — admin dispute raise/list/detail/resolve. RBAC split (resolve
+                    // is ADMIN-only, the rest ADMIN+SUPPORT) is method-security on AdminController.
+                    .requestMatchers(HttpMethod.GET, "/api/v1/admin/fee-ledger")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.GET, "/api/v1/admin/fee-ledger/*")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.POST, "/api/v1/admin/fee-ledger/*/dispute")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.POST, "/api/v1/admin/fee-ledger/*/resolve")
+                    .authenticated()
+                    // TICKET-117 — System Health.
+                    .requestMatchers(HttpMethod.GET, "/api/v1/admin/system-health")
                     .authenticated()
                     // TICKET-101 — cTrader OAuth broker-linking flow. The callback is permitAll:
                     // the browser's redirect back from cTrader carries no bearer token, so the
@@ -254,6 +284,16 @@ public class SecurityConfig {
                     .authenticated()
                     .requestMatchers(HttpMethod.GET, "/api/v1/subscriptions/me")
                     .authenticated()
+                    // TICKET-117 follow-up — self-service settlement/invoice history + dispute
+                    // raising for a Master or Follower's own performance_fee_ledger rows.
+                    // Ownership is enforced inside FeeLedgerService (same reasoning as the
+                    // broker-accounts list/PATCH matchers above), not this matcher.
+                    .requestMatchers(HttpMethod.GET, "/api/v1/fee-ledger")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.GET, "/api/v1/fee-ledger/*")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.POST, "/api/v1/fee-ledger/*/dispute")
+                    .authenticated()
                     // TICKET-114 — Individual-mode self-service copy setup. Role-based rejection
                     // (real Master/Follower callers get a 403) is method-layer, same reasoning as
                     // the master-profiles/copy-relationships matchers above.
@@ -272,10 +312,33 @@ public class SecurityConfig {
                     .authenticated()
                     .requestMatchers(HttpMethod.POST, "/api/v1/push-tokens")
                     .authenticated()
-                    // -- add new protected/public auth-adjacent routes here (future tickets:
-                    // accept-invite, by-token) — anyRequest() below is intentionally permitAll,
-                    // not authenticated(), so genuinely unmapped paths 404 instead of 401; see
-                    // class Javadoc.
+                    // TICKET-118 — Master-scoped invitation CRUD (role check is
+                    // @PreAuthorize("hasRole('MASTER')") method-security, see
+                    // InvitationController), living in modules:invitations, not modules:auth
+                    // (see AcceptInviteController's own Javadoc for why) — the route list here
+                    // doesn't care which module's controller serves a path.
+                    .requestMatchers(HttpMethod.POST, "/api/v1/master/invitations")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.GET, "/api/v1/master/invitations")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.POST, "/api/v1/master/invitations/*/revoke")
+                    .authenticated()
+                    // TICKET-118 — public, token-gated (rate-limited in-controller, not here —
+                    // see PublicInvitationController/AcceptInviteController's own
+                    // InvitationRateLimiterService).
+                    .requestMatchers(HttpMethod.GET, "/api/v1/invitations/by-token/*")
+                    .permitAll()
+                    .requestMatchers(HttpMethod.POST, "/api/v1/auth/accept-invite")
+                    .permitAll()
+                    // TICKET-118 — the invitation-acceptance flow's own copy-relationship
+                    // creation step (modules:trading's InvitationCopySetupController).
+                    .requestMatchers(HttpMethod.GET, "/api/v1/users/me/pending-invitation")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.POST, "/api/v1/copy-relationships/from-invitation")
+                    .authenticated()
+                    // -- add new protected/public auth-adjacent routes here — anyRequest() below
+                    // is intentionally permitAll, not authenticated(), so genuinely unmapped
+                    // paths 404 instead of 401; see class Javadoc.
                     .anyRequest()
                     .permitAll())
         .oauth2ResourceServer(

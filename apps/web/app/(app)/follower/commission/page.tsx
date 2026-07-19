@@ -1,10 +1,7 @@
+import Link from "next/link";
+import { listMySettlements } from "@nectrix/api-client";
+import { coreAppBaseUrl } from "@/lib/core-app";
 import { requireSession } from "@/lib/auth";
-
-const SAMPLE_HISTORY = [
-  { period: "June 2026", status: "Settled", profit: "+$1,240", fee: "$248" },
-  { period: "May 2026", status: "Settled", profit: "+$860", fee: "$172" },
-  { period: "April 2026", status: "No fee — flat month", profit: "-$40", fee: "$0" },
-];
 
 const SAMPLE_EARN_ROWS = [
   { initials: "CY", who: "Chris Yang", profit: "+$620", fee: "$124", earn: "+$3.72" },
@@ -13,13 +10,15 @@ const SAMPLE_EARN_ROWS = [
 
 /**
  * Mirrors Nectrix.dc.html's `FOLLOWER · COMMISSION VIEW` (`vFollowerCommission`, `:1567-1628`).
- * TICKET-120 (broker fee reports) hasn't shipped its own read-only view yet, and the referral-
- * earnings half is Phase 2 (TICKET-207) — full placeholder using the mock's own sample figures. The
- * underlying performance-fee engine itself (high-water mark, profit-only billing) is real (TICKET-
- * 113); only this Follower-facing summary UI is missing.
+ * TICKET-117 follow-up — "Settlement history" is now real (FeeLedgerController's self-service
+ * fee-ledger endpoints), each row linking to a real per-settlement detail page with the full
+ * computation breakdown and a "Raise a dispute" action. The referral-earnings half is still Phase
+ * 2 (TICKET-207) sample data — a genuinely separate feature (referral commission, not the
+ * performance-fee settlement this page's own title covers) that hasn't shipped anywhere yet.
  */
 export default async function FollowerCommissionPage() {
-  await requireSession();
+  const { accessToken } = await requireSession();
+  const settlements = await listMySettlements(coreAppBaseUrl(), accessToken);
 
   return (
     <div className="mx-auto max-w-[1000px]">
@@ -34,41 +33,49 @@ export default async function FollowerCommissionPage() {
         </p>
       </div>
 
-      <p
-        className="mb-4 text-[12.5px] text-[var(--text-3)]"
-        title="This read-only fee summary isn't wired up yet — TICKET-120/207 haven't shipped"
-      >
-        Showing sample data — this page isn&apos;t wired up to your real settlement history yet.
-      </p>
-
-      <div className="mb-4 grid grid-cols-1 gap-4 opacity-70 lg:grid-cols-[1.3fr_1fr]">
+      <div className="mb-4 grid grid-cols-1 gap-4 lg:grid-cols-[1.3fr_1fr]">
         <div className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)]">
           <div className="border-b border-[var(--border)] px-5 py-3.5 text-[14px] font-semibold text-[var(--text)]">
             Settlement history
           </div>
           <div className="flex flex-col">
-            {SAMPLE_HISTORY.map((r) => (
-              <div
-                key={r.period}
-                className="flex items-center gap-3.5 border-t border-[var(--border)] px-5 py-3.5 first:border-t-0"
+            {settlements.length === 0 && (
+              <p className="px-5 py-6 text-[13px] text-[var(--text-3)]">
+                No settlements yet — this fills in once your first billing period closes.
+              </p>
+            )}
+            {settlements.map((r) => (
+              <Link
+                key={r.id}
+                href={`/follower/commission/${r.id}`}
+                className="flex items-center gap-3.5 border-t border-[var(--border)] px-5 py-3.5 first:border-t-0 hover:bg-[var(--surface-2)]"
               >
                 <div className="flex-1">
-                  <div className="text-[13.5px] font-semibold text-[var(--text)]">{r.period}</div>
-                  <div className="mt-0.5 text-[12px] text-[var(--text-3)]">{r.status}</div>
-                </div>
-                <div className="text-right">
-                  <div className="text-[11px] text-[var(--text-3)]">Profit</div>
-                  <div className="mt-0.5 font-mono text-[13.5px] font-semibold text-[var(--text)]">
-                    {r.profit}
+                  <div className="text-[13.5px] font-semibold text-[var(--text)]">
+                    {new Date(r.periodStart).toLocaleDateString(undefined, {
+                      month: "short",
+                      year: "numeric",
+                    })}
                   </div>
+                  <span
+                    className={`mt-0.5 inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                      r.status === "DISPUTED"
+                        ? "bg-[var(--neg)]/15 text-[var(--neg)]"
+                        : r.status === "VOID"
+                          ? "bg-[var(--surface-2)] text-[var(--text-3)]"
+                          : "bg-[var(--pos)]/15 text-[var(--pos)]"
+                    }`}
+                  >
+                    {r.status}
+                  </span>
                 </div>
                 <div className="w-20 text-right">
                   <div className="text-[11px] text-[var(--text-3)]">Fee</div>
                   <div className="mt-0.5 font-mono text-[13.5px] font-semibold text-[var(--accent)]">
-                    {r.fee}
+                    ${r.masterFeeAmount.toFixed(2)}
                   </div>
                 </div>
-              </div>
+              </Link>
             ))}
           </div>
         </div>

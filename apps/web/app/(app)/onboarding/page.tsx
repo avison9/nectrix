@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { listBrokerAccounts, listCopyRelationships } from "@nectrix/api-client";
+import { getPendingInvitation, listBrokerAccounts, listCopyRelationships } from "@nectrix/api-client";
 import { coreAppBaseUrl } from "@/lib/core-app";
 import { requireSession } from "@/lib/auth";
 import { AcceptInviteGate } from "./AcceptInviteGate";
@@ -19,11 +19,18 @@ interface Step {
  * Mirrors Nectrix.dc.html's `FOLLOWER · ONBOARDING` (`vFollowerOnboarding`) as a real, nav-reachable
  * summary of flows that already exist for real (`/broker-accounts/link`, `/copy-settings`) rather
  * than a new flow of its own. Step-completion signals:
- * - "Accept your invitation" derives from having at least one copy relationship — the domain model
- *   requires an accepted follow_request before a copy_relationship can exist at all, so a
- *   relationship's presence is the closest real signal to "invitation accepted" available. While
- *   not yet accepted, renders the real terms-acceptance checkbox gate (AcceptInviteGate) — that UI
- *   is interactive but doesn't persist anywhere yet (TICKET-118 hasn't shipped a real endpoint).
+ * - "Accept your invitation" — TICKET-118: real acceptance now happens BEFORE a session even
+ *   exists, at the public `/accept-invite` entry point (a Follower clicks their emailed link,
+ *   accepts, and only then gets a session and lands here) — so by the time any invited Follower
+ *   reaches this page, step 1 is already genuinely done. Signaled by `pendingInvitation !== null`
+ *   (their account was created via an invitation and accept-invite already succeeded) OR
+ *   `hasRelationship` (covers the case where step 4 below has already been completed too, after
+ *   which `pendingInvitation` itself goes back to null — see InvitationCopySetupService's own
+ *   Javadoc). Only a Follower with NEITHER — i.e. no invitation history at all, meaning an
+ *   organic/Individual-mode path that never had a Master's invite to accept in the first place —
+ *   still renders the real terms-acceptance checkbox gate (AcceptInviteGate), which stays exactly
+ *   as inert as it always was for that case (no real per-master relationship exists yet to attach
+ *   real terms to).
  * - "Open a broker account" derives from `listBrokerAccounts` returning at least one row (covers
  *   both opening a brand-new account via the master's IB link and linking one you already have —
  *   `/broker-accounts/link` handles both through the same form). The mock's own "I already have a
@@ -32,46 +39,56 @@ interface Step {
  *   since that's the only real way to attach either a brand-new or an existing account in this
  *   system; the checkbox can't mark the step "done" on its own (no way to verify the attestation
  *   without a real account row), so it stays a second real entry point into the same real action
- *   rather than a fake local-only toggle.
+ *   rather than a fake local-only toggle. TICKET-117 bugfix — this step used to only surface once
+ *   `hasRelationship` was true, but step 1's own accept-invite gate has no real persisting endpoint
+ *   yet (TICKET-118), so `hasRelationship` can never actually become true through this page's own
+ *   UI — that made step 2 permanently unreachable for a real follower. Linking a broker account has
+ *   no actual dependency on invitation-acceptance state, so this step is now gated purely on
+ *   `hasBrokerAccount` instead.
  * - "Connect your MT5 login" is a DIFFERENT, stronger signal than step 2: MtLinkingService's own
  *   Javadoc is explicit that an MT4/MT5 account row starts `PENDING` and only flips to `CONNECTED`
  *   once a real EA session on the user's terminal actually presents its pairing token to
  *   apps/mt5-bridge-gateway — so a row existing (step 2) does NOT mean the login was verified.
  *   This step requires `connectionStatus === "CONNECTED"` specifically (cTrader OAuth accounts are
  *   verified synchronously at link time and already start CONNECTED, so this isn't MT-only).
- * - "Set your copy risk" derives from having at least one copy relationship (creating one already
- *   requires money-management/risk settings, defaults or chosen).
+ * - "Set your copy risk" — TICKET-118: for an invited Follower (`pendingInvitation !== null`),
+ *   the CTA now goes to the real `/onboarding/start-copying` page (review the inviting Master's
+ *   suggested MM/risk defaults, submit `POST /copy-relationships/from-invitation`) instead of the
+ *   organic "find a master"/"copy-settings" links, which stay exactly as-is for everyone else —
+ *   an invited Follower already has a specific Master to copy, no need to browse `/masters`.
  * - "Go live" derives from any relationship being `ACTIVE` — itself only reachable through real,
  *   backend-enforced transitions (risk ack + agreement sign; see CopyRelationshipService's own
  *   requireStatus guard).
  */
 export default async function OnboardingPage() {
   const { accessToken } = await requireSession();
-  const [accounts, relationships] = await Promise.all([
+  const [accounts, relationships, pendingInvitation] = await Promise.all([
     listBrokerAccounts(coreAppBaseUrl(), accessToken),
     listCopyRelationships(coreAppBaseUrl(), accessToken, { role: "follower" }),
+    getPendingInvitation(coreAppBaseUrl(), accessToken),
   ]);
 
   const hasBrokerAccount = accounts.length > 0;
   const isConnected = accounts.some((a) => a.connectionStatus === "CONNECTED");
   const hasRelationship = relationships.length > 0;
   const isLive = relationships.some((r) => r.status === "ACTIVE");
+  const invitationAccepted = pendingInvitation !== null || hasRelationship;
 
   const steps: Step[] = [
     {
       n: "1",
       title: "Accept your invitation",
       desc: "Review and accept your master's terms — required before your account can be linked.",
-      status: hasRelationship ? "done" : "active",
-      extra: hasRelationship ? undefined : <AcceptInviteGate />,
+      status: invitationAccepted ? "done" : "active",
+      extra: invitationAccepted ? undefined : <AcceptInviteGate />,
     },
     {
       n: "2",
       title: "Open a broker account",
       desc: "Use your master's IB link so trades can be copied and fees settled correctly — or check the box below if you already have a broker account.",
-      status: hasBrokerAccount ? "done" : hasRelationship ? "active" : "todo",
+      status: hasBrokerAccount ? "done" : "active",
       extra:
-        hasRelationship && !hasBrokerAccount ? (
+        !hasBrokerAccount ? (
           <div className="mt-3 flex flex-wrap items-center gap-3">
             <Link
               href="/broker-accounts/link"
@@ -103,11 +120,13 @@ export default async function OnboardingPage() {
       desc: "Choose lot multiplier and drawdown limits before going live.",
       status: hasRelationship ? "done" : "todo",
       cta:
-        hasBrokerAccount && !hasRelationship
-          ? { href: "/masters", label: "Find a master to follow" }
-          : hasRelationship && !isLive
-            ? { href: "/copy-settings", label: "Review copy settings" }
-            : undefined,
+        hasBrokerAccount && !hasRelationship && pendingInvitation
+          ? { href: "/onboarding/start-copying", label: "Review & start copying" }
+          : hasBrokerAccount && !hasRelationship
+            ? { href: "/masters", label: "Find a master to follow" }
+            : hasRelationship && !isLive
+              ? { href: "/copy-settings", label: "Review copy settings" }
+              : undefined,
     },
     {
       n: "5",

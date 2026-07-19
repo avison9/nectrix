@@ -75,9 +75,15 @@ export default async function ProfilePage() {
         <div className="flex items-center justify-between border-t border-[var(--border)] py-3.5">
           <div>
             <div className="text-sm font-medium text-[var(--text)]">Two-factor authentication</div>
-            <div className="mt-0.5 text-xs text-[var(--text-3)]">
+            <span
+              className={`mt-1 inline-block rounded-full px-2.5 py-1 text-[12px] font-semibold ${
+                session.twoFactorEnabled
+                  ? "bg-[var(--pos)]/15 text-[var(--pos)]"
+                  : "bg-[var(--surface-2)] text-[var(--text-3)]"
+              }`}
+            >
               {session.twoFactorEnabled ? "Enabled" : "Not enabled"}
-            </div>
+            </span>
           </div>
           <Link
             href="/2fa"
