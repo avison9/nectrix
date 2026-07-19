@@ -17,14 +17,14 @@ import java.util.UUID;
 import org.springframework.stereotype.Service;
 
 /**
- * TICKET-118 — invitation creation/listing/revocation (Master-scoped) plus public token
- * validation (accept-screen preview, {@code AcceptInviteController}'s own lookup).
+ * TICKET-118 — invitation creation/listing/revocation (Master-scoped) plus public token validation
+ * (accept-screen preview, {@code AcceptInviteController}'s own lookup).
  *
- * <p>Token generation/hashing intentionally copies {@code auth.service.AuthService}'s exact
- * {@code generateOpaqueToken}/{@code hashToken} pair verbatim (SecureRandom 32 bytes -> URL-safe
- * Base64 raw token; SHA-256 -> standard Base64 hash, only the hash ever persisted) rather than
- * sharing it — two small, self-contained private methods with no auth-specific dependency, not
- * worth a new cross-module surface just to avoid duplicating ~15 lines.
+ * <p>Token generation/hashing intentionally copies {@code auth.service.AuthService}'s exact {@code
+ * generateOpaqueToken}/{@code hashToken} pair verbatim (SecureRandom 32 bytes -> URL-safe Base64
+ * raw token; SHA-256 -> standard Base64 hash, only the hash ever persisted) rather than sharing it
+ * — two small, self-contained private methods with no auth-specific dependency, not worth a new
+ * cross-module surface just to avoid duplicating ~15 lines.
  */
 @Service
 public class InvitationService {

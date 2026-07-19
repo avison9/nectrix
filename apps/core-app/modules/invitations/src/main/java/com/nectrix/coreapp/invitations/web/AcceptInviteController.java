@@ -4,8 +4,8 @@ import com.nectrix.coreapp.auth.api.AuthSessionApi;
 import com.nectrix.coreapp.auth.api.TokenPairView;
 import com.nectrix.coreapp.auth.api.UserProvisioningApi;
 import com.nectrix.coreapp.invitations.domain.Invitation;
-import com.nectrix.coreapp.invitations.service.InvitationRateLimiterService;
 import com.nectrix.coreapp.invitations.service.InvitationRateLimitExceededException;
+import com.nectrix.coreapp.invitations.service.InvitationRateLimiterService;
 import com.nectrix.coreapp.invitations.service.InvitationService;
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.Map;
@@ -19,14 +19,14 @@ import tools.jackson.databind.ObjectMapper;
 
 /**
  * TICKET-118 — {@code POST /auth/accept-invite} (docs/14-api-specification.md §14.2). Lives here,
- * not in {@code modules:auth}, so the business logic can call {@link InvitationService} in the
- * same module rather than a new cross-module surface just for this one endpoint — {@code
- * modules:auth} stays free of dependencies on other bounded-context modules (its own
- * build.gradle.kts's documented invariant); this module already needed a fresh, one-way {@code
- * invitations -> auth} edge anyway (see {@link UserProvisioningApi}/{@link AuthSessionApi}), and
- * the URL path itself doesn't care which module's controller serves it (same convention {@code
- * SecurityConfig}'s matcher list already follows for e.g. {@code /api/v1/individual/copy-setup}
- * living in {@code modules:trading}).
+ * not in {@code modules:auth}, so the business logic can call {@link InvitationService} in the same
+ * module rather than a new cross-module surface just for this one endpoint — {@code modules:auth}
+ * stays free of dependencies on other bounded-context modules (its own build.gradle.kts's
+ * documented invariant); this module already needed a fresh, one-way {@code invitations -> auth}
+ * edge anyway (see {@link UserProvisioningApi}/{@link AuthSessionApi}), and the URL path itself
+ * doesn't care which module's controller serves it (same convention {@code SecurityConfig}'s
+ * matcher list already follows for e.g. {@code /api/v1/individual/copy-setup} living in {@code
+ * modules:trading}).
  */
 @RestController
 public class AcceptInviteController {

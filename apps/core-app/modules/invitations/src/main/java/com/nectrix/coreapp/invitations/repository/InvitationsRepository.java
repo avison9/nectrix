@@ -102,7 +102,10 @@ public class InvitationsRepository {
         status);
   }
 
-  /** Plain status transition (PENDING->EXPIRED/REVOKED) — {@link #markAccepted} covers PENDING->ACCEPTED. */
+  /**
+   * Plain status transition (PENDING->EXPIRED/REVOKED) — {@link #markAccepted} covers
+   * PENDING->ACCEPTED.
+   */
   public void updateStatus(UUID id, String status) {
     jdbcTemplate.update("UPDATE invitations SET status = ? WHERE id = ?", status, id);
   }

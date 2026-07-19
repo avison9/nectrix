@@ -6,14 +6,14 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
 /**
- * TICKET-118 — resolves the calling Master's own {@code master_profile_id} for {@code
- * POST /master/invitations}'s ownership scoping, via a direct read of {@code social}'s {@code
+ * TICKET-118 — resolves the calling Master's own {@code master_profile_id} for {@code POST
+ * /master/invitations}'s ownership scoping, via a direct read of {@code social}'s {@code
  * master_profiles} table rather than a new {@code invitations -> social} module dependency: {@code
  * social} already depends one-way on {@code invitations} (for {@code BrokerAccountLookupApi}), so
  * the reverse edge would create a cycle. Same "read another module's table directly via SQL, not
  * its Java repository class" precedent {@code modules:notifications}' {@code
- * NotificationTargetLookupRepository} and {@code modules:billing}'s {@code SettlementDataRepository}
- * already established for this exact kind of one-off cross-module read.
+ * NotificationTargetLookupRepository} and {@code modules:billing}'s {@code
+ * SettlementDataRepository} already established for this exact kind of one-off cross-module read.
  */
 @Repository
 public class MasterProfileLookupRepository {
@@ -26,7 +26,10 @@ public class MasterProfileLookupRepository {
 
   public Optional<UUID> findMasterProfileIdForUser(UUID userId) {
     return jdbcTemplate
-        .query("SELECT id FROM master_profiles WHERE user_id = ?", (rs, rowNum) -> rs.getString("id"), userId)
+        .query(
+            "SELECT id FROM master_profiles WHERE user_id = ?",
+            (rs, rowNum) -> rs.getString("id"),
+            userId)
         .stream()
         .findFirst()
         .map(UUID::fromString);

@@ -19,7 +19,9 @@ import redis.clients.jedis.UnifiedJedis;
 @Service
 public class InvitationRateLimiterService {
 
-  /** Fixed, conservative defaults — this module has no {@code AuthProperties}-style config today. */
+  /**
+   * Fixed, conservative defaults — this module has no {@code AuthProperties}-style config today.
+   */
   private static final int CAPACITY = 10;
 
   private static final double REFILL_PER_SECOND = 10.0 / 60.0; // 10 attempts per minute
@@ -30,7 +32,10 @@ public class InvitationRateLimiterService {
     this.rateLimiter = new TokenBucketRateLimiter(jedis);
   }
 
-  /** {@code key} should uniquely identify the (subject, endpoint) pair, e.g. {@code "by-token:" + ip}. */
+  /**
+   * {@code key} should uniquely identify the (subject, endpoint) pair, e.g. {@code "by-token:" +
+   * ip}.
+   */
   public boolean tryConsume(String key) {
     return rateLimiter.tryConsume("invitations:" + key, CAPACITY, REFILL_PER_SECOND);
   }

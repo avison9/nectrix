@@ -19,8 +19,8 @@ import software.amazon.awssdk.services.ses.SesClient;
  *
  * <p>TICKET-118 — {@code nectrix.notifications.local-email-catcher.url}, if set, takes priority
  * over real SES: every send instead POSTs to that URL (the local-dev {@code webhook-catcher}
- * container's {@code /email} route, {@code docker-compose.yml}), so an invitation email's real
- * link is visible locally without any real cloud credentials. Never set in any real deployment.
+ * container's {@code /email} route, {@code docker-compose.yml}), so an invitation email's real link
+ * is visible locally without any real cloud credentials. Never set in any real deployment.
  *
  * <p><b>Production/GCP note</b>: real delivery today is AWS SES-only (this class). A production
  * deployment needs real {@code nectrix.notifications.ses.region}/{@code senderEmail} plus an IAM

@@ -25,7 +25,8 @@ public class InvitationCopySetupExceptionHandler {
 
   @ExceptionHandler(InvitationAlreadyUsedException.class)
   public ResponseEntity<ErrorBody> handleAlreadyUsed() {
-    return ResponseEntity.status(HttpStatus.CONFLICT).body(new ErrorBody("invitation_already_used"));
+    return ResponseEntity.status(HttpStatus.CONFLICT)
+        .body(new ErrorBody("invitation_already_used"));
   }
 
   @ExceptionHandler(BrokerAccountNotOwnedException.class)

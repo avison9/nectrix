@@ -16,9 +16,9 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * TICKET-118 — Master-scoped invitation CRUD (docs/14-api-specification.md §14.13). Every method
- * is scoped to the caller's OWN {@code master_profile_id}, resolved fresh from the JWT on every
- * call — never a client-supplied master id (see {@link InvitationService#requireMasterProfileId}
+ * TICKET-118 — Master-scoped invitation CRUD (docs/14-api-specification.md §14.13). Every method is
+ * scoped to the caller's OWN {@code master_profile_id}, resolved fresh from the JWT on every call —
+ * never a client-supplied master id (see {@link InvitationService#requireMasterProfileId}
  * equivalent reasoning).
  */
 @RestController

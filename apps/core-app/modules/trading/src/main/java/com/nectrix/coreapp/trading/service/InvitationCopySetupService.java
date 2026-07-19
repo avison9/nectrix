@@ -20,10 +20,10 @@ import java.util.UUID;
 import org.springframework.stereotype.Service;
 
 /**
- * TICKET-118 — the step after {@code POST /auth/accept-invite}: once the (new-or-existing)
- * Follower has linked a broker account (TICKET-110) and reviewed the Master's suggested
- * money-management/risk defaults, this creates the real {@code CopyRelationship} row,
- * {@code originating_invitation_id} set.
+ * TICKET-118 — the step after {@code POST /auth/accept-invite}: once the (new-or-existing) Follower
+ * has linked a broker account (TICKET-110) and reviewed the Master's suggested
+ * money-management/risk defaults, this creates the real {@code CopyRelationship} row, {@code
+ * originating_invitation_id} set.
  *
  * <p>Deliberately does NOT reuse {@link IndividualCopySetupService}: that service is Individual-
  * mode-only (rejects real Master/Follower callers outright) and hardcodes MM/risk defaults
@@ -32,12 +32,12 @@ import org.springframework.stereotype.Service;
  *
  * <p>{@link #getPendingInvitation} only ever resolves the ONE invitation that created the caller's
  * very first account ({@code users.created_via_invitation_id}) — a pre-existing user who accepts a
- * SECOND Master's invite (this ticket's own explicit multi-master AC) has no such column update,
- * so the frontend instead carries that invitation's id forward itself, from the moment {@code GET
- * /invitations/by-token/{token}} first returned it, through {@code accept-invite}, into {@code
- * POST /copy-relationships/from-invitation}'s own explicit {@code invitationId} field — this
- * endpoint is the reliable path for both cases; {@link #getPendingInvitation} is a convenience
- * default for a caller who navigates to onboarding without that context (e.g. closed the tab).
+ * SECOND Master's invite (this ticket's own explicit multi-master AC) has no such column update, so
+ * the frontend instead carries that invitation's id forward itself, from the moment {@code GET
+ * /invitations/by-token/{token}} first returned it, through {@code accept-invite}, into {@code POST
+ * /copy-relationships/from-invitation}'s own explicit {@code invitationId} field — this endpoint is
+ * the reliable path for both cases; {@link #getPendingInvitation} is a convenience default for a
+ * caller who navigates to onboarding without that context (e.g. closed the tab).
  */
 @Service
 public class InvitationCopySetupService {
@@ -121,10 +121,7 @@ public class InvitationCopySetupService {
             roundingMode);
     UUID riskProfileId =
         insertRiskProfile(
-            invitation.suggestedRiskProfileId(),
-            maxLotPerTrade,
-            maxOpenPositions,
-            maxSlippagePips);
+            invitation.suggestedRiskProfileId(), maxLotPerTrade, maxOpenPositions, maxSlippagePips);
 
     String status =
         "BROKER_PARTNERSHIP".equals(master.feeCollectionMethod())
