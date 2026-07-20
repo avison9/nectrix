@@ -1,6 +1,7 @@
 package com.nectrix.coreapp.invitations.service;
 
 import com.nectrix.redisclient.TokenBucketRateLimiter;
+import java.util.UUID;
 import org.springframework.stereotype.Service;
 import redis.clients.jedis.UnifiedJedis;
 
@@ -26,6 +27,15 @@ public class InvitationRateLimiterService {
 
   private static final double REFILL_PER_SECOND = 10.0 / 60.0; // 10 attempts per minute
 
+  /**
+   * A resend is authenticated (a Master acting on their own invitation, not an anonymous token
+   * guess) so the risk profile is different — this bounds "how many times can one invitation be
+   * resent" (accidental double-clicks, an impatient Master), not brute-forcing.
+   */
+  private static final int RESEND_CAPACITY = 5;
+
+  private static final double RESEND_REFILL_PER_SECOND = 5.0 / 3600.0; // 5 resends per hour
+
   private final TokenBucketRateLimiter rateLimiter;
 
   public InvitationRateLimiterService(UnifiedJedis jedis) {
@@ -38,5 +48,11 @@ public class InvitationRateLimiterService {
    */
   public boolean tryConsume(String key) {
     return rateLimiter.tryConsume("invitations:" + key, CAPACITY, REFILL_PER_SECOND);
+  }
+
+  /** Keyed per-invitation, not per-caller — bounds resends of that one invite specifically. */
+  public boolean tryConsumeResend(UUID invitationId) {
+    return rateLimiter.tryConsume(
+        "invitations:resend:" + invitationId, RESEND_CAPACITY, RESEND_REFILL_PER_SECOND);
   }
 }

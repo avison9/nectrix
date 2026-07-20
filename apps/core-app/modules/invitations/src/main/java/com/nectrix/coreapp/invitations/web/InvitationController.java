@@ -55,6 +55,12 @@ public class InvitationController {
     return ResponseEntity.noContent().build();
   }
 
+  @PostMapping("/api/v1/master/invitations/{id}/resend")
+  @PreAuthorize("hasRole('MASTER')")
+  public Invitation resend(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID id) {
+    return service.resend(currentUserId(jwt), id);
+  }
+
   private UUID currentUserId(Jwt jwt) {
     return UUID.fromString(jwt.getSubject());
   }

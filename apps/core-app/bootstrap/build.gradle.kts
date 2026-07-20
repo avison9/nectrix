@@ -66,6 +66,10 @@ dependencies {
     // DoS) — caught by CI's Trivy gate, fixed by bumping to 42.7.11+.
     runtimeOnly("org.postgresql:postgresql:42.7.11")
     implementation("com.nectrix:event-contracts")
+    // TICKET-101 follow-up — ArchivalBlobStorageClient's real AWS S3 SDK v2 client (MinIO
+    // locally/in CI via endpointOverride, real AWS S3 in production), same "each module/app
+    // separately imports the AWS SDK BOM" reasoning as modules:crypto's own KMS dependency above.
+    implementation("software.amazon.awssdk:s3")
 
     implementation(project(":modules:auth"))
     implementation(project(":modules:invitations"))

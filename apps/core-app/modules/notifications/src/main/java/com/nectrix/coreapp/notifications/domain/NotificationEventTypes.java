@@ -32,6 +32,13 @@ public final class NotificationEventTypes {
   public static final String DRAWDOWN_THRESHOLD_BREACHED = "drawdown.threshold_breached";
   public static final String INVOICE_GENERATED = "invoice.generated";
 
+  /**
+   * TICKET-118 follow-up — a Follower nominated a prospect for their Master to invite (real
+   * dispatch target: {@code ProspectNominationService}, {@code modules:trading}, via the new {@code
+   * notifications.api.NotificationDispatchApi}).
+   */
+  public static final String PROSPECT_NOMINATION_RECEIVED = "prospect_nomination.received";
+
   private static final Map<String, Set<Channel>> DEFAULT_ENABLED_CHANNELS =
       Map.of(
           COPIED_TRADE_OPENED, EnumSet.of(Channel.IN_APP, Channel.PUSH),
@@ -40,7 +47,8 @@ public final class NotificationEventTypes {
           BROKER_CONNECTION_DEGRADED, EnumSet.of(Channel.IN_APP, Channel.PUSH, Channel.EMAIL),
           BROKER_CONNECTION_LOST, EnumSet.of(Channel.IN_APP, Channel.PUSH, Channel.EMAIL),
           DRAWDOWN_THRESHOLD_BREACHED, EnumSet.of(Channel.IN_APP, Channel.PUSH, Channel.EMAIL),
-          INVOICE_GENERATED, EnumSet.of(Channel.IN_APP, Channel.EMAIL));
+          INVOICE_GENERATED, EnumSet.of(Channel.IN_APP, Channel.EMAIL),
+          PROSPECT_NOMINATION_RECEIVED, EnumSet.of(Channel.IN_APP, Channel.EMAIL));
 
   /**
    * Every channel a real, valid event type could ever plausibly be delivered on — used to build the

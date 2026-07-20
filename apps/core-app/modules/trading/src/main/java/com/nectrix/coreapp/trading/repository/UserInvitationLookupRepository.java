@@ -1,5 +1,6 @@
 package com.nectrix.coreapp.trading.repository;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -25,15 +26,22 @@ public class UserInvitationLookupRepository {
     this.jdbcTemplate = jdbcTemplate;
   }
 
+  /**
+   * {@code created_via_invitation_id} is null for every organically-created account — the
+   * overwhelming common case, not an edge case — so this can't route through {@code
+   * Stream#findFirst()} (its {@code Optional.of(value)} throws NPE the moment the single row's
+   * mapped value is itself null, rather than treating "found a row, its value is null" as a valid
+   * outcome).
+   */
   public Optional<UUID> findCreatedViaInvitationId(UUID userId) {
-    return jdbcTemplate
-        .query(
+    List<String> rows =
+        jdbcTemplate.query(
             "SELECT created_via_invitation_id FROM users WHERE id = ?",
             (rs, rowNum) -> rs.getString("created_via_invitation_id"),
-            userId)
-        .stream()
-        .findFirst()
-        .filter(java.util.Objects::nonNull)
-        .map(UUID::fromString);
+            userId);
+    if (rows.isEmpty() || rows.get(0) == null) {
+      return Optional.empty();
+    }
+    return Optional.of(UUID.fromString(rows.get(0)));
   }
 }

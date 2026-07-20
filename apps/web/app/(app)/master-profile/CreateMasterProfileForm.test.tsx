@@ -25,6 +25,8 @@ const account: BrokerAccountSummary = {
   openedViaIbLinkId: null,
   connectionStatus: "CONNECTED",
   lastHealthCheckAt: null,
+  brokerName: null,
+  serverName: null,
 };
 
 afterEach(() => {

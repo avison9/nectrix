@@ -30,9 +30,15 @@ patches:
       - op: replace
         path: /spec/rules/0/host
         value: portal.dev.nectrix.app
+  # TICKET-101 — api.dev.nectrix.app now routes straight to core-app's own
+  # Ingress (deploy/base/core-app/ingress.yaml), not gateway's — gateway has
+  # no real proxy logic (explicitly deferred placeholder, see its own
+  # Deployment comment) and would 404 everything. gateway's own Ingress stays
+  # on base's unused app.nectrix.example.com placeholder — nothing depends on
+  # it resolving in dev today.
   - target:
       kind: Ingress
-      name: gateway
+      name: core-app
     patch: |-
       - op: replace
         path: /spec/rules/0/host

@@ -1,0 +1,29 @@
+# Cloud-agnostic on purpose — see deploy/base/gateway/ingress.yaml for the same
+# note. core-app's own Service is ClusterIP-only (service.yaml) — fine for the
+# server-to-server calls apps/web's/apps/admin-portal's own coreAppFetch-style
+# clients make, but TICKET-101's cTrader OAuth callback is followed by the
+# user's own BROWSER directly after Spotware's auth screen, so it needs a real
+# public route too, same as web/admin-portal already have. Deliberately NOT
+# routed through deploy/base/gateway — that Deployment is an explicitly
+# deferred placeholder ("the real API Gateway/BFF is a later ticket," see its
+# own comment) with no real proxy logic, and repurposing it risked conflicting
+# with whatever that later ticket's own design turns out to be. Traffic here
+# needs network-policy.yaml's own allow-list updated too (the ingress
+# controller's traffic doesn't originate from the gateway namespace).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: core-app
+  namespace: core-app
+spec:
+  rules:
+    - host: api.nectrix.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: core-app
+                port:
+                  number: 8080

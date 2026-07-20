@@ -189,4 +189,35 @@ public class CopyRelationshipRepository {
         riskProfileId,
         id);
   }
+
+  /**
+   * TICKET-101 follow-up — every relationship this account is party to, on either side (a {@code
+   * BOTH}-role account can be a Master in some relationships and a Follower in others
+   * simultaneously). Feeds the archival flow's export and cascade-delete.
+   */
+  public List<CopyRelationship> findAllByBrokerAccountId(UUID brokerAccountId) {
+    return jdbcTemplate.query(
+        """
+        SELECT * FROM copy_relationships
+        WHERE master_broker_account_id = ? OR follower_broker_account_id = ?
+        """,
+        ROW_MAPPER,
+        brokerAccountId,
+        brokerAccountId);
+  }
+
+  /**
+   * Archival's own final step for this table — {@code management_agreements} auto-cascades via its
+   * own {@code ON DELETE CASCADE}; {@code copied_trades}/{@code performance_fee_ledger} rows
+   * referencing these ids must already be gone (see {@code CopyRelationshipArchivalApiImpl}'s own
+   * ordering — neither has a cascade of its own).
+   */
+  public void deleteByIds(List<UUID> ids) {
+    if (ids.isEmpty()) {
+      return;
+    }
+    String placeholders = String.join(",", ids.stream().map(id -> "?").toList());
+    jdbcTemplate.update(
+        "DELETE FROM copy_relationships WHERE id IN (" + placeholders + ")", ids.toArray());
+  }
 }

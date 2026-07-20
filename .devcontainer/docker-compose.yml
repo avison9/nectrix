@@ -42,6 +42,14 @@ services:
       # never sets KMS_ENDPOINT_OVERRIDE at all.
       AWS_REGION: us-east-1
       KMS_ENDPOINT_OVERRIDE: http://localstack:4566
+      # --- Broker account archival (TICKET-101 follow-up) ---
+      # Same in-network-vs-host-mapping reasoning as KMS_ENDPOINT_OVERRIDE above — real
+      # production blob storage never sets ARCHIVAL_ENDPOINT_OVERRIDE at all.
+      ARCHIVAL_BUCKET: ${ARCHIVAL_BUCKET:-nectrix-archival}
+      ARCHIVAL_ENDPOINT_OVERRIDE: http://minio:9000
+      ARCHIVAL_ACCESS_KEY: ${MINIO_ROOT_USER:-nectrix}
+      ARCHIVAL_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in your .env file}
+      ARCHIVAL_SWEEP_ENABLED: ${ARCHIVAL_SWEEP_ENABLED:-false}
       # --- Admin Portal (TICKET-012) ---
       # core-app runs as a plain `./gradlew bootRun` process inside this same
       # devcontainer (not its own compose service), reachable at its own

@@ -1,10 +1,13 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { SymbolMappingEntry } from "@nectrix/api-client";
 import { SymbolMappingRow } from "./SymbolMappingRow";
 import { ManualSymbolMappingForm } from "./ManualSymbolMappingForm";
+import { refetchSymbolMappingsAction } from "./actions";
+
+const POLL_MS = 5000;
 
 export function SymbolMappingsClient({
   brokerAccountId,
@@ -16,6 +19,20 @@ export function SymbolMappingsClient({
   const router = useRouter();
   const [mappings, setMappings] = useState(initialMappings);
   const allConfirmed = mappings.length > 0 && mappings.every((m) => m.isConfirmed);
+
+  // apps/broker-adapters' reconcile loop only populates suggestions up to ~30s after linking —
+  // poll while the list is still empty so this page notices without a manual reload. Stops
+  // itself the moment real rows show up.
+  useEffect(() => {
+    if (mappings.length > 0) return;
+    const interval = setInterval(async () => {
+      const fresh = await refetchSymbolMappingsAction(brokerAccountId);
+      if (fresh.length > 0) {
+        setMappings(fresh);
+      }
+    }, POLL_MS);
+    return () => clearInterval(interval);
+  }, [brokerAccountId, mappings.length]);
 
   function handleConfirmed(updated: SymbolMappingEntry) {
     setMappings((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
@@ -35,7 +52,8 @@ export function SymbolMappingsClient({
       {mappings.length === 0 ? (
         <p className="mt-6 text-[13px] text-[var(--text-2)]">
           No symbol suggestions yet — they&apos;re populated automatically once the broker
-          connection is established. Check back shortly, or add one manually below.
+          connection is established (usually within 30 seconds). This page checks
+          automatically, or add one manually below.
         </p>
       ) : (
         <div className="mt-6 flex flex-col gap-2.5">

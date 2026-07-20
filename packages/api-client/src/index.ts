@@ -36,9 +36,11 @@ import type {
   LeaderboardPeriod,
   LeaderboardSort,
   MasterProfile,
+  MyProspectNomination,
   NormalizedPosition,
   NormalizedTradeEvent,
   PendingInvitation,
+  ProspectNomination,
   PublicMasterProfile,
   SymbolMappingEntry,
   SystemHealthSnapshot,
@@ -80,7 +82,9 @@ export type {
   LeaderboardPeriod,
   LeaderboardSort,
   MasterProfile,
+  MyProspectNomination,
   PendingInvitation,
+  ProspectNomination,
   PublicMasterProfile,
   SymbolMappingEntry,
   SystemHealthSnapshot,
@@ -335,6 +339,40 @@ export async function deleteBrokerAccount(
   });
 }
 
+/**
+ * Required before {@link deleteBrokerAccount} — deleting a still-connected account is rejected
+ * (`broker_account_not_disconnected`, 409). See BrokerAccountService#deleteBrokerAccount's own
+ * Javadoc.
+ */
+export async function disconnectBrokerAccount(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<BrokerAccountSummary> {
+  return coreAppFetch<BrokerAccountSummary>(baseUrl, `/api/v1/broker-accounts/${id}/disconnect`, {
+    method: "POST",
+    accessToken,
+  });
+}
+
+/**
+ * TICKET-101 follow-up — the automatic fallback {@link deleteBrokerAccount} takes on
+ * `broker_account_in_use` (409): rather than dead-ending, this archives every referencing row
+ * (copy relationships, copied trades, trade signals, performance-fee-ledger entries, management
+ * agreements) to a durable blob first, then deletes them and the account row itself. See
+ * BrokerAccountArchivalOrchestrator's own Javadoc for the full ordering.
+ */
+export async function archiveAndDeleteBrokerAccount(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<{ blobKey: string; rowCounts: Record<string, number> }> {
+  return coreAppFetch(baseUrl, `/api/v1/broker-accounts/${id}/archive-and-delete`, {
+    method: "POST",
+    accessToken,
+  });
+}
+
 export async function getBrokerAccountSnapshot(
   baseUrl: string,
   accessToken: string,
@@ -394,6 +432,7 @@ export async function linkCtraderAccount(
     displayLabel: string;
     connectionRole?: ConnectionRole;
     openedViaIbLinkId?: string;
+    brokerName?: string;
   },
 ): Promise<BrokerAccountSummary> {
   return coreAppFetch<BrokerAccountSummary>(baseUrl, "/api/v1/broker/ctrader/link", {
@@ -406,6 +445,7 @@ export async function linkCtraderAccount(
       display_label: input.displayLabel,
       connection_role: input.connectionRole,
       opened_via_ib_link_id: input.openedViaIbLinkId,
+      broker_name: input.brokerName,
     }),
   });
 }
@@ -425,6 +465,7 @@ export interface MtLinkInput {
   displayLabel: string;
   connectionRole?: ConnectionRole;
   openedViaIbLinkId?: string;
+  brokerName: string;
 }
 
 function mtLinkBody(input: MtLinkInput) {
@@ -436,6 +477,7 @@ function mtLinkBody(input: MtLinkInput) {
     display_label: input.displayLabel,
     connection_role: input.connectionRole,
     opened_via_ib_link_id: input.openedViaIbLinkId,
+    broker_name: input.brokerName,
   });
 }
 
@@ -1215,6 +1257,22 @@ export async function revokeInvitation(
 }
 
 /**
+ * Resending isn't a one-shot affair — rotates the token/expiry and re-sends the email. Rate
+ * limited per-invitation (429) and 409s for ACCEPTED/REVOKED invitations — see
+ * InvitationService#resend's own Javadoc.
+ */
+export async function resendInvitation(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<Invitation> {
+  return coreAppFetch<Invitation>(baseUrl, `/api/v1/master/invitations/${id}/resend`, {
+    method: "POST",
+    accessToken,
+  });
+}
+
+/**
  * Public, unauthenticated — the accept screen's own "who invited me?" preview. A 400
  * ({@code invalid_or_expired_invitation}) covers not-found/expired/revoked/already-accepted alike
  * (deliberately, never leaking which case applies).
@@ -1298,5 +1356,69 @@ export async function createCopyRelationshipFromInvitation(
       max_open_positions: input.maxOpenPositions ?? null,
       max_slippage_pips: input.maxSlippagePips ?? null,
     }),
+  });
+}
+
+// ==================== TICKET-118 follow-up — prospect nominations (Follower -> Master inbox) ====================
+
+/** FOLLOWER-only server-side call — 409s (`no_master_to_nominate_to`) if the caller has no Master yet. */
+export async function nominateProspect(
+  baseUrl: string,
+  accessToken: string,
+  prospectEmail: string,
+): Promise<void> {
+  await coreAppFetch<null>(baseUrl, "/api/v1/prospect-nominations", {
+    method: "POST",
+    accessToken,
+    body: JSON.stringify({ prospect_email: prospectEmail }),
+  });
+}
+
+/** FOLLOWER-only server-side call — backs the real `/follower/referrals` referral-history table. */
+export async function listMyProspectNominations(
+  baseUrl: string,
+  accessToken: string,
+): Promise<MyProspectNomination[]> {
+  return coreAppFetch<MyProspectNomination[]>(baseUrl, "/api/v1/prospect-nominations/mine", {
+    method: "GET",
+    accessToken,
+  });
+}
+
+/** MASTER-only server-side call — backs the real `/inbox` page. */
+export async function listProspectNominations(
+  baseUrl: string,
+  accessToken: string,
+  status?: string,
+): Promise<ProspectNomination[]> {
+  const query = status ? `?status=${status}` : "";
+  return coreAppFetch<ProspectNomination[]>(baseUrl, `/api/v1/master/prospect-nominations${query}`, {
+    method: "GET",
+    accessToken,
+  });
+}
+
+/** Call after successfully creating the real invitation via {@link createInvitation}. */
+export async function markNominationInvited(
+  baseUrl: string,
+  accessToken: string,
+  nominationId: string,
+  invitationId: string,
+): Promise<void> {
+  await coreAppFetch<null>(baseUrl, `/api/v1/master/prospect-nominations/${nominationId}/mark-invited`, {
+    method: "POST",
+    accessToken,
+    body: JSON.stringify({ invitation_id: invitationId }),
+  });
+}
+
+export async function dismissNomination(
+  baseUrl: string,
+  accessToken: string,
+  nominationId: string,
+): Promise<void> {
+  await coreAppFetch<null>(baseUrl, `/api/v1/master/prospect-nominations/${nominationId}/dismiss`, {
+    method: "POST",
+    accessToken,
   });
 }

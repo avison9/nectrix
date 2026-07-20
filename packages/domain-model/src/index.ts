@@ -33,6 +33,9 @@ export interface AccountSnapshot {
   freeMargin: number;
   marginLevelPct: number | null;
   asOf: string; // ISO-8601 timestamp
+  // Pre-formatted "1:N" ratio, e.g. "1:500" — empty for MT4/MT5 (no leverage field in that wire
+  // protocol yet, would need an EA-side change), real for cTrader (ProtoOATrader.leverageInCents).
+  leverage: string;
 }
 
 export type TradeDirection = "BUY" | "SELL";
@@ -134,6 +137,11 @@ export interface BrokerAccountSummary {
   openedViaIbLinkId: string | null;
   connectionStatus: ConnectionStatus;
   lastHealthCheckAt: string | null;
+  // TICKET-101/102 follow-up — brokerType (CTRADER/MT5/MT4) is the platform, not the broker's own
+  // brand name (e.g. "Pepperstone"). Both nullable: cTrader has no "server" concept, and accounts
+  // linked before this field existed have neither populated.
+  brokerName: string | null;
+  serverName: string | null;
 }
 
 // Mirrors BrokerAccountAdaptersInternalClient.AccountSnapshot's JSON shape.
@@ -436,6 +444,8 @@ export interface Invitation {
   acceptedAt: string | null;
   acceptedByUserId: string | null;
   createdAt: string;
+  resendCount: number;
+  lastResentAt: string | null;
 }
 
 // Mirrors PublicInvitationController.InvitationPreview — the public by-token accept-screen data.
@@ -452,4 +462,32 @@ export interface PendingInvitation {
   masterDisplayName: string;
   suggestedMoneyManagementProfileId: string | null;
   suggestedRiskProfileId: string | null;
+}
+
+// TICKET-118 follow-up — the "Follower refers a prospect, lands in their Master's inbox, Master
+// sends a real invitation" flow. Mirrors ProspectNominationController.NominationResponse
+// (apps/core-app/modules/trading).
+export type ProspectNominationStatus = "PENDING" | "INVITED" | "DISMISSED";
+
+export interface ProspectNomination {
+  id: string;
+  prospectEmail: string;
+  status: ProspectNominationStatus;
+  invitationId: string | null;
+  nominatedByDisplayName: string | null;
+  createdAt: string;
+  decidedAt: string | null;
+}
+
+// The Follower's own referral-history view — a richer, honest status than the raw DB enum above
+// (JOINED reflects the linked invitation's real acceptance, not a guess). Mirrors
+// ProspectNominationController.MyNominationResponse.
+export type MyProspectNominationStatus = "SENT" | "INVITED" | "JOINED" | "DISMISSED";
+
+export interface MyProspectNomination {
+  id: string;
+  prospectEmail: string;
+  status: MyProspectNominationStatus;
+  createdAt: string;
+  decidedAt: string | null;
 }

@@ -14,7 +14,7 @@ export default async function RoleSelectionPage({
 }: {
   params: Promise<{ brokerAccountId: string }>;
 }) {
-  const { accessToken } = await requireSession();
+  const { session, accessToken } = await requireSession();
   const { brokerAccountId } = await params;
   const account = await fetchOrNotFound(
     getBrokerAccount(coreAppBaseUrl(), accessToken, brokerAccountId),
@@ -29,7 +29,11 @@ export default async function RoleSelectionPage({
         {account.displayLabel ?? account.brokerAccountLogin} — {account.brokerType}
       </p>
 
-      <RoleSelectionForm brokerAccountId={brokerAccountId} initialRole={account.connectionRole} />
+      <RoleSelectionForm
+        brokerAccountId={brokerAccountId}
+        initialRole={account.connectionRole}
+        canBeMaster={session.roles.includes("MASTER")}
+      />
     </div>
   );
 }

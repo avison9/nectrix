@@ -2,6 +2,7 @@ package com.nectrix.coreapp.invitations.repository;
 
 import com.nectrix.coreapp.invitations.domain.BrokerAccount;
 import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -14,10 +15,12 @@ import org.springframework.stereotype.Repository;
  *
  * <p>TICKET-101 — {@code insert}/{@code existsForUser} add the real broker-linking write path.
  * {@code broker_accounts}' own {@code UNIQUE (broker_type, broker_account_login, server_name)}
- * constraint does NOT reliably prevent linking the same cTrader account twice: this table never
- * sets {@code server_name}, and Postgres treats each NULL as distinct for uniqueness purposes, so
- * two NULL-server_name rows with an otherwise-identical key do not collide. {@code existsForUser}
- * is the application-level guard that constraint can't provide.
+ * constraint does NOT reliably prevent linking the same cTrader account twice: cTrader accounts
+ * have no real "server" concept, so {@code server_name} stays NULL for every cTrader row, and
+ * Postgres treats each NULL as distinct for uniqueness purposes, so two NULL-server_name rows with
+ * an otherwise-identical key do not collide (MT4/MT5 rows, which DO set a real {@code server_name}
+ * as of TICKET-101/102's own follow-up, are covered by the constraint as intended). {@code
+ * existsForUser} is the application-level guard that covers the cTrader gap the constraint can't.
  */
 @Repository
 public class BrokerAccountRepository {
@@ -37,7 +40,9 @@ public class BrokerAccountRepository {
             rs.getString("connection_role"),
             openedViaIbLinkId != null ? UUID.fromString(openedViaIbLinkId) : null,
             rs.getString("connection_status"),
-            lastHealthCheckAt != null ? lastHealthCheckAt.toInstant() : null);
+            lastHealthCheckAt != null ? lastHealthCheckAt.toInstant() : null,
+            rs.getString("broker_name"),
+            rs.getString("server_name"));
       };
 
   private final JdbcTemplate jdbcTemplate;
@@ -89,10 +94,17 @@ public class BrokerAccountRepository {
         credentialsCiphertext,
         credentialsKeyVersion,
         "FOLLOWER_ONLY",
+        null,
+        null,
         null);
   }
 
-  /** TICKET-110 — threads connection_role/opened_via_ib_link_id through at link time. */
+  /**
+   * TICKET-110 — threads connection_role/opened_via_ib_link_id through at link time. TICKET-101/102
+   * follow-up — {@code brokerName}/{@code serverName} are both nullable: cTrader linking has a real
+   * broker name (from cTrader's own account list response) but no "server" concept; MT4/MT5 linking
+   * has a real server but no broker-name source beyond a user-entered value.
+   */
   public UUID insert(
       UUID userId,
       String brokerType,
@@ -102,13 +114,16 @@ public class BrokerAccountRepository {
       byte[] credentialsCiphertext,
       short credentialsKeyVersion,
       String connectionRole,
-      UUID openedViaIbLinkId) {
+      UUID openedViaIbLinkId,
+      String brokerName,
+      String serverName) {
     return jdbcTemplate.queryForObject(
         """
         INSERT INTO broker_accounts
           (user_id, broker_type, broker_account_login, display_label, is_demo, currency,
-           credentials_ciphertext, credentials_key_version, connection_role, opened_via_ib_link_id)
-        VALUES (?, ?, ?, ?, ?, 'USD', ?, ?, ?, ?)
+           credentials_ciphertext, credentials_key_version, connection_role, opened_via_ib_link_id,
+           broker_name, server_name)
+        VALUES (?, ?, ?, ?, ?, 'USD', ?, ?, ?, ?, ?, ?)
         RETURNING id
         """,
         UUID.class,
@@ -120,7 +135,9 @@ public class BrokerAccountRepository {
         credentialsCiphertext,
         credentialsKeyVersion,
         connectionRole,
-        openedViaIbLinkId);
+        openedViaIbLinkId,
+        brokerName,
+        serverName);
   }
 
   /**
@@ -217,6 +234,19 @@ public class BrokerAccountRepository {
             id)
         .stream()
         .findFirst();
+  }
+
+  /**
+   * TICKET-101 follow-up — the scheduled archival sweep's own candidate query: every account that
+   * has sat {@code DISCONNECTED} since before {@code olderThan} ({@code updated_at} is re-stamped
+   * by {@link #updateConnectionStatus} every time the status changes, so this is genuinely "time
+   * since disconnect," not just "time since last edit").
+   */
+  public List<UUID> findStaleDisconnectedIds(Instant olderThan) {
+    return jdbcTemplate.query(
+        "SELECT id FROM broker_accounts WHERE connection_status = 'DISCONNECTED' AND updated_at < ?",
+        (rs, rowNum) -> UUID.fromString(rs.getString("id")),
+        Timestamp.from(olderThan));
   }
 
   public void updateConnectionStatus(UUID id, String status) {

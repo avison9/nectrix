@@ -49,7 +49,8 @@ class IndividualModeCapabilityIntegrationTest {
         true,
         "Label",
         connectionRole,
-        null);
+        null,
+        "Test Broker");
   }
 
   private int brokerAccountCount(UUID userId) {

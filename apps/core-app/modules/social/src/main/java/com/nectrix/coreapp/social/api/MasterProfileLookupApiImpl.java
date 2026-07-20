@@ -24,6 +24,7 @@ public class MasterProfileLookupApiImpl implements MasterProfileLookupApi {
                 () -> new NoSuchElementException("No such master profile: " + masterProfileId));
     return new MasterProfileSummaryView(
         profile.id(),
+        profile.userId(),
         profile.primaryBrokerAccountId(),
         profile.feeCollectionMethod(),
         profile.displayName(),

@@ -152,6 +152,17 @@ public class SecurityConfig {
                     .authenticated()
                     .requestMatchers(HttpMethod.DELETE, "/api/v1/broker-accounts/*")
                     .authenticated()
+                    // TICKET-101 follow-up — the user's own explicit "stop this account" step,
+                    // required before DELETE above (see BrokerAccountService#deleteBrokerAccount's
+                    // own Javadoc) — same fetch-then-check-then-mutate guard as PATCH/DELETE.
+                    .requestMatchers(HttpMethod.POST, "/api/v1/broker-accounts/*/disconnect")
+                    .authenticated()
+                    // TICKET-101 follow-up — the on-demand archive-and-delete trigger
+                    // (bootstrap.archival.BrokerAccountArchivalController), same
+                    // fetch-then-check-then-mutate ownership guard as DELETE/disconnect above.
+                    .requestMatchers(
+                        HttpMethod.POST, "/api/v1/broker-accounts/*/archive-and-delete")
+                    .authenticated()
                     .requestMatchers(HttpMethod.GET, "/api/v1/broker-accounts/*/snapshot")
                     .authenticated()
                     .requestMatchers(HttpMethod.GET, "/api/v1/broker-accounts/*/positions")
@@ -323,6 +334,10 @@ public class SecurityConfig {
                     .authenticated()
                     .requestMatchers(HttpMethod.POST, "/api/v1/master/invitations/*/revoke")
                     .authenticated()
+                    // TICKET-118 follow-up — resend isn't a one-shot affair; rotates the token
+                    // and re-sends the email, rate-limited per-invitation in InvitationService.
+                    .requestMatchers(HttpMethod.POST, "/api/v1/master/invitations/*/resend")
+                    .authenticated()
                     // TICKET-118 — public, token-gated (rate-limited in-controller, not here —
                     // see PublicInvitationController/AcceptInviteController's own
                     // InvitationRateLimiterService).
@@ -335,6 +350,23 @@ public class SecurityConfig {
                     .requestMatchers(HttpMethod.GET, "/api/v1/users/me/pending-invitation")
                     .authenticated()
                     .requestMatchers(HttpMethod.POST, "/api/v1/copy-relationships/from-invitation")
+                    .authenticated()
+                    // TICKET-118 follow-up — Follower refers a prospect (nominate), Master reviews
+                    // in their inbox (list/mark-invited/dismiss). Role split
+                    // (FOLLOWER creates, MASTER reviews) is method-security on
+                    // ProspectNominationController, same reasoning as every other role-gated
+                    // matcher above.
+                    .requestMatchers(HttpMethod.POST, "/api/v1/prospect-nominations")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.GET, "/api/v1/prospect-nominations/mine")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.GET, "/api/v1/master/prospect-nominations")
+                    .authenticated()
+                    .requestMatchers(
+                        HttpMethod.POST, "/api/v1/master/prospect-nominations/*/mark-invited")
+                    .authenticated()
+                    .requestMatchers(
+                        HttpMethod.POST, "/api/v1/master/prospect-nominations/*/dismiss")
                     .authenticated()
                     // -- add new protected/public auth-adjacent routes here — anyRequest() below
                     // is intentionally permitAll, not authenticated(), so genuinely unmapped

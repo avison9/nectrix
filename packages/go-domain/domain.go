@@ -77,6 +77,10 @@ type AccountSnapshot struct {
 	FreeMargin      float64  `json:"freeMargin"`
 	MarginLevelPct  *float64 `json:"marginLevelPct"` // nullable
 	AsOf            string   `json:"asOf"`           // ISO-8601 timestamp
+	// Leverage is a pre-formatted ratio string (e.g. "1:500"), empty when not available (MT5/MT4's
+	// own wire protocol carries no leverage field at all yet — would need an EA-side change, not
+	// just Go plumbing; cTrader's own ProtoOATrader.leverageInCents populates this for real).
+	Leverage string `json:"leverage"`
 }
 
 // NormalizedPosition is a broker-agnostic open position.

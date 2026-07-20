@@ -169,6 +169,12 @@ class MtTerminalCredentialIntegrationTest {
     return loginAsWithTotp(email, secret);
   }
 
+  // TICKET-101/102 follow-up — server_name is now really persisted, so broker_accounts' own
+  // UNIQUE(broker_type, broker_account_login, server_name) constraint genuinely applies now — a
+  // fixed literal server value collided with itself across repeated runs against this same
+  // persistent dev DB. Suffixing it per JVM run restores re-runnability.
+  private static final String TEST_SERVER = "Pepperstone-Demo-" + UUID.randomUUID();
+
   private String linkRealMt5Account(String login) {
     String accessToken = loginNewUser();
     HttpResult link =
@@ -176,11 +182,18 @@ class MtTerminalCredentialIntegrationTest {
             "POST",
             "/api/v1/broker-accounts/mt5",
             Map.of(
-                "login", login,
-                "password", "terminal-password-456",
-                "server", "Pepperstone-Demo",
-                "is_demo", true,
-                "display_label", "Terminal cred test"),
+                "login",
+                login,
+                "password",
+                "terminal-password-456",
+                "server",
+                TEST_SERVER,
+                "is_demo",
+                true,
+                "display_label",
+                "Terminal cred test",
+                "broker_name",
+                "Pepperstone"),
             accessToken);
     return (String) link.body().get("id");
   }
@@ -216,7 +229,7 @@ class MtTerminalCredentialIntegrationTest {
     assertThat(response.status()).isEqualTo(200);
     assertThat(response.body().get("login")).isEqualTo("600003");
     assertThat(response.body().get("password")).isEqualTo("terminal-password-456");
-    assertThat(response.body().get("server")).isEqualTo("Pepperstone-Demo");
+    assertThat(response.body().get("server")).isEqualTo(TEST_SERVER);
     assertThat((String) response.body().get("pairingToken")).isNotBlank();
   }
 

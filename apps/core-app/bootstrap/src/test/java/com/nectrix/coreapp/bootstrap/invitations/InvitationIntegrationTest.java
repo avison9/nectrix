@@ -441,6 +441,173 @@ class InvitationIntegrationTest {
     assertThat(storedStatus).isEqualTo("PENDING");
   }
 
+  // ==================== resend ====================
+
+  @Test
+  void resend_aPendingInvitation_rotatesTheTokenAndBumpsResendCount() {
+    MasterFixture master = newMaster("STRIPE_INVOICE");
+    String invitedEmail = "to-resend-" + UUID.randomUUID() + "@example.com";
+    String originalRawToken = createInvitationAndCaptureToken(master, invitedEmail);
+    UUID invitationId =
+        UUID.fromString(
+            jdbcTemplate.queryForObject(
+                "SELECT id FROM invitations WHERE invited_email = ?", String.class, invitedEmail));
+
+    when(emailSender.send(any(), any(), any())).thenReturn(true);
+    HttpResult resend =
+        request(
+            "POST",
+            "/api/v1/master/invitations/" + invitationId + "/resend",
+            null,
+            master.user().accessToken());
+    assertThat(resend.status()).isEqualTo(200);
+    assertThat(resend.body().get("resend_count")).isEqualTo(1);
+
+    // createInvitationAndCaptureToken already clears invocations after the initial create, so
+    // this only sees the resend's own send() call.
+    ArgumentCaptor<String> bodyCaptor = ArgumentCaptor.forClass(String.class);
+    verify(emailSender).send(anyString(), anyString(), bodyCaptor.capture());
+    Matcher matcher = TOKEN_PATTERN.matcher(bodyCaptor.getValue());
+    assertThat(matcher.find()).isTrue();
+    String newRawToken = matcher.group(1);
+    assertThat(newRawToken).isNotEqualTo(originalRawToken);
+
+    // The old token stopped working; the new one is live.
+    HttpResult oldTokenLookup =
+        request("GET", "/api/v1/invitations/by-token/" + originalRawToken, null, null);
+    assertThat(oldTokenLookup.status()).isEqualTo(400);
+    HttpResult newTokenLookup =
+        request("GET", "/api/v1/invitations/by-token/" + newRawToken, null, null);
+    assertThat(newTokenLookup.status()).isEqualTo(200);
+  }
+
+  @Test
+  void resend_anExpiredInvitation_revivesItBackToPending() {
+    MasterFixture master = newMaster("STRIPE_INVOICE");
+    UUID invitationId =
+        seedInvitation(
+            master.masterProfileId(),
+            master.user().userId(),
+            "EXPIRED",
+            "expired-to-resend-" + UUID.randomUUID(),
+            Instant.now().minus(1, ChronoUnit.DAYS));
+
+    when(emailSender.send(any(), any(), any())).thenReturn(true);
+    HttpResult resend =
+        request(
+            "POST",
+            "/api/v1/master/invitations/" + invitationId + "/resend",
+            null,
+            master.user().accessToken());
+    assertThat(resend.status()).isEqualTo(200);
+    assertThat(resend.body().get("status")).isEqualTo("PENDING");
+
+    String storedStatus =
+        jdbcTemplate.queryForObject(
+            "SELECT status FROM invitations WHERE id = ?", String.class, invitationId);
+    assertThat(storedStatus).isEqualTo("PENDING");
+  }
+
+  @Test
+  void resend_anAcceptedInvitation_isRejected() {
+    MasterFixture master = newMaster("STRIPE_INVOICE");
+    UUID invitationId =
+        seedInvitation(
+            master.masterProfileId(),
+            master.user().userId(),
+            "ACCEPTED",
+            "accepted-to-resend-" + UUID.randomUUID(),
+            Instant.now().plus(7, ChronoUnit.DAYS));
+
+    HttpResult resend =
+        request(
+            "POST",
+            "/api/v1/master/invitations/" + invitationId + "/resend",
+            null,
+            master.user().accessToken());
+    assertThat(resend.status()).isEqualTo(409);
+    assertThat(resend.body().get("error")).isEqualTo("invitation_not_resendable");
+  }
+
+  @Test
+  void resend_aRevokedInvitation_isRejected() {
+    MasterFixture master = newMaster("STRIPE_INVOICE");
+    UUID invitationId =
+        seedInvitation(
+            master.masterProfileId(),
+            master.user().userId(),
+            "REVOKED",
+            "revoked-to-resend-" + UUID.randomUUID(),
+            Instant.now().plus(7, ChronoUnit.DAYS));
+
+    HttpResult resend =
+        request(
+            "POST",
+            "/api/v1/master/invitations/" + invitationId + "/resend",
+            null,
+            master.user().accessToken());
+    assertThat(resend.status()).isEqualTo(409);
+    assertThat(resend.body().get("error")).isEqualTo("invitation_not_resendable");
+  }
+
+  @Test
+  void resend_anotherMastersInvitation_isNotFound() {
+    MasterFixture owner = newMaster("STRIPE_INVOICE");
+    MasterFixture attacker = newMaster("STRIPE_INVOICE");
+    String invitedEmail = "resend-owned-by-someone-else-" + UUID.randomUUID() + "@example.com";
+    createInvitationAndCaptureToken(owner, invitedEmail);
+    UUID invitationId =
+        UUID.fromString(
+            jdbcTemplate.queryForObject(
+                "SELECT id FROM invitations WHERE invited_email = ?", String.class, invitedEmail));
+
+    HttpResult resend =
+        request(
+            "POST",
+            "/api/v1/master/invitations/" + invitationId + "/resend",
+            null,
+            attacker.user().accessToken());
+    assertThat(resend.status()).isEqualTo(404);
+  }
+
+  @Test
+  void resend_repeatedlyPastTheLimit_eventuallyGetsRateLimited() {
+    MasterFixture master = newMaster("STRIPE_INVOICE");
+    String invitedEmail = "resend-rate-limit-" + UUID.randomUUID() + "@example.com";
+    createInvitationAndCaptureToken(master, invitedEmail);
+    UUID invitationId =
+        UUID.fromString(
+            jdbcTemplate.queryForObject(
+                "SELECT id FROM invitations WHERE invited_email = ?", String.class, invitedEmail));
+    when(emailSender.send(any(), any(), any())).thenReturn(true);
+
+    List<Integer> statuses =
+        java.util.stream.IntStream.range(0, 8)
+            .mapToObj(
+                i ->
+                    request(
+                            "POST",
+                            "/api/v1/master/invitations/" + invitationId + "/resend",
+                            null,
+                            master.user().accessToken())
+                        .status())
+            .toList();
+    assertThat(statuses).contains(429);
+  }
+
+  // ==================== pending-invitation: organic (never-invited) user ====================
+
+  @Test
+  void pendingInvitation_forAnOrganicUser_returnsNoContentRatherThanErroring() {
+    // Regression — an organic account's created_via_invitation_id is NULL (the overwhelmingly
+    // common case, not an edge case), which used to NPE this endpoint entirely (see
+    // UserInvitationLookupRepository's own Javadoc).
+    NewUser organic = newUser("FOLLOWER");
+    HttpResult pending =
+        request("GET", "/api/v1/users/me/pending-invitation", null, organic.accessToken());
+    assertThat(pending.status()).isEqualTo(204);
+  }
+
   // ==================== RBAC ====================
 
   @Test

@@ -7,6 +7,17 @@ import java.util.Set;
  * used by both {@link BrokerLinkingService} and {@link MtLinkingService} at link time, and by
  * {@link BrokerAccountService} on PATCH, so a bad value surfaces as a clean 400 before ever
  * reaching the DB constraint.
+ *
+ * <p>Deliberately does NOT restrict which value a caller may pick based on their own MASTER/
+ * FOLLOWER role — {@link IndividualModeCapabilityGuard}'s own existing, tested behavior already
+ * allows an Individual-mode caller (neither role) to pick MASTER_ONLY or FOLLOWER_ONLY specifically
+ * (tracked as separate per-role-type slot limits, not forced into BOTH), and a real Master/Follower
+ * is never restricted to their own role's value either — nothing in this domain model actually
+ * forbids e.g. a real Master also holding a separate Follower-only account. apps/web's own
+ * broker-accounts/link/{ctrader,mt5} pages narrow the dropdown to one value per the caller's mode
+ * as a UX simplification (same "hiding options is a UX nicety, not a real gate" precedent
+ * CopyRelationshipActions' own comment establishes) — that's a client-side default, not a
+ * server-enforced invariant.
  */
 final class ConnectionRoles {
 

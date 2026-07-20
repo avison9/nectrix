@@ -70,7 +70,8 @@ public class BrokerAccountOAuthController {
         request.isLive(),
         request.displayLabel(),
         request.connectionRole(),
-        request.openedViaIbLinkId());
+        request.openedViaIbLinkId(),
+        request.brokerName());
   }
 
   private UUID currentUserId(Jwt jwt) {
@@ -113,11 +114,19 @@ public class BrokerAccountOAuthController {
     }
   }
 
+  /**
+   * {@code brokerName} — the actual broker's brand name (e.g. "Pepperstone"), distinct from the
+   * CTRADER platform type — sourced from {@link CallbackAccount#brokerTitleShort}'s own value in
+   * the account the frontend's picker screen already has, same trust model {@code displayLabel}
+   * already has (plain client-supplied text, not re-validated against cTrader's API a second time
+   * here — low severity if wrong, it's a display label, not an access-control value).
+   */
   public record LinkRequest(
       String linkSessionId,
       long ctidTraderAccountId,
       boolean isLive,
       String displayLabel,
       String connectionRole,
-      UUID openedViaIbLinkId) {}
+      UUID openedViaIbLinkId,
+      String brokerName) {}
 }

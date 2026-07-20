@@ -30,7 +30,7 @@ export function DisconnectButton({ id, label }: { id: string; label: string }) {
         type="button"
         disabled={pending}
         onClick={onClick}
-        className="h-9 rounded-[9px] border border-[var(--border)] px-3 text-[12.5px] font-semibold text-[var(--neg)] transition-colors hover:bg-[var(--neg)]/8 disabled:opacity-60"
+        className="h-9 rounded-[9px] border border-[var(--border)] px-3 text-[12.5px] font-semibold text-[var(--text)] transition-colors hover:bg-[var(--surface-2)] disabled:opacity-60"
       >
         {pending ? "Disconnecting…" : "Disconnect"}
       </button>

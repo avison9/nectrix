@@ -96,7 +96,9 @@ public class MtLinkingService {
             encrypted.ciphertext().getBytes(StandardCharsets.UTF_8),
             encrypted.keyVersion(),
             resolvedRole,
-            openedViaIbLinkId);
+            openedViaIbLinkId,
+            request.brokerName(),
+            request.server());
 
     return new LinkResult(brokerAccountId, pairingToken, gatewayUrl);
   }
@@ -107,6 +109,11 @@ public class MtLinkingService {
     return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
   }
 
+  /**
+   * {@code brokerName} — MT4/MT5 has no OAuth account list to source a real broker name from
+   * (unlike cTrader's own {@code brokerTitleShort}), so this is plain user-entered text, same trust
+   * model {@code displayLabel} already has.
+   */
   public record LinkRequest(
       String login,
       String password,
@@ -114,7 +121,8 @@ public class MtLinkingService {
       boolean isDemo,
       String displayLabel,
       String connectionRole,
-      UUID openedViaIbLinkId) {}
+      UUID openedViaIbLinkId,
+      String brokerName) {}
 
   public record LinkResult(UUID brokerAccountId, String pairingToken, String gatewayUrl) {}
 

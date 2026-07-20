@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { getCopyRelationship, listCopyRelationshipTrades } from "@nectrix/api-client";
 import { coreAppBaseUrl } from "@/lib/core-app";
 import { requireSession } from "@/lib/auth";
@@ -19,6 +20,16 @@ export default async function CopyRelationshipDetailPage({
 
   return (
     <div className="mx-auto max-w-[560px]">
+      <Link
+        href="/copy-relationships"
+        className="mb-4 inline-flex h-[34px] items-center gap-1.5 rounded-[9px] border border-[var(--border)] px-3 text-[13px] font-semibold text-[var(--text-2)] transition-colors hover:bg-[var(--surface-2)]"
+      >
+        <svg viewBox="0 0 24 24" width={15} height={15} fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+          <path d="M15 18l-6-6 6-6" />
+        </svg>
+        Back to my masters
+      </Link>
+
       <div className="flex items-center justify-between">
         <h1 className="text-[20px] font-semibold tracking-tight text-[var(--text)]">
           Copy relationship

@@ -176,13 +176,29 @@ class BrokerAccountMtIntegrationTest {
     return loginAsWithTotp(email, secret);
   }
 
+  // TICKET-101/102 follow-up — server_name is now really persisted (not always NULL, see
+  // BrokerAccountRepository's own class Javadoc), so broker_accounts' own UNIQUE(broker_type,
+  // broker_account_login, server_name) constraint genuinely applies now. This class's hardcoded,
+  // per-test-method login numbers (500001, 500002, ...) stay distinct WITHIN one run, but a fixed
+  // literal server value collided with itself across repeated runs against this same persistent
+  // dev DB (no per-test rollback here) — suffixing it per JVM run keeps the readable login scheme
+  // intact while restoring re-runnability.
+  private static final String TEST_SERVER = "Pepperstone-Demo-" + UUID.randomUUID();
+
   private Map<String, Object> mt5LinkBody(String login) {
     return Map.of(
-        "login", login,
-        "password", "terminal-password-123",
-        "server", "Pepperstone-Demo",
-        "is_demo", true,
-        "display_label", "My MT5 Demo");
+        "login",
+        login,
+        "password",
+        "terminal-password-123",
+        "server",
+        TEST_SERVER,
+        "is_demo",
+        true,
+        "display_label",
+        "My MT5 Demo",
+        "broker_name",
+        "Pepperstone");
   }
 
   @Test
@@ -308,7 +324,7 @@ class BrokerAccountMtIntegrationTest {
 
     assertThat(response.status()).isEqualTo(200);
     assertThat(response.body().get("login")).isEqualTo("500501");
-    assertThat(response.body().get("server")).isEqualTo("Pepperstone-Demo");
+    assertThat(response.body().get("server")).isEqualTo(TEST_SERVER);
     assertThat(response.body().get("pairingToken")).isEqualTo(pairingToken);
     // The terminal password must never be exposed over this endpoint — see
     // BrokerAccountInternalService#fetchMtCredentials's Javadoc.

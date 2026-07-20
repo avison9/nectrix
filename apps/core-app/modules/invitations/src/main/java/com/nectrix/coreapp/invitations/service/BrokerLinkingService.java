@@ -106,7 +106,8 @@ public class BrokerLinkingService {
       boolean isLive,
       String displayLabel,
       String connectionRole,
-      UUID openedViaIbLinkId) {
+      UUID openedViaIbLinkId,
+      String brokerName) {
     OAuthLinkStateStore.LinkSession session =
         stateStore.consumeLinkSession(linkSessionId).orElseThrow(InvalidLinkSessionException::new);
     if (!session.userId().equals(callerUserId)) {
@@ -142,7 +143,9 @@ public class BrokerLinkingService {
             encrypted.ciphertext().getBytes(StandardCharsets.UTF_8),
             encrypted.keyVersion(),
             resolvedRole,
-            openedViaIbLinkId);
+            openedViaIbLinkId,
+            brokerName,
+            null);
     return repository.findById(brokerAccountId).orElseThrow(BrokerAccountNotFoundException::new);
   }
 

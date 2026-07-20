@@ -1,6 +1,6 @@
 "use server";
 
-import { ApiError, createInvitation, revokeInvitation } from "@nectrix/api-client";
+import { ApiError, createInvitation, resendInvitation, revokeInvitation } from "@nectrix/api-client";
 import { coreAppBaseUrl } from "@/lib/core-app";
 import { requireSession } from "@/lib/auth";
 
@@ -36,6 +36,26 @@ export async function revokeInvitationAction(id: string): Promise<ActionResult> 
   } catch (error) {
     if (error instanceof ApiError) {
       return { error: "Couldn't revoke this invite — please try again." };
+    }
+    return { error: "Something went wrong — please try again." };
+  }
+}
+
+export async function resendInvitationAction(id: string): Promise<ActionResult> {
+  const { accessToken } = await requireSession();
+  try {
+    await resendInvitation(coreAppBaseUrl(), accessToken, id);
+    return { ok: true };
+  } catch (error) {
+    if (error instanceof ApiError) {
+      const body = error.body as { error?: string } | null;
+      if (body?.error === "rate_limited") {
+        return { error: "Resent too many times recently — try again later." };
+      }
+      if (body?.error === "invitation_not_resendable") {
+        return { error: "This invite can't be resent anymore." };
+      }
+      return { error: "Couldn't resend this invite — please try again." };
     }
     return { error: "Something went wrong — please try again." };
   }

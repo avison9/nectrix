@@ -25,6 +25,10 @@ dependencyManagement {
 dependencies {
     implementation(project(":modules:invitations"))
     implementation(project(":modules:social"))
+    // TICKET-118 follow-up — NotificationDispatchApi, for ProspectNominationService to notify a
+    // Master when a Follower nominates a prospect. Safe one-way edge: notifications has zero
+    // dependencies of its own on any bounded-context module, so this can never cycle.
+    implementation(project(":modules:notifications"))
     implementation("org.springframework.boot:spring-boot-starter-jdbc") // JdbcTemplate (money_management_profiles)
     // TICKET-111 — CopyRelationshipController.
     implementation("org.springframework.boot:spring-boot-starter-web") // @RestController

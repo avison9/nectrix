@@ -35,3 +35,26 @@ spec:
               value: kafka.host-services.svc.cluster.local
             - name: KMS_ENDPOINT_OVERRIDE
               value: http://localstack.host-services.svc.cluster.local:4566
+            # TICKET-101 follow-up — same "this VM has no real cloud KMS" reasoning above, this
+            # VM also has no real cloud blob storage provisioned: the MinIO instance
+            # infra/gcp-dev-vm/docker-compose.yml already runs (reached via
+            # deploy/overlays/dev/host-services/minio.yaml's own Service) stands in for it, same
+            # local-emulated-infra pattern. access-key is the same hardcoded MINIO_ROOT_USER value
+            # that docker-compose.yml sets for the MinIO container itself, not a secret.
+            - name: ARCHIVAL_ENDPOINT_OVERRIDE
+              value: http://minio.host-services.svc.cluster.local:9000
+            - name: ARCHIVAL_BUCKET
+              value: nectrix-archival-dev
+            - name: ARCHIVAL_ACCESS_KEY
+              value: nectrix
+            - name: ARCHIVAL_SECRET_KEY
+              valueFrom:
+                secretKeyRef: { name: core-app-secrets, key: minio-root-password }
+            # Must exactly match the redirect URI registered with the Spotware
+            # app behind DEV_CTRADER_CLIENT_ID — routes through gateway's own
+            # nginx reverse proxy (deploy/base/gateway), not directly to
+            # core-app's ClusterIP-only Service, since this URL is followed by
+            # the user's own browser after Spotware's auth screen, not called
+            # server-to-server.
+            - name: CTRADER_REDIRECT_URI
+              value: https://api.dev.nectrix.app/api/v1/broker/ctrader/callback
