@@ -26,10 +26,14 @@ const (
 	serviceName     = "mt5-bridge-gateway"
 	addr            = ":8092"
 	eaWebSocketPath = "/ea/ws"
-	drainSleep      = 10 * time.Second
-	shutdownWait    = 5 * time.Second
-	dedupTTL        = 5 * time.Minute
-	pairingInterval = 30 * time.Second
+	// TICKET-121 — MT4's HTTP long-polling transport routes.
+	eaHTTPHelloPath  = "/ea/hello"
+	eaHTTPPollPath   = "/ea/poll"
+	eaHTTPEventsPath = "/ea/events"
+	drainSleep       = 10 * time.Second
+	shutdownWait     = 5 * time.Second
+	dedupTTL         = 5 * time.Minute
+	pairingInterval  = 30 * time.Second
 )
 
 type healthResponse struct {
@@ -109,6 +113,13 @@ func main() {
 		_ = json.NewEncoder(w).Encode(healthResponse{Service: serviceName, Status: "ok"})
 	})
 	mux.Handle(eaWebSocketPath, eaServer.Handler())
+	// TICKET-121 — MT4's own transport (MQL4 has no native Socket*()
+	// functions, so its EA speaks HTTP long-polling instead of the
+	// WebSocket path above — see internal/eabridge/httphandler.go's own
+	// doc comment). MT5's EA is unaffected, still dials eaWebSocketPath.
+	mux.Handle(eaHTTPHelloPath, eaServer.HelloHandler())
+	mux.Handle(eaHTTPPollPath, eaServer.PollHandler())
+	mux.Handle(eaHTTPEventsPath, eaServer.EventsHandler())
 	mux.Handle("/internal/", internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5Adapter, MT4: mt4Adapter}, internalServiceToken, logger))
 
 	server := &http.Server{Addr: addr, Handler: mux}

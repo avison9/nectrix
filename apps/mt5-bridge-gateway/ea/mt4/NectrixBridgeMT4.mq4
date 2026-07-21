@@ -2,36 +2,54 @@
 //|                                            NectrixBridgeMT4.mq4   |
 //|                                                          Nectrix  |
 //|                                                                   |
-//| TICKET-102 — the MT4 half of the EA-bridge strategy, pulled       |
-//| forward from its original Phase-3 scope (TICKET-311) alongside    |
-//| MT5, at the user's request. Field-for-field, message-for-message  |
-//| the same wire protocol as NectrixBridgeMT5.mq5 (see that file's   |
-//| header for the full protocol rationale and apps/mt5-bridge-gateway|
-//| /internal/eabridge's wire.go, which this must match exactly) — the|
-//| ONLY real differences here are MQL4's order/trading API shape     |
-//| (ticket-based OrderSend/OrderModify/OrderClose, no CTrade class,  |
-//| no netting position model) versus MQL5's. Both EAs dial into the  |
-//| SAME Go gateway process/port; the gateway tells them apart via    |
-//| the "platform" field in the hello handshake.                      |
+//| TICKET-121 — MQL4 has no native Socket*() functions at all        |
+//| (confirmed against MQL4's own reference docs: Socket* was added   |
+//| in MQL5 only, never backported — a genuine platform gap, not a    |
+//| bug; the original version of this file assumed otherwise and      |
+//| failed nine real MetaEditor compile errors, see this ticket's own |
+//| plan). So unlike NectrixBridgeMT5.mq5's persistent-WebSocket       |
+//| design, this EA speaks HTTP long-polling via MQL4's native        |
+//| WebRequest(): POST /ea/hello once at startup (the handshake),     |
+//| POST /ea/poll on every OnTimer tick to fetch pending gateway->EA  |
+//| messages, POST /ea/events for every EA->gateway message           |
+//| (trade_event/*_result/pong) — see apps/mt5-bridge-gateway/        |
+//| internal/eabridge/httphandler.go, whose /ea/hello, /ea/poll,      |
+//| /ea/events routes this file talks to. The wire message shapes     |
+//| (hello/hello_ack/trade_event/etc — see internal/eabridge/wire.go) |
+//| are byte-for-byte identical to MT5's own — only the transport      |
+//| differs; internal/eabridge/httpconn.go makes the two transports   |
+//| genuinely indistinguishable to the Go gateway's own session/       |
+//| request-correlation logic.                                        |
 //|                                                                   |
-//| Socket*/CryptEncode functions are available in MQL4 since the     |
-//| ~2014 MetaQuotes unification of the MQL4/MQL5 runtimes (build     |
-//| 600+) — this file assumes a modern MT4 terminal, consistent with  |
-//| this ticket's own EA-bridge strategy (a genuinely old MT4 build   |
-//| couldn't run either language's socket API at all).                |
+//| Field-for-field, message-for-message the same protocol as before  |
+//| — the ONLY real difference from a from-scratch rewrite is the     |
+//| connection layer; MT4's own ticket-based OrderSend/OrderModify/   |
+//| OrderClose trade model (no CTrade class, no netting) is untouched.|
+//|                                                                   |
+//| WebRequest() requires the gateway's hello/poll/events URLs to be  |
+//| allow-listed in the terminal (Tools -> Options -> Expert Advisors |
+//| -> "Allow WebRequest for listed URL", or the .ini-based headless  |
+//| equivalent apps/mt-terminal-host/terminal-image/entrypoint.sh     |
+//| attempts — UNVERIFIED against a real terminal boot, see that      |
+//| script's own comment). Without it, every WebRequest() call fails  |
+//| with error 4060 (function not allowed) — HttpPostJson below logs  |
+//| that distinctly so a misconfigured allow-list is never mistaken   |
+//| for a gateway outage.                                              |
 //+------------------------------------------------------------------+
 #property copyright "Nectrix"
 #property link      "https://nectrix.example"
 #property version   "1.00"
 #property strict
 
-//--- Inputs — pasted by the user from the POST /api/v1/broker-accounts/mt4 response.
+//--- Inputs — pasted by the user from the POST /api/v1/broker-accounts/mt4 response
+//    (BrokerAccountMtController.LinkResponse: pairingToken + gatewayUrl).
 input string InpPairingToken   = "";                 // Pairing token (from the link response)
 input string InpGatewayHost    = "127.0.0.1";         // mt5-bridge-gateway host (from gatewayUrl)
 input int    InpGatewayPort    = 8092;                // mt5-bridge-gateway port (from gatewayUrl)
-input string InpGatewayPath    = "/ea/ws";            // WebSocket path (from gatewayUrl)
-input int    InpPollMs         = 500;                 // OnTimer poll interval, ms
-input int    InpReconnectSec   = 5;                   // Reconnect backoff after a dropped socket
+input string InpGatewayPath    = "/ea";               // Base HTTP path (from gatewayUrl) — /hello, /poll, /events are appended
+input int    InpPollMs         = 2000;                // OnTimer interval, ms — each tick makes a real blocking WebRequest() poll call, so this is deliberately less aggressive than a raw socket-read poll would need to be
+input int    InpPollTimeoutMs  = 20000;               // WebRequest() timeout for /ea/poll — must be >= the gateway's own httpPollMaxWait (20s) plus network slack
+input int    InpReconnectSec   = 5;                   // Reconnect backoff after a failed/rejected hello
 input int    InpSlippagePoints = 30;                  // Slippage tolerance for OrderSend/OrderClose
 
 //--- Wire protocol message-type string constants — must match wire.go's msgType* consts exactly.
@@ -54,16 +72,16 @@ input int    InpSlippagePoints = 30;                  // Slippage tolerance for 
 #define ACTION_MODIFY "MODIFY"
 #define ACTION_CLOSE  "CLOSE"
 
-//--- Socket / WebSocket session state
-int    g_socket            = INVALID_HANDLE;
-bool   g_httpUpgraded       = false;
-bool   g_paired             = false;
-string g_brokerAccountId    = "";
-uchar  g_recvBuf[];
+//--- HTTP long-poll session state (replaces a raw socket handle — there is
+//    no persistent connection to hold onto between OnTimer ticks).
+bool     g_paired             = false; // hello_ack{accepted:true} received
+string   g_sessionToken       = "";
+string   g_brokerAccountId    = "";
 datetime g_lastConnectAttempt = 0;
 
-//--- Position tracking (MT4: one "position" == one open OP_BUY/OP_SELL order/ticket — no netting,
-//    so this is simpler than MT5's model but the delta-detection approach is identical).
+//--- Position tracking, to derive OPENED/MODIFIED/PARTIALLY_CLOSED/CLOSED deltas — MT4: one
+//    "position" == one open OP_BUY/OP_SELL order/ticket (no netting), so this is simpler than
+//    MT5's model but the delta-detection approach is identical.
 struct TrackedPosition
   {
    int    ticket;
@@ -80,7 +98,6 @@ TrackedPosition g_tracked[];
 //+------------------------------------------------------------------+
 int OnInit()
   {
-   ArrayResize(g_recvBuf, 0);
    ArrayResize(g_tracked, 0);
    EventSetMillisecondTimer(InpPollMs);
    if(InpPairingToken == "")
@@ -89,314 +106,135 @@ int OnInit()
       return(INIT_PARAMETERS_INCORRECT);
      }
    ConnectGateway();
-   return(INIT_SUCCEEDED);
+   return(INIT_SUCCEEDED); // a failed initial hello retries from OnTimer, not fatal to EA load
   }
 
+//+------------------------------------------------------------------+
 void OnDeinit(const int reason)
   {
    EventKillTimer();
-   CloseGateway();
+   g_paired = false;
+   g_sessionToken = "";
   }
 
+//+------------------------------------------------------------------+
 void OnTimer()
   {
-   if(g_socket == INVALID_HANDLE)
+   if(!g_paired)
      {
       if(TimeCurrent() - g_lastConnectAttempt >= InpReconnectSec)
          ConnectGateway();
       return;
      }
-   PumpSocket();
-   if(g_httpUpgraded && g_paired)
+   PollGateway();
+   if(g_paired) // PollGateway may have cleared this on a 401 (expired/idle-timed-out session)
       DetectAndSendPositionDeltas();
   }
 
 //+------------------------------------------------------------------+
-//| Connection lifecycle                                             |
+//| HTTP transport                                                    |
 //+------------------------------------------------------------------+
+string GatewayUrl(string subPath)
+  {
+   return("http://" + InpGatewayHost + ":" + IntegerToString(InpGatewayPort) + InpGatewayPath + subPath);
+  }
+
+//| Issues one POST with a JSON body via WebRequest() — returns the real
+//| HTTP status code, or -1 on a transport-level failure (most commonly
+//| error 4060, "function not allowed", meaning the URL isn't allow-listed).
+int HttpPostJson(string url, string jsonBody, int timeoutMs, string &outResponseBody)
+  {
+   uchar data[];
+   int len = StringToCharArray(jsonBody, data, 0, StringLen(jsonBody), CP_UTF8) - 1;
+   ArrayResize(data, MathMax(len, 0));
+   uchar result[];
+   string resultHeaders;
+   ResetLastError();
+   int status = WebRequest("POST", url, "Content-Type: application/json\r\n", timeoutMs, data, result, resultHeaders);
+   if(status == -1)
+     {
+      int err = GetLastError();
+      if(err == 4060)
+         Print("Nectrix: WebRequest blocked (error 4060) — add ", url, " to Tools > Options > Expert Advisors > \"Allow WebRequest for listed URL\"");
+      else
+         Print("Nectrix: WebRequest to ", url, " failed, error ", err);
+      outResponseBody = "";
+      return(-1);
+     }
+   outResponseBody = CharArrayToString(result, 0, ArraySize(result), CP_UTF8);
+   return(status);
+  }
+
+//| The handshake — HTTP counterpart of the WebSocket EA's ConnectGateway
+//| (SendHttpUpgrade + SendHello combined into one request/response).
 void ConnectGateway()
   {
    g_lastConnectAttempt = TimeCurrent();
-   CloseGateway();
-
-   g_socket = SocketCreate();
-   if(g_socket == INVALID_HANDLE)
-     {
-      Print("Nectrix: SocketCreate failed, error ", GetLastError());
-      return;
-     }
-   if(!SocketConnect(g_socket, InpGatewayHost, InpGatewayPort, 5000))
-     {
-      Print("Nectrix: SocketConnect to ", InpGatewayHost, ":", InpGatewayPort, " failed, error ", GetLastError());
-      SocketClose(g_socket);
-      g_socket = INVALID_HANDLE;
-      return;
-     }
-   if(!SendHttpUpgrade())
-     {
-      Print("Nectrix: WebSocket upgrade request failed to send");
-      CloseGateway();
-      return;
-     }
-   if(!ReadHttpUpgradeResponse())
-     {
-      Print("Nectrix: WebSocket upgrade response was rejected/malformed");
-      CloseGateway();
-      return;
-     }
-
-   g_httpUpgraded = true;
    g_paired = false;
+   g_sessionToken = "";
    g_brokerAccountId = "";
-   SendHello();
-  }
 
-void CloseGateway()
-  {
-   if(g_socket != INVALID_HANDLE)
+   string login = IntegerToString(AccountNumber());
+   string server = AccountServer();
+   string currency = AccountCurrency();
+   string helloJson =
+      "{\"type\":\"" MSG_HELLO "\"," +
+      "\"pairingToken\":\"" + JsonEscape(InpPairingToken) + "\"," +
+      "\"platform\":\"MT4\"," +
+      "\"login\":\"" + login + "\"," +
+      "\"server\":\"" + JsonEscape(server) + "\"," +
+      "\"currency\":\"" + JsonEscape(currency) + "\"}";
+
+   string response;
+   int status = HttpPostJson(GatewayUrl("/hello"), helloJson, 10000, response);
+   if(status != 200)
+      return; // HttpPostJson already logged the reason; retried on the next OnTimer reconnect tick
+
+   bool accepted = (StringFind(response, "\"accepted\":true") >= 0);
+   if(!accepted)
      {
-      SocketClose(g_socket);
-      g_socket = INVALID_HANDLE;
-     }
-   g_httpUpgraded = false;
-   g_paired = false;
-   ArrayResize(g_recvBuf, 0);
-  }
-
-//+------------------------------------------------------------------+
-//| HTTP Upgrade handshake (RFC 6455 §4) — identical to the MT5 EA's  |
-//+------------------------------------------------------------------+
-bool SendHttpUpgrade()
-  {
-   string key = GenerateWebSocketKeyBase64();
-   string req =
-      "GET " + InpGatewayPath + " HTTP/1.1\r\n" +
-      "Host: " + InpGatewayHost + ":" + IntegerToString(InpGatewayPort) + "\r\n" +
-      "Upgrade: websocket\r\n" +
-      "Connection: Upgrade\r\n" +
-      "Sec-WebSocket-Key: " + key + "\r\n" +
-      "Sec-WebSocket-Version: 13\r\n\r\n";
-
-   uchar reqBytes[];
-   int len = StringToCharArray(req, reqBytes, 0, StringLen(req), CP_UTF8) - 1;
-   return(SocketSend(g_socket, reqBytes, len) == len);
-  }
-
-bool ReadHttpUpgradeResponse()
-  {
-   uchar buf[];
-   ArrayResize(buf, 0);
-   uint deadline = GetTickCount() + 5000;
-   while(GetTickCount() < deadline)
-     {
-      uchar chunk[4096];
-      int got = SocketRead(g_socket, chunk, 4096, 1000);
-      if(got > 0)
-        {
-         int oldLen = ArraySize(buf);
-         ArrayResize(buf, oldLen + got);
-         for(int i = 0; i < got; i++)
-            buf[oldLen + i] = chunk[i];
-         string asText = CharArrayToString(buf, 0, ArraySize(buf), CP_UTF8);
-         int headerEnd = StringFind(asText, "\r\n\r\n");
-         if(headerEnd >= 0)
-            return(ValidateUpgradeHeaders(StringSubstr(asText, 0, headerEnd)));
-        }
-     }
-   return(false);
-  }
-
-bool ValidateUpgradeHeaders(string headers)
-  {
-   if(StringFind(headers, "101") < 0)
-     {
-      Print("Nectrix: gateway did not return 101 Switching Protocols: ", headers);
-      return(false);
-     }
-   return(true); // see NectrixBridgeMT5.mq5's identical note on why Sec-WebSocket-Accept isn't re-verified
-  }
-
-string GenerateWebSocketKeyBase64()
-  {
-   uchar raw[16];
-   for(int i = 0; i < 16; i++)
-      raw[i] = (uchar)(MathRand() % 256);
-   uchar encoded[];
-   uchar key[];
-   CryptEncode(CRYPT_BASE64, raw, key, encoded);
-   return(CharArrayToString(encoded, 0, ArraySize(encoded), CP_UTF8));
-  }
-
-//+------------------------------------------------------------------+
-//| WebSocket framing — byte-for-byte identical to the MT5 EA's       |
-//+------------------------------------------------------------------+
-void WsSendText(string payload)
-  {
-   uchar body[];
-   int bodyLen = StringToCharArray(payload, body, 0, StringLen(payload), CP_UTF8) - 1;
-
-   uchar mask[4];
-   for(int i = 0; i < 4; i++)
-      mask[i] = (uchar)(MathRand() % 256);
-
-   uchar frame[];
-   int headerLen;
-   if(bodyLen < 126)
-     {
-      headerLen = 2;
-      ArrayResize(frame, headerLen);
-      frame[0] = 0x81;
-      frame[1] = (uchar)(0x80 | bodyLen);
-     }
-   else if(bodyLen <= 65535)
-     {
-      headerLen = 4;
-      ArrayResize(frame, headerLen);
-      frame[0] = 0x81;
-      frame[1] = 0x80 | 126;
-      frame[2] = (uchar)((bodyLen >> 8) & 0xFF);
-      frame[3] = (uchar)(bodyLen & 0xFF);
-     }
-   else
-     {
-      headerLen = 10;
-      ArrayResize(frame, headerLen);
-      frame[0] = 0x81;
-      frame[1] = 0x80 | 127;
-      for(int i = 0; i < 4; i++)
-         frame[2 + i] = 0;
-      frame[6] = (uchar)((bodyLen >> 24) & 0xFF);
-      frame[7] = (uchar)((bodyLen >> 16) & 0xFF);
-      frame[8] = (uchar)((bodyLen >> 8) & 0xFF);
-      frame[9] = (uchar)(bodyLen & 0xFF);
-     }
-
-   int maskOffset = headerLen;
-   ArrayResize(frame, headerLen + 4 + bodyLen);
-   for(int i = 0; i < 4; i++)
-      frame[maskOffset + i] = mask[i];
-   for(int i = 0; i < bodyLen; i++)
-      frame[maskOffset + 4 + i] = (uchar)(body[i] ^ mask[i % 4]);
-
-   SocketSend(g_socket, frame, ArraySize(frame));
-  }
-
-void PumpSocket()
-  {
-   uchar chunk[4096];
-   int got = SocketRead(g_socket, chunk, 4096, 0);
-   if(got < 0)
-     {
-      Print("Nectrix: socket read error ", GetLastError(), " — reconnecting");
-      CloseGateway();
+      Print("Nectrix: pairing rejected: ", JsonGetString(response, "reason"));
       return;
      }
-   if(got == 0 && !SocketIsConnected(g_socket))
-     {
-      Print("Nectrix: gateway connection lost — reconnecting");
-      CloseGateway();
-      return;
-     }
-   if(got > 0)
-     {
-      int oldLen = ArraySize(g_recvBuf);
-      ArrayResize(g_recvBuf, oldLen + got);
-      for(int i = 0; i < got; i++)
-         g_recvBuf[oldLen + i] = chunk[i];
-     }
 
-   while(true)
-     {
-      int consumed = 0;
-      string payload;
-      if(!TryExtractFrame(g_recvBuf, payload, consumed))
-         break;
-      DispatchMessage(payload);
-      RemoveFromFront(g_recvBuf, consumed);
-     }
+   g_paired = true;
+   g_sessionToken = JsonGetString(response, "sessionToken");
+   g_brokerAccountId = JsonGetString(response, "brokerAccountId");
+   Print("Nectrix: paired, brokerAccountId=", g_brokerAccountId);
+   SeedTrackedPositionsWithoutEmitting();
   }
 
-bool TryExtractFrame(uchar &buf[], string &outPayload, int &outConsumed)
+//| One blocking /ea/poll call (up to InpPollTimeoutMs), dispatching every
+//| message the gateway had queued — the long-polling counterpart of the
+//| WebSocket EA's PumpSocket, run once per OnTimer tick.
+void PollGateway()
   {
-   int n = ArraySize(buf);
-   if(n < 2)
-      return(false);
-
-   uchar byte0 = buf[0];
-   uchar byte1 = buf[1];
-   int opcode = byte0 & 0x0F;
-   bool masked = (byte1 & 0x80) != 0;
-   int lenField = byte1 & 0x7F;
-
-   int pos = 2;
-   ulong payloadLen;
-   if(lenField < 126)
-      payloadLen = (ulong)lenField;
-   else if(lenField == 126)
+   string body = "{\"sessionToken\":\"" + JsonEscape(g_sessionToken) + "\"}";
+   string response;
+   int status = HttpPostJson(GatewayUrl("/poll"), body, InpPollTimeoutMs, response);
+   if(status == 401)
      {
-      if(n < pos + 2) return(false);
-      payloadLen = ((ulong)buf[pos] << 8) | (ulong)buf[pos+1];
-      pos += 2;
+      Print("Nectrix: gateway no longer recognizes this session (expired/idle-timed-out) — reconnecting");
+      g_paired = false;
+      g_sessionToken = "";
+      return;
      }
-   else
-     {
-      if(n < pos + 8) return(false);
-      payloadLen = 0;
-      for(int i = 0; i < 8; i++)
-         payloadLen = (payloadLen << 8) | (ulong)buf[pos+i];
-      pos += 8;
-     }
+   if(status != 200)
+      return; // transient failure — retried on the next tick, session stays paired
 
-   int maskOffset = pos;
-   if(masked)
-      pos += 4;
-
-   if((ulong)(n - pos) < payloadLen)
-      return(false);
-
-   uchar payloadBytes[];
-   ArrayResize(payloadBytes, (int)payloadLen);
-   for(int i = 0; i < (int)payloadLen; i++)
-     {
-      uchar b = buf[pos + i];
-      if(masked)
-         b = (uchar)(b ^ buf[maskOffset + (i % 4)]);
-      payloadBytes[i] = b;
-     }
-
-   outConsumed = pos + (int)payloadLen;
-
-   if(opcode == 0x8)
-     {
-      Print("Nectrix: gateway sent a WebSocket close frame");
-      outPayload = "";
-      CloseGateway();
-      return(false);
-     }
-   if(opcode == 0x9 || opcode == 0xA)
-     {
-      outPayload = "";
-      return(true);
-     }
-
-   outPayload = CharArrayToString(payloadBytes, 0, ArraySize(payloadBytes), CP_UTF8);
-   return(true);
+   string messages[];
+   int count = JsonExtractArray(response, "messages", messages);
+   for(int i = 0; i < count; i++)
+      DispatchMessage(messages[i]);
   }
 
-void RemoveFromFront(uchar &buf[], int count)
+//| Sends one EA->gateway message — the long-polling counterpart of the
+//| WebSocket EA's WsSendText.
+void PostEvent(string payloadJson)
   {
-   int n = ArraySize(buf);
-   if(count <= 0)
-      return;
-   if(count >= n)
-     {
-      ArrayResize(buf, 0);
-      return;
-     }
-   int remaining = n - count;
-   for(int i = 0; i < remaining; i++)
-      buf[i] = buf[i + count];
-   ArrayResize(buf, remaining);
+   string body = "{\"sessionToken\":\"" + JsonEscape(g_sessionToken) + "\",\"message\":" + payloadJson + "}";
+   string response;
+   HttpPostJson(GatewayUrl("/events"), body, 10000, response);
   }
 
 //+------------------------------------------------------------------+
@@ -475,27 +313,88 @@ string JsonEscape(string s)
    return(out);
   }
 
+//| Extracts the raw JSON object strings out of a top-level array-of-objects
+//| field (e.g. "messages":[{...},{...}]) — a depth-and-string-aware bracket
+//| scan, not a general parser (same "targeted extraction over a small fixed
+//| set of known shapes" philosophy as JsonGetString/JsonGetNumber above),
+//| since this only ever needs to split /ea/poll's own "messages" array into
+//| individually-dispatchable object strings. String-awareness matters even
+//| though today's message shapes never nest braces (an unescaped '{'/'}'
+//| inside a JSON string value, e.g. a bracket in a clientOrderTag, would
+//| otherwise desync a naive brace-counting scan).
+int JsonExtractArray(string json, string key, string &out[])
+  {
+   ArrayResize(out, 0);
+   string needle = "\"" + key + "\"";
+   int keyPos = StringFind(json, needle);
+   if(keyPos < 0) return(0);
+   int colon = StringFind(json, ":", keyPos);
+   if(colon < 0) return(0);
+   int bracketStart = StringFind(json, "[", colon);
+   if(bracketStart < 0) return(0);
+
+   int pos = bracketStart + 1;
+   int n = StringLen(json);
+   int count = 0;
+   while(pos < n)
+     {
+      while(pos < n)
+        {
+         ushort ws = StringGetCharacter(json, pos);
+         if(ws == ' ' || ws == ',' || ws == '\n' || ws == '\r' || ws == '\t')
+            pos++;
+         else
+            break;
+        }
+      if(pos >= n || StringGetCharacter(json, pos) == ']')
+         break;
+      if(StringGetCharacter(json, pos) != '{')
+         break; // malformed — bail out with whatever was already extracted
+
+      int depth = 0;
+      int objStart = pos;
+      bool inString = false;
+      while(pos < n)
+        {
+         ushort c = StringGetCharacter(json, pos);
+         if(inString)
+           {
+            if(c == '\\')
+               pos++; // skip the escaped character too, so a \" doesn't end the string early
+            else if(c == '"')
+               inString = false;
+           }
+         else
+           {
+            if(c == '"')
+               inString = true;
+            else if(c == '{')
+               depth++;
+            else if(c == '}')
+              {
+               depth--;
+               if(depth == 0)
+                 {
+                  pos++;
+                  break;
+                 }
+              }
+           }
+         pos++;
+        }
+      ArrayResize(out, count + 1);
+      out[count] = StringSubstr(json, objStart, pos - objStart);
+      count++;
+     }
+   return(count);
+  }
+
 //+------------------------------------------------------------------+
 //| Outbound message builders                                        |
 //+------------------------------------------------------------------+
-void SendHello()
-  {
-   string login = IntegerToString(AccountNumber());
-   string server = AccountServer();
-   string currency = AccountCurrency();
-   string json =
-      "{\"type\":\"" MSG_HELLO "\"," +
-      "\"pairingToken\":\"" + JsonEscape(InpPairingToken) + "\"," +
-      "\"platform\":\"MT4\"," +
-      "\"login\":\"" + login + "\"," +
-      "\"server\":\"" + JsonEscape(server) + "\"," +
-      "\"currency\":\"" + JsonEscape(currency) + "\"}";
-   WsSendText(json);
-  }
-
 void SendPong(string requestId)
   {
-   WsSendText("{\"type\":\"" MSG_PONG "\",\"requestId\":\"" + requestId + "\"}");
+   PostEvent("{\"type\":\"" MSG_PONG "\",\"requestId\":\"" + requestId + "\"}");
   }
 
 string PositionToJson(const TrackedPosition &p)
@@ -530,7 +429,7 @@ void SendTradeEvent(string eventType, const TrackedPosition &p, double closedVol
       "\"closedVolumeLots\":" + (hasClosedVolume ? DoubleToString(closedVolume, 2) : "null") + "," +
       "\"serverTimestamp\":\"" + TimeToIso(TimeCurrent()) + "\"," +
       "\"receivedAtGateway\":\"\"}";
-   WsSendText(json);
+   PostEvent(json);
   }
 
 //+------------------------------------------------------------------+
@@ -541,24 +440,6 @@ void DispatchMessage(string json)
    if(json == "")
       return;
    string msgType = JsonGetString(json, "type");
-
-   if(msgType == MSG_HELLO_ACK)
-     {
-      bool accepted = (StringFind(json, "\"accepted\":true") >= 0);
-      if(accepted)
-        {
-         g_paired = true;
-         g_brokerAccountId = JsonGetString(json, "brokerAccountId");
-         Print("Nectrix: paired, brokerAccountId=", g_brokerAccountId);
-         SeedTrackedPositionsWithoutEmitting();
-        }
-      else
-        {
-         Print("Nectrix: pairing rejected: ", JsonGetString(json, "reason"));
-         CloseGateway();
-        }
-      return;
-     }
 
    if(msgType == MSG_PING)
      {
@@ -609,7 +490,7 @@ void HandleSnapshotRequest(string requestId)
       "\"freeMargin\":" + DoubleToString(freeMargin, 2) + "," +
       "\"marginLevelPct\":" + (marginLevel > 0 ? DoubleToString(marginLevel, 2) : "null") + "," +
       "\"asOf\":\"" + TimeToIso(TimeCurrent()) + "\"}";
-   WsSendText(json);
+   PostEvent(json);
   }
 
 void HandlePositionsRequest(string requestId)
@@ -628,7 +509,7 @@ void HandlePositionsRequest(string requestId)
    string json =
       "{\"type\":\"" MSG_POSITIONS_RESULT "\",\"requestId\":\"" + requestId + "\"," +
       "\"positions\":[" + items + "]}";
-   WsSendText(json);
+   PostEvent(json);
   }
 
 void HandleSymbolSpecRequest(string reqJson)
@@ -638,7 +519,7 @@ void HandleSymbolSpecRequest(string reqJson)
 
    if(MarketInfo(symbol, MODE_TRADEALLOWED) == 0 && MarketInfo(symbol, MODE_LOTSIZE) == 0)
      {
-      WsSendText("{\"type\":\"" MSG_SYMBOL_SPEC_RES "\",\"requestId\":\"" + requestId + "\",\"error\":\"unknown symbol\"}");
+      PostEvent("{\"type\":\"" MSG_SYMBOL_SPEC_RES "\",\"requestId\":\"" + requestId + "\",\"error\":\"unknown symbol\"}");
       return;
      }
 
@@ -661,7 +542,7 @@ void HandleSymbolSpecRequest(string reqJson)
       "\"pipSize\":" + DoubleToString(pipSize, 8) + "," +
       "\"digits\":" + IntegerToString(digits) + "," +
       "\"marginCurrency\":\"" + JsonEscape(marginCurrency) + "\"}";
-   WsSendText(json);
+   PostEvent(json);
   }
 
 void HandleOrderCommand(string reqJson)
@@ -760,7 +641,7 @@ void HandleOrderCommand(string reqJson)
       "\"brokerPositionId\":\"" + brokerPositionId + "\"," +
       "\"filledPrice\":" + (hasFilledPrice ? DoubleToString(filledPrice, Digits) : "null") + "," +
       "\"rejectReason\":\"" + JsonEscape(rejectReason) + "\"}";
-   WsSendText(json);
+   PostEvent(json);
   }
 
 //+------------------------------------------------------------------+

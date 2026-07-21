@@ -2,11 +2,28 @@ package eabridge
 
 import "encoding/json"
 
-// Wire protocol: one JSON object per WebSocket text frame, discriminated by
-// a "type" field. Both MT5's and MT4's Expert Advisor sides speak the exact
-// same shape — MQL5/MQL4 differ in how each EA reads its own platform's
-// native trade model, not in what goes over the wire (see this package's
-// README section in apps/mt5-bridge-gateway/README.md).
+// Wire protocol: one JSON object per message, discriminated by a "type"
+// field. Both MT5's and MT4's Expert Advisor sides speak the exact same
+// message shapes — MQL5/MQL4 differ in how each EA reads its own
+// platform's native trade model, not in what goes over the wire (see this
+// package's README section in apps/mt5-bridge-gateway/README.md) — AND,
+// as of TICKET-121, in which of two transports actually carries them:
+//
+//   - MT5 (server.go, handleWS): a persistent WebSocket the EA dials into,
+//     one JSON object per text frame, both directions multiplexed over the
+//     one connection. This is the "native" shape every message struct
+//     below is named for.
+//   - MT4 (httphandler.go): MQL4 has no native Socket*() functions (a real
+//     platform gap, not a bug — see NectrixBridgeMT4.mq4's own header), so
+//     its EA instead POSTs a hello to /ea/hello (in place of the WebSocket
+//     handshake), long-polls /ea/poll for pending gateway->EA messages
+//     (hello_ack/*_request/order_command/ping), and POSTs each EA->gateway
+//     message (trade_event/*_result/pong) individually to /ea/events. The
+//     exact same JSON message shapes below are reused verbatim — only how
+//     they're carried differs — and httpPollConn (httpconn.go) makes the
+//     two transports genuinely indistinguishable to Session/readLoop/call:
+//     everything from this point down in the package has no idea which
+//     transport a given session is actually using.
 //
 // EA -> Gateway:
 //

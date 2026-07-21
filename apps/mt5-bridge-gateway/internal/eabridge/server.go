@@ -67,8 +67,17 @@ type Server struct {
 	events       SessionEventHandler // may be nil (tests that don't care about status reporting)
 
 	mu       sync.RWMutex
-	pairings map[string]PairingInfo  // pairingToken -> info
-	sessions map[string]*Session     // brokerAccountID -> live session
+	pairings map[string]PairingInfo // pairingToken -> info
+	sessions map[string]*Session    // brokerAccountID -> live session
+
+	// TICKET-121 — HTTP-transport-only (MT4's WebRequest() long-polling
+	// EAs, see httphandler.go): a separate registry keyed by sessionToken,
+	// not brokerAccountID, since /ea/poll and /ea/events need to find their
+	// own specific connection, not "the" connection for an account (that's
+	// what sessions above is for, and every httpEASession's own *Session is
+	// registered there too, identically to a WebSocket one).
+	httpMu       sync.Mutex
+	httpSessions map[string]*httpEASession
 }
 
 // NewServer builds a Server. onTradeEvent is wired as every session's first
@@ -80,14 +89,17 @@ func NewServer(onTradeEvent func(context.Context, domain.NormalizedTradeEvent) e
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Server{
+	s := &Server{
 		upgrader:     websocket.Upgrader{ReadBufferSize: 4096, WriteBufferSize: 4096, CheckOrigin: func(r *http.Request) bool { return true }},
 		logger:       logger,
 		onTradeEvent: onTradeEvent,
 		events:       events,
 		pairings:     make(map[string]PairingInfo),
 		sessions:     make(map[string]*Session),
+		httpSessions: make(map[string]*httpEASession),
 	}
+	go s.sweepIdleHTTPSessions()
+	return s
 }
 
 // RegisterPairing makes pairingToken acceptable for one connecting EA

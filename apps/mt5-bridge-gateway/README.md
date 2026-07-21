@@ -4,8 +4,10 @@ The Go gateway process MT5/MT4 Expert Advisors dial **into** — the inverse dir
 `apps/broker-adapters`' cTrader adapter, which dials **out** to Spotware's servers. MetaTrader has no
 first-party API a third-party SaaS can connect to arbitrary end-user accounts with
 (`nectrix_plan/docs/07-auth-onboarding-broker-linking.md` §7.7), so a real EA running inside the
-user's own MT5/MT4 terminal connects out to this gateway and speaks a JSON-over-WebSocket protocol
-this service defines and terminates.
+user's own MT5/MT4 terminal connects out to this gateway and speaks a JSON message protocol this
+service defines and terminates — over a persistent WebSocket for MT5, or HTTP long-polling for MT4
+(TICKET-121: MQL4 has no native `Socket*()` functions, so it can't speak WebSocket at all — see
+"EA source" below).
 
 TICKET-001 stood up the module skeleton and a `/healthz` hello-world endpoint. **TICKET-102 replaced
 that skeleton with the real EA-bridge**, serving **both MT5 and MT4** from one process — pulling MT4
@@ -66,13 +68,17 @@ recognizes the token a connecting EA presents.
 
 ## Packages (`internal/`)
 
-- **`eabridge`** — the wire protocol server: WebSocket upgrade, hello handshake (pairing-token +
-  login/server cross-check — defense against a leaked token being used for the wrong account),
-  per-session request/response correlation (`Session.RequestSnapshot`/`RequestPositions`/
-  `RequestSymbolSpec`/`SendOrderCommand`), and trade-event fan-out to multiple subscribers (the
-  Kafka-publish callback wired automatically at session creation, plus any `StreamTradeEvents`
-  caller). See `wire.go` for the full message catalog — this is the file both `ea/mt5/*.mq5` and
-  `ea/mt4/*.mq4` are written against, message-for-message.
+- **`eabridge`** — the wire protocol server: WebSocket upgrade (MT5) or HTTP hello/poll/events
+  routes (MT4, TICKET-121 — see `httphandler.go`), hello handshake (pairing-token + login/server
+  cross-check — defense against a leaked token being used for the wrong account), per-session
+  request/response correlation (`Session.RequestSnapshot`/`RequestPositions`/`RequestSymbolSpec`/
+  `SendOrderCommand`), and trade-event fan-out to multiple subscribers (the Kafka-publish callback
+  wired automatically at session creation, plus any `StreamTradeEvents` caller). Both transports
+  feed the exact same `Session`/`readLoop`/`call` logic via the `wsConn` interface
+  (`httpconn.go`'s `httpPollConn` satisfies the same 3-method interface a real `*websocket.Conn`
+  does), so everything past the handshake is transport-agnostic. See `wire.go` for the full message
+  catalog — this is the file both `ea/mt5/*.mq5` and `ea/mt4/*.mq4` are written against,
+  message-for-message, regardless of transport.
 - **`mtadapter`** — the `domain.BrokerAdapter` implementation, `NewMT5`/`NewMT4` constructing the
   *same* underlying type over a shared `eabridge.Server`, differing only in a `brokerType` field.
   `Connect` never dials — it just checks whether a live paired session already exists for the
@@ -100,19 +106,32 @@ returns only `{login, server, pairingToken}` from the new `mt-credentials` endpo
 - **`ea/mt5/NectrixBridgeMT5.mq5`** — the MT5 Expert Advisor.
 - **`ea/mt4/NectrixBridgeMT4.mq4`** — the MT4 Expert Advisor.
 
-Both implement RFC 6455 WebSocket framing **by hand** over MQL's raw `Socket*` functions (neither
-MQL5 nor MQL4 has a built-in WebSocket client) — the HTTP Upgrade handshake, then masked
-client→server / unmasked server→client frame encode/decode — plus targeted (not general-purpose)
-JSON extraction against the fixed message shapes in `internal/eabridge/wire.go`. They detect trade
-lifecycle events by diffing consecutive position snapshots on a timer (MT5's/MT4's own trading APIs
-have no push-event model), and execute `order_command`s via `CTrade` (MT5) / `OrderSend`/`OrderModify`/
-`OrderClose` (MT4).
+The two EAs speak different transports (TICKET-121). `NectrixBridgeMT5.mq5` implements RFC 6455
+WebSocket framing **by hand** over MQL5's raw `Socket*` functions (neither MQL5 nor MQL4 has a
+built-in WebSocket client) — the HTTP Upgrade handshake, then masked client→server / unmasked
+server→client frame encode/decode. `NectrixBridgeMT4.mq4` instead speaks HTTP long-polling via
+MQL4's native `WebRequest()` — a real, live-verified finding (9 real MetaEditor compile errors)
+that MQL4 has no native `Socket*()` functions at all, so it can never speak WebSocket the way MT5
+does; `ConnectGateway`/`PollGateway`/`PostEvent` POST to the gateway's `/ea/hello`/`/ea/poll`/
+`/ea/events` routes instead. Both EAs use the same targeted (not general-purpose) JSON extraction
+against the fixed message shapes in `internal/eabridge/wire.go` — MT4 additionally has
+`JsonExtractArray`, a depth-and-string-aware bracket scan needed to split `/ea/poll`'s
+`"messages":[...]` array into individually-dispatchable objects (unnecessary for MT5, which reads
+one message per WebSocket frame instead). Both detect trade lifecycle events by diffing consecutive
+position snapshots on a timer (MT5's/MT4's own trading APIs have no push-event model), and execute
+`order_command`s via `CTrade` (MT5) / `OrderSend`/`OrderModify`/`OrderClose` (MT4, no netting —
+one ticket per position).
 
 **Honest limitation**: this code is written against the real, tested protocol (`internal/eabridge`'s
-own test suite proves the Go side genuinely speaks it correctly), but has never been compiled —
-MetaEditor requires a real MT5/MT4 terminal (Windows, or Wine on Linux), unavailable in this
-devcontainer. See "Live verification" below for what's been proven automatically vs. what needs a
-real terminal.
+own test suite — including `httptransport_test.go`'s HTTP-transport coverage for TICKET-121 — proves
+the Go side genuinely speaks it correctly on both transports), but neither EA has ever been compiled
+by this session — MetaEditor requires a real MT5/MT4 terminal (Windows, or Wine on Linux), unavailable
+in this devcontainer. The MT4 rewrite in particular has only been reviewed by hand against MQL4's
+documented APIs, the same way the original (broken) MT4 source was written before its own real
+compile failure — see `apps/mt-terminal-host/README.md` findings 3 and 9 for what's still unverified
+(a real compile of the rewritten `.mq4`, and whether `entrypoint.sh`'s headless WebRequest allow-list
+attempt is actually honored by a real terminal). See "Live verification" below for what's been proven
+automatically vs. what needs a real terminal.
 
 ## Design references
 
@@ -167,20 +186,23 @@ make go-lint    # golangci-lint across all Go modules
 Real integration tests (need live infra — Redis via `docker compose up`):
 `go test -tags=integration ./internal/dedupadapter/...`
 
-Run directly: `go run .` (listens on `:8092`, EA WebSocket endpoint at `/ea/ws`) — needs the env vars above set.
+Run directly: `go run .` (listens on `:8092`; MT5's EA WebSocket endpoint at `/ea/ws`, MT4's HTTP
+long-polling endpoints at `/ea/hello`/`/ea/poll`/`/ea/events`) — needs the env vars above set.
 
 ## Live verification
 
 **What's proven automatically, no real terminal needed** (`internal/eabridge`, `internal/mtadapter`,
-`internal/pairing` test suites — `make go-test`): the entire Go gateway side, against a **real**
-WebSocket connection from a fake-EA test client this repo controls (`net/http/httptest` + a real
-`gorilla/websocket` client dialer, not a mock) — handshake accept/reject (unknown token, login/server
-mismatch, platform mismatch), session supersession, all four request/response round trips (snapshot,
-positions, symbol spec, order commands — including the rejected-order path), trade-event fan-out to
-multiple subscribers, session-lost cleanup, and concurrent-request correlation under `-race`. Also
-manually smoke-tested as a real compiled binary (`go build` + run): `/healthz` responds, a real
-external WebSocket client process (not the Go test harness) gets a real handshake rejection for an
-unknown token, and SIGTERM triggers the real drain→shutdown sequence.
+`internal/pairing` test suites — `make go-test`): the entire Go gateway side, against **real**
+connections from fake-EA test clients this repo controls — for MT5, a real `gorilla/websocket`
+client dialer (`net/http/httptest` + a real socket, not a mock); for MT4 (TICKET-121,
+`httptransport_test.go`), a real `net/http` client speaking the exact `/ea/hello`/`/ea/poll`/
+`/ea/events` sequence a real `WebRequest()`-based EA would. Both cover: handshake accept/reject
+(unknown token, login/server mismatch, platform mismatch), session supersession, request/response
+round trips (snapshot, positions, symbol spec, order commands — including the rejected-order path),
+trade-event fan-out to multiple subscribers, session-lost cleanup, and concurrent-request correlation
+under `-race`. Also manually smoke-tested as a real compiled binary (`go build` + run): `/healthz`
+responds, a real external WebSocket client process (not the Go test harness) gets a real handshake
+rejection for an unknown token, and SIGTERM triggers the real drain→shutdown sequence.
 
 **What needs a real terminal** (this repo's own limitation, not a design gap — see `ea/`'s "Honest
 limitation" above): compiling and running `ea/mt5/NectrixBridgeMT5.mq5` / `ea/mt4/NectrixBridgeMT4.mq4`

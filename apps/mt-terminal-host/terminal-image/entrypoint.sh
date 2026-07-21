@@ -37,14 +37,16 @@ if [ "$PLATFORM" = "MT5" ]; then
   TERMINAL_EXE=terminal64.exe
   EA_NAME=NectrixBridgeMT5
 elif [ "$PLATFORM" = "MT4" ]; then
-  # Deliberately unsupported for now — real, live-verified finding: MQL4 has
-  # no native Socket*() functions, so NectrixBridgeMT4.mq4 cannot compile as
-  # designed (see terminal-image/Dockerfile's compile-ea stage comment and
-  # apps/mt-terminal-host/README.md). No .ex4 is built into this image, so
-  # failing fast and clearly here beats silently launching a terminal with
-  # no EA ever able to attach.
-  echo "entrypoint: PLATFORM=MT4 is not yet supported — MQL4 has no native socket support, so the EA bridge cannot run as designed; see apps/mt-terminal-host/README.md" >&2
-  exit 1
+  # TICKET-121: re-enabled. NectrixBridgeMT4.mq4 was rewritten to speak HTTP
+  # long-polling via MQL4's native WebRequest() (MQL4 has no native
+  # Socket*() functions, so the original WebSocket-based design could never
+  # compile — see terminal-image/Dockerfile's compile-ea stage comment and
+  # that EA's own header). WebRequest() needs its target URL allow-listed —
+  # see the [Experts] WebRequestUrls attempt below.
+  TERMINAL_DIR=/canonical-mt4
+  export WINEPREFIX=/wine-mt4
+  TERMINAL_EXE=terminal.exe
+  EA_NAME=NectrixBridgeMT4
 else
   echo "entrypoint: unknown PLATFORM '$PLATFORM' (expected MT5 or MT4)" >&2
   exit 1
@@ -55,13 +57,26 @@ INI_FILE="$TERMINAL_DIR/nectrix.ini"
 
 # EA input parameters — must match NectrixBridgeMT5.mq5/NectrixBridgeMT4.mq4's
 # own `input` declarations exactly (InpPairingToken/InpGatewayHost/
-# InpGatewayPort). InpGatewayPath is left at the EA's own default ("/ea/ws")
-# since apps/mt5-bridge-gateway never varies it.
+# InpGatewayPort). InpGatewayPath is left at each EA's own platform-specific
+# default ("/ea/ws" for MT5's WebSocket, "/ea" for MT4's HTTP long-polling)
+# since apps/mt5-bridge-gateway never varies it per account.
 cat > "$SET_FILE" <<EOF
 InpPairingToken=$PAIRING_TOKEN
 InpGatewayHost=$GATEWAY_HOST
 InpGatewayPort=$GATEWAY_PORT
 EOF
+
+# GATEWAY_ALLOW_URL is what MT4's WebRequest() calls need allow-listed —
+# MetaQuotes' only DOCUMENTED mechanism for this is the GUI (Tools > Options
+# > Expert Advisors > "Allow WebRequest for listed URL"), so
+# WebRequestUrls below is a best-effort headless attempt, NOT a confirmed
+# working mechanism — UNVERIFIED end-to-end in this devcontainer (no Wine
+# here, same standing limitation this script's own header already
+# documents for the rest of its .ini generation). If it turns out not to be
+# honored by a real terminal, the fallback is either a one-time manual GUI
+# step baked into the account-image at provisioning time, or a documented
+# registry-based equivalent — neither investigated yet.
+GATEWAY_ALLOW_URL="http://$GATEWAY_HOST:$GATEWAY_PORT"
 
 cat > "$INI_FILE" <<EOF
 [Common]
@@ -73,6 +88,7 @@ Server=$SERVER
 AllowLiveTrading=1
 AllowDllImport=1
 Enabled=1
+WebRequestUrls=$GATEWAY_ALLOW_URL
 
 [StartUp]
 Expert=$EA_NAME

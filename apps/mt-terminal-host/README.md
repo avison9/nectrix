@@ -109,10 +109,18 @@ real terminal under Xvfb.
    currently have no NetworkPolicy-enforced restriction on which external broker-server hosts/ports
    they may reach (K8s NetworkPolicy is IP/CIDR-based, not hostname-based, and valid destinations
    are dynamic per-broker). A real, documented gap, not silently ignored.
-3. **MT4 is not yet supported end-to-end** — MQL4 has no native socket support, so
-   `NectrixBridgeMT4.mq4`'s WebSocket-based design cannot compile as written (see finding 9 below).
-   The MT4 terminal installs fine; the EA bridge does not yet exist for it. Needs a follow-up ticket
-   to redesign MT4's transport before `PLATFORM=MT4` accounts can actually work.
+3. **MT4's transport was redesigned (TICKET-121) but is still unverified against a real terminal
+   boot.** `NectrixBridgeMT4.mq4` now speaks HTTP long-polling via MQL4's native `WebRequest()`
+   instead of the old (uncompilable) WebSocket design — see finding 9 below,
+   `apps/mt5-bridge-gateway/internal/eabridge/httphandler.go`'s own doc comment, and the EA source's
+   own header. `compile-ea` now attempts a real MetaEditor compile of the `.mq4` source and
+   `entrypoint.sh`'s `PLATFORM=MT4` fail-fast guard has been removed. Two things remain genuinely
+   unverified in this devcontainer (no Wine here): (a) that the rewritten `.mq4` actually compiles
+   0-errors under a real MetaEditor — reviewed carefully by hand against MQL4's documented APIs, but
+   not yet proven by a real CI run the way MT5's was; (b) whether `entrypoint.sh`'s best-effort
+   `[Experts] WebRequestUrls=` `.ini` key is honored by a real terminal at all — MetaQuotes only
+   documents a GUI mechanism for the WebRequest allow-list, so this is a genuine, disclosed gamble,
+   not a confirmed headless equivalent.
 
 ## Container images
 
@@ -238,15 +246,25 @@ x86_64 CI runs it took to get there (originally against a standalone `build-term
    killed) right after install to trigger that initialization before copying files into the canonical
    directory. **`NectrixBridgeMT5.mq5` now compiles with 0 errors, 0 warnings — the first real proof
    this source is correct**, confirmed via a real CI run.
-9. **MT4 EA compilation is deliberately disabled — a genuine platform gap, not a bug.** MQL4 has no
-   native `Socket*()` functions at all (confirmed against MQL4's own reference docs — `Socket*` is an
-   MQL5-only addition), so `NectrixBridgeMT4.mq4`'s WebSocket-based design as written cannot compile
-   on real MT4, full stop. The MT4 terminal itself still installs fine (`install-verified` passes for
-   it); only EA compilation and attachment are blocked. `compile-ea` no longer attempts to compile the
-   `.mq4` source, `entrypoint.sh` fails fast and clearly for `PLATFORM=MT4` rather than silently
-   launching a terminal with no EA able to attach. **Follow-up ticket needed** to redesign MT4's
-   transport — most likely either a bundled native DLL for raw sockets (keeps the same WebSocket
+9. **MT4 EA compilation was disabled, then re-enabled under a redesigned transport (TICKET-121).**
+   MQL4 has no native `Socket*()` functions at all (confirmed against MQL4's own reference docs —
+   `Socket*` is an MQL5-only addition), so the original WebSocket-based `NectrixBridgeMT4.mq4` could
+   never compile on real MT4, full stop — a genuine platform gap, not a bug. Two designs were
+   considered for the redesign: a bundled native DLL for raw sockets (keeps the same WebSocket
    protocol/design symmetric with MT5, but adds a new native-code component and a real security
-   surface, since DLL imports must be allowed) or HTTP long-polling via MQL4's native `WebRequest()`
-   (stays pure MQL, no DLL, but needs new `apps/mt5-bridge-gateway` work to support polling alongside
-   the existing WebSocket protocol). Not designed here — deliberately deferred so MT5 could ship.
+   surface, since DLL imports must be allowed), or HTTP long-polling via MQL4's native `WebRequest()`
+   (stays pure MQL, no DLL loaded into the terminal process — same security posture as MT5's own
+   design). **HTTP long-polling was chosen.** `NectrixBridgeMT4.mq4` was rewritten: its
+   WebSocket-framing functions (`SendHttpUpgrade`/`ReadHttpUpgradeResponse`/`WsSendText`/
+   `PumpSocket`/frame parsing) were replaced with `HttpPostJson`/`ConnectGateway`/`PollGateway`/
+   `PostEvent` built on `WebRequest()`; every other function — JSON helpers, message builders,
+   `DispatchMessage`, all `Handle*Request` handlers, and the entire MT4 ticket-based
+   position-tracking/delta-detection block — is unchanged. The Go side gained a parallel HTTP
+   transport (`apps/mt5-bridge-gateway/internal/eabridge/httpconn.go` + `httphandler.go`: `/ea/hello`,
+   `/ea/poll`, `/ea/events`) that reuses 100% of the existing `Session` request/response-correlation
+   logic via the same `wsConn` interface a real `*websocket.Conn` already satisfies — covered by 5 new
+   tests in `httptransport_test.go`, all passing, zero regressions on the rest of the module.
+   `compile-ea` now attempts a real MetaEditor compile of the `.mq4` source and `entrypoint.sh`'s
+   `PLATFORM=MT4` fail-fast guard has been removed — see the "Two real, open, unresolved items"
+   section above for what's still genuinely unverified (a real MetaEditor compile of the rewritten
+   source, and whether the headless WebRequest allow-list attempt actually works).
