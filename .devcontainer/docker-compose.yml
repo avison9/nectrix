@@ -63,6 +63,11 @@ services:
       # until you register a cTrader Open API app and set these.
       CTRADER_CLIENT_ID: ${CTRADER_CLIENT_ID:-}
       CTRADER_CLIENT_SECRET: ${CTRADER_CLIENT_SECRET:-}
+      # Must match what's registered with the Spotware app behind CTRADER_CLIENT_ID above, and
+      # must be the web app's own callback PAGE (POST's the code to core-app server-side — see
+      # BrokerAccountOAuthController's own class Javadoc), not core-app's /callback endpoint
+      # directly (that's POST-only; a browser landing there via cTrader's own GET redirect 405s).
+      CTRADER_REDIRECT_URI: ${CTRADER_REDIRECT_URI:-}
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-}
       TOKEN_REFRESH_ENABLED: ${TOKEN_REFRESH_ENABLED:-false}
       # apps/broker-adapters (Go) also runs as a plain process inside this same

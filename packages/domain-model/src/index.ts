@@ -147,8 +147,8 @@ export interface BrokerAccountSummary {
 // Mirrors BrokerAccountAdaptersInternalClient.AccountSnapshot's JSON shape.
 export type BrokerAccountSnapshot = AccountSnapshot;
 
-// Mirrors BrokerIbLink.java (docs/07-auth-onboarding-broker-linking.md §7.4) — read-only here,
-// creation/management is TICKET-119's own scope.
+// Mirrors BrokerIbLink.java (docs/07-auth-onboarding-broker-linking.md §7.4). TICKET-119 added the
+// real create/list/deactivate write path.
 export interface BrokerIbLink {
   id: string;
   masterProfileId: string;

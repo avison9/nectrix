@@ -338,6 +338,16 @@ public class SecurityConfig {
                     // and re-sends the email, rate-limited per-invitation in InvitationService.
                     .requestMatchers(HttpMethod.POST, "/api/v1/master/invitations/*/resend")
                     .authenticated()
+                    // TICKET-119 — Master-scoped Broker IB Link CRUD (role check is
+                    // @PreAuthorize("hasRole('MASTER')") method-security, see
+                    // BrokerIbLinkController), same "route list doesn't care which module's
+                    // controller serves a path" reasoning as the invitations matchers above.
+                    .requestMatchers(HttpMethod.POST, "/api/v1/master/broker-ib-links")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.GET, "/api/v1/master/broker-ib-links")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.POST, "/api/v1/master/broker-ib-links/*/deactivate")
+                    .authenticated()
                     // TICKET-118 — public, token-gated (rate-limited in-controller, not here —
                     // see PublicInvitationController/AcceptInviteController's own
                     // InvitationRateLimiterService).

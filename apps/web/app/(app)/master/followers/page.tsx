@@ -1,4 +1,4 @@
-import { listMyInvitations } from "@nectrix/api-client";
+import { listMyBrokerIbLinks, listMyInvitations } from "@nectrix/api-client";
 import type { Invitation } from "@nectrix/api-client";
 import { coreAppBaseUrl } from "@/lib/core-app";
 import { requireSession } from "@/lib/auth";
@@ -61,7 +61,11 @@ export default async function MasterFollowersPage() {
     );
   }
 
-  const invitations = await listMyInvitations(coreAppBaseUrl(), accessToken);
+  const [invitations, ibLinks] = await Promise.all([
+    listMyInvitations(coreAppBaseUrl(), accessToken),
+    listMyBrokerIbLinks(coreAppBaseUrl(), accessToken),
+  ]);
+  const activeIbLinks = ibLinks.filter((l) => l.isActive);
 
   const sent = invitations.length;
   const accepted = invitations.filter((i) => i.status === "ACCEPTED").length;
@@ -89,7 +93,7 @@ export default async function MasterFollowersPage() {
 
       <div className="mb-4 grid grid-cols-1 gap-4 lg:grid-cols-[1.4fr_1fr]">
         <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-5.5">
-          <InviteForm />
+          <InviteForm ibLinks={activeIbLinks} />
         </div>
 
         <div className="grid grid-cols-2 gap-3">

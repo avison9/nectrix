@@ -1,19 +1,40 @@
+import { listMyBrokerIbLinks } from "@nectrix/api-client";
+import { coreAppBaseUrl } from "@/lib/core-app";
 import { requireSession } from "@/lib/auth";
+import { AddIbLinkForm } from "./AddIbLinkForm";
+import { DeactivateIbLinkButton } from "./DeactivateIbLinkButton";
 
-const SAMPLE_BROKERS = [
-  { initial: "IC", name: "IC Markets", region: "Global", followers: "64", rebate: "$8.20 / lot" },
-  { initial: "VT", name: "Vantage", region: "Global", followers: "41", rebate: "$6.50 / lot" },
-  { initial: "PU", name: "Pepperstone", region: "EU / AU", followers: "23", rebate: "$5.00 / lot" },
-];
+const BROKER_TYPE_LABEL: Record<string, string> = {
+  CTRADER: "cTrader",
+  MT5: "MT5",
+  MT4: "MT4",
+};
 
 /**
- * Mirrors Nectrix.dc.html's `MASTER · IB PARTNERS` (`vMasterIb`, `:678-717`). TICKET-119 (broker IB
- * links) hasn't been built anywhere yet — same "rendered but inert" precedent
- * app/(app)/master/followers/[id]/page.tsx already established: mock's own sample rows, no fetch
- * calls, primary actions disabled with a tooltip.
+ * TICKET-119 — mirrors Nectrix.dc.html's `MASTER · IB PARTNERS` (`vMasterIb`, `:678-717`), now
+ * wired to the real Broker IB Link CRUD. One deliberate, disclosed deviation from the mock: the
+ * mock's own "Followers"/"Rebate" stats per card have no real data source (no such tracking exists
+ * anywhere in the backend) — honestly shown as an active/inactive badge instead of fabricated
+ * numbers, same "don't fake data" precedent every other real-data page this session established.
+ * The mock's fixed 3-broker-slot layout is also replaced with a real, open-ended list (the actual
+ * ticket scope is "create any number of named links," not "edit 3 preset broker slots") plus an
+ * add-new form, while keeping the mock's card visual language.
  */
 export default async function IbPartnersPage() {
-  await requireSession();
+  const { session, accessToken } = await requireSession();
+
+  if (!session.roles.includes("MASTER")) {
+    return (
+      <div className="mx-auto max-w-[480px] py-16 text-center">
+        <h1 className="text-[20px] font-semibold text-[var(--text)]">IB partner links</h1>
+        <p className="mt-2 text-[13.5px] text-[var(--text-2)]">
+          This page is only available to Master accounts.
+        </p>
+      </div>
+    );
+  }
+
+  const links = await listMyBrokerIbLinks(coreAppBaseUrl(), accessToken);
 
   return (
     <div className="mx-auto max-w-[1080px]">
@@ -27,65 +48,60 @@ export default async function IbPartnersPage() {
         </p>
       </div>
 
-      <p
-        className="mb-4 text-[12.5px] text-[var(--text-3)]"
-        title="Broker IB links aren't available yet — TICKET-119 hasn't shipped"
-      >
-        Showing sample brokers — this page isn&apos;t wired up to real IB link data yet.
-      </p>
-
-      <div className="grid grid-cols-1 gap-4 opacity-70 sm:grid-cols-2 lg:grid-cols-3">
-        {SAMPLE_BROKERS.map((b) => (
-          <div
-            key={b.name}
-            className="flex flex-col gap-4 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-5"
-          >
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[11px] border border-[var(--border)] bg-[var(--surface-2)] text-[15px] font-bold text-[var(--text)]">
-                {b.initial}
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="text-[15px] font-semibold text-[var(--text)]">{b.name}</div>
-                <div className="text-[12px] text-[var(--text-3)]">{b.region}</div>
-              </div>
-            </div>
-            <div>
-              <div className="mb-1.5 text-[11.5px] font-medium text-[var(--text-2)]">
-                IB / affiliate link
-              </div>
-              <div className="flex gap-2">
-                <input
-                  disabled
-                  placeholder="Paste your IB link…"
-                  className="h-[38px] min-w-0 flex-1 rounded-[9px] border border-[var(--border)] bg-[var(--surface-2)] px-3 font-mono text-[12px] text-[var(--text)] outline-none"
-                />
-                <button
-                  type="button"
-                  disabled
-                  title="Broker IB links aren't available yet — TICKET-119 hasn't shipped"
-                  className="h-[38px] shrink-0 cursor-not-allowed rounded-[9px] bg-[var(--accent)] px-3.5 text-[12.5px] font-semibold text-white opacity-60"
-                >
-                  Save
-                </button>
-              </div>
-            </div>
-            <div className="flex gap-5 border-t border-[var(--border)] pt-3.5">
-              <div>
-                <div className="text-[11px] text-[var(--text-3)]">Followers</div>
-                <div className="mt-0.5 font-mono text-[16px] font-semibold text-[var(--text)]">
-                  {b.followers}
-                </div>
-              </div>
-              <div>
-                <div className="text-[11px] text-[var(--text-3)]">Rebate</div>
-                <div className="mt-0.5 font-mono text-[16px] font-semibold text-[var(--text)]">
-                  {b.rebate}
-                </div>
-              </div>
-            </div>
-          </div>
-        ))}
+      <div className="mb-5">
+        <AddIbLinkForm />
       </div>
+
+      {links.length === 0 ? (
+        <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] px-5 py-6 text-[13px] text-[var(--text-2)]">
+          No IB links yet — add one above.
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {links.map((link) => (
+            <div
+              key={link.id}
+              className={`flex flex-col gap-4 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-5 ${link.isActive ? "" : "opacity-60"}`}
+            >
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[11px] border border-[var(--border)] bg-[var(--surface-2)] text-[15px] font-bold text-[var(--text)]">
+                  {link.brokerDisplayName.slice(0, 2).toUpperCase()}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-[15px] font-semibold text-[var(--text)]">
+                    {link.brokerDisplayName}
+                  </div>
+                  <div className="text-[12px] text-[var(--text-3)]">
+                    {BROKER_TYPE_LABEL[link.brokerType] ?? link.brokerType}
+                  </div>
+                </div>
+                <span
+                  className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold whitespace-nowrap ${
+                    link.isActive
+                      ? "bg-[var(--pos)]/15 text-[var(--pos)]"
+                      : "bg-[var(--surface-2)] text-[var(--text-3)]"
+                  }`}
+                >
+                  {link.isActive ? "Active" : "Inactive"}
+                </span>
+              </div>
+              <div>
+                <div className="mb-1.5 text-[11.5px] font-medium text-[var(--text-2)]">
+                  IB / affiliate link
+                </div>
+                <div className="truncate rounded-[9px] border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2.5 font-mono text-[12px] text-[var(--text)]">
+                  {link.ibReferralUrlOrCode}
+                </div>
+              </div>
+              {link.isActive && (
+                <div className="flex justify-end border-t border-[var(--border)] pt-3.5">
+                  <DeactivateIbLinkButton id={link.id} />
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

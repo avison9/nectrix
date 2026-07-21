@@ -187,6 +187,23 @@ public class BrokerAccountRepository {
     jdbcTemplate.update("DELETE FROM broker_accounts WHERE id = ?", id);
   }
 
+  /**
+   * TICKET-101 follow-up — {@code follow_requests.follower_broker_account_id} (003-invitations-
+   * onboarding.sql) has no {@code ON DELETE CASCADE} and, unlike {@code copy_relationships}, no
+   * repository/module anywhere ever clears it — a real gap the archival flow's own {@code
+   * hardDelete} found the hard way (a genuinely DISCONNECTED, otherwise-unreferenced account still
+   * 409'd). Deliberately scoped to the archival flow only, not plain {@link #delete} — a follow
+   * request carries no trade/commission data worth a durable archive (its one meaningful outcome,
+   * if approved, already lives in {@code copy_relationships}, which the archival flow separately
+   * archives), so this is a safe pre-delete cleanup, not something {@link #delete} itself should
+   * silently do (that would defeat the "409 signals real unarchived history" contract other
+   * referencing tables rely on).
+   */
+  public void deleteFollowRequestsForBrokerAccount(UUID brokerAccountId) {
+    jdbcTemplate.update(
+        "DELETE FROM follow_requests WHERE follower_broker_account_id = ?", brokerAccountId);
+  }
+
   /** Row shape for the internal listing endpoint (task #119) — deliberately no credentials. */
   public record AccountRef(UUID id, String connectionStatus) {}
 

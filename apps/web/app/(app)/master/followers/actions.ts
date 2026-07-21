@@ -13,8 +13,12 @@ export async function createInvitationAction(
 ): Promise<ActionResult> {
   const { accessToken } = await requireSession();
   const invitedEmail = String(formData.get("invitedEmail") ?? "");
+  const suggestedBrokerIbLinkId = formData.get("suggestedBrokerIbLinkId");
   try {
-    await createInvitation(coreAppBaseUrl(), accessToken, { invitedEmail });
+    await createInvitation(coreAppBaseUrl(), accessToken, {
+      invitedEmail,
+      suggestedBrokerIbLinkId: suggestedBrokerIbLinkId ? String(suggestedBrokerIbLinkId) : undefined,
+    });
     return { ok: true };
   } catch (error) {
     if (error instanceof ApiError) {

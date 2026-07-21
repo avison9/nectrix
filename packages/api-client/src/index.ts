@@ -551,8 +551,10 @@ export async function createOrConfirmSymbolMapping(
 }
 
 /**
- * Returns [] gracefully when a Master has no active IB links (TICKET-119 isn't built yet — this
- * is TICKET-110's own narrow, additive read, see BrokerIbLinkController's Javadoc).
+ * Returns [] gracefully when a Master has no active IB links. TICKET-110's own narrow,
+ * additive read (any authenticated caller, e.g. a Follower during onboarding, may look up a
+ * specific Master's active links by id — see BrokerIbLinkController's own Javadoc for why that's
+ * safe) — for the calling Master's own full management view, see {@link listMyBrokerIbLinks}.
  */
 export async function listMasterIbLinks(
   baseUrl: string,
@@ -564,6 +566,47 @@ export async function listMasterIbLinks(
     `/api/v1/broker-accounts/ib-links?masterProfileId=${masterProfileId}`,
     { method: "GET", accessToken },
   );
+}
+
+// ==================== TICKET-119 — Broker IB Link Management (Master-scoped) ====================
+
+export async function createBrokerIbLink(
+  baseUrl: string,
+  accessToken: string,
+  input: { brokerType: string; brokerDisplayName: string; ibReferralUrlOrCode: string },
+): Promise<BrokerIbLink> {
+  return coreAppFetch<BrokerIbLink>(baseUrl, "/api/v1/master/broker-ib-links", {
+    method: "POST",
+    accessToken,
+    body: JSON.stringify({
+      broker_type: input.brokerType,
+      broker_display_name: input.brokerDisplayName,
+      ib_referral_url_or_code: input.ibReferralUrlOrCode,
+    }),
+  });
+}
+
+/** Every link the calling Master has ever created, active or not — see BrokerIbLinkService's own Javadoc. */
+export async function listMyBrokerIbLinks(
+  baseUrl: string,
+  accessToken: string,
+): Promise<BrokerIbLink[]> {
+  return coreAppFetch<BrokerIbLink[]>(baseUrl, "/api/v1/master/broker-ib-links", {
+    method: "GET",
+    accessToken,
+  });
+}
+
+/** Deliberately never a hard delete — see BrokerIbLinkRepository#deactivate's own Javadoc. */
+export async function deactivateBrokerIbLink(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<void> {
+  await coreAppFetch<null>(baseUrl, `/api/v1/master/broker-ib-links/${id}/deactivate`, {
+    method: "POST",
+    accessToken,
+  });
 }
 
 // ==================== TICKET-111 — Master Profile Creation & CopyRelationship State Machine ====================

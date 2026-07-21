@@ -46,6 +46,9 @@ public class BrokerAccountArchivalApiImpl implements BrokerAccountArchivalApi {
   @Override
   public void hardDelete(UUID id) {
     BrokerAccount existing = findOrThrow(id);
+    // See this method's own repository call's Javadoc — a real gap: no cascade, no other
+    // cleanup path anywhere, and no trade/commission value worth a durable archive.
+    repository.deleteFollowRequestsForBrokerAccount(id);
     try {
       service.deleteBrokerAccount(existing);
     } catch (BrokerAccountNotDisconnectedException | BrokerAccountInUseException e) {
