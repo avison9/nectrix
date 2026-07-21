@@ -17,6 +17,8 @@ import type {
   CopiedTradesPage,
   CopiedTradeStatus,
   ConnectionRole,
+  BrokerFeeReport,
+  BrokerFeeReportDetail,
   ConnectionStatus,
   ConsumerGroupLag,
   CopyEngineHealth,
@@ -63,6 +65,8 @@ export type {
   CopiedTradesPage,
   CopiedTradeStatus,
   ConnectionRole,
+  BrokerFeeReport,
+  BrokerFeeReportDetail,
   ConnectionStatus,
   ConsumerGroupLag,
   CopyEngineHealth,
@@ -803,6 +807,22 @@ export async function signAgreement(
   return copyRelationshipAction(baseUrl, accessToken, id, "sign-agreement");
 }
 
+/**
+ * TICKET-120 AC2 — {@code documentUrl} is a short-lived signed URL, never a public one; throws
+ * ApiError(404) if this relationship hasn't been signed yet (see
+ * ManagementAgreementNotFoundException).
+ */
+export async function getManagementAgreement(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<{ id: string; status: string; signedAt: string; documentUrl: string }> {
+  return coreAppFetch(baseUrl, `/api/v1/copy-relationships/${id}/agreement`, {
+    method: "GET",
+    accessToken,
+  });
+}
+
 export async function pauseCopyRelationship(
   baseUrl: string,
   accessToken: string,
@@ -1248,6 +1268,85 @@ export async function raiseMySettlementDispute(
     method: "POST",
     accessToken,
   });
+}
+
+// ==================== TICKET-120 — Broker Fee Reports (Master-scoped) ====================
+
+/** Throws ApiError(400, "no_pending_fees_to_report") if there's nothing to bundle for this (broker, period). */
+export async function generateBrokerFeeReport(
+  baseUrl: string,
+  accessToken: string,
+  input: { brokerType: string; periodStart: string; periodEnd: string },
+): Promise<BrokerFeeReport> {
+  return coreAppFetch<BrokerFeeReport>(baseUrl, "/api/v1/master/fee-reports", {
+    method: "POST",
+    accessToken,
+    body: JSON.stringify({
+      broker_type: input.brokerType,
+      period_start: input.periodStart,
+      period_end: input.periodEnd,
+    }),
+  });
+}
+
+export async function listMyBrokerFeeReports(
+  baseUrl: string,
+  accessToken: string,
+): Promise<BrokerFeeReport[]> {
+  return coreAppFetch<BrokerFeeReport[]>(baseUrl, "/api/v1/master/fee-reports", {
+    method: "GET",
+    accessToken,
+  });
+}
+
+export async function getMyBrokerFeeReport(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<BrokerFeeReportDetail> {
+  return coreAppFetch<BrokerFeeReportDetail>(baseUrl, `/api/v1/master/fee-reports/${id}`, {
+    method: "GET",
+    accessToken,
+  });
+}
+
+async function feeReportAction(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+  action: string,
+): Promise<BrokerFeeReport> {
+  return coreAppFetch<BrokerFeeReport>(baseUrl, `/api/v1/master/fee-reports/${id}/${action}`, {
+    method: "POST",
+    accessToken,
+  });
+}
+
+/** Only valid from DRAFT — core-app rejects otherwise. */
+export async function sendBrokerFeeReport(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<BrokerFeeReport> {
+  return feeReportAction(baseUrl, accessToken, id, "send");
+}
+
+/** Only valid from SENT — cascades every bundled performance_fee_ledger row to BROKER_CONFIRMED_DEDUCTED. */
+export async function confirmBrokerFeeReportDeducted(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<BrokerFeeReport> {
+  return feeReportAction(baseUrl, accessToken, id, "confirm-deducted");
+}
+
+/** Only valid from BROKER_CONFIRMED_DEDUCTED — cascades every bundled ledger row to BROKER_CONFIRMED_PAID. */
+export async function confirmBrokerFeeReportPaid(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<BrokerFeeReport> {
+  return feeReportAction(baseUrl, accessToken, id, "confirm-paid");
 }
 
 // ==================== TICKET-118 — Invitation System (Master invites a Follower) ====================

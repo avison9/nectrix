@@ -50,6 +50,15 @@ services:
       ARCHIVAL_ACCESS_KEY: ${MINIO_ROOT_USER:-nectrix}
       ARCHIVAL_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in your .env file}
       ARCHIVAL_SWEEP_ENABLED: ${ARCHIVAL_SWEEP_ENABLED:-false}
+      # --- Signed management-agreement documents (TICKET-120) ---
+      DOCUMENTS_BUCKET: ${DOCUMENTS_BUCKET:-nectrix-documents}
+      DOCUMENTS_ENDPOINT_OVERRIDE: http://minio:9000
+      # Presigned URLs are handed to a browser running on the HOST, not inside this compose
+      # network — it can resolve localhost (MinIO's own port mapping) but not the `minio`
+      # hostname above, see DocumentStorageProperties' own Javadoc.
+      DOCUMENTS_PUBLIC_ENDPOINT_OVERRIDE: http://localhost:${MINIO_API_PORT:-9000}
+      DOCUMENTS_ACCESS_KEY: ${MINIO_ROOT_USER:-nectrix}
+      DOCUMENTS_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in your .env file}
       # --- Admin Portal (TICKET-012) ---
       # core-app runs as a plain `./gradlew bootRun` process inside this same
       # devcontainer (not its own compose service), reachable at its own

@@ -355,6 +355,41 @@ export interface FeeLedgerEntry {
   status: FeeLedgerStatus;
 }
 
+// TICKET-120 — mirrors billing.domain.BrokerFeeReport.
+export type BrokerFeeReportStatus = "DRAFT" | "SENT" | "BROKER_CONFIRMED_DEDUCTED" | "BROKER_CONFIRMED_PAID" | "FAILED";
+
+export interface BrokerFeeReport {
+  id: string;
+  masterProfileId: string;
+  brokerType: BrokerType;
+  periodStart: string;
+  periodEnd: string;
+  status: BrokerFeeReportStatus;
+  reportObjectKey: string;
+  sentAt: string | null;
+  confirmedDeductedAt: string | null;
+  confirmedPaidAt: string | null;
+  generatedByUserId: string;
+  createdAt: string;
+}
+
+// Mirrors billing.domain.BrokerFeeReportLine.
+export interface BrokerFeeReportLine {
+  id: number;
+  brokerFeeReportId: string;
+  performanceFeeLedgerId: string;
+  followerBrokerAccountLogin: string;
+  feeAmount: number;
+  currency: string;
+}
+
+// Mirrors billing.service.BrokerFeeReportService.BrokerFeeReportDetail.
+export interface BrokerFeeReportDetail {
+  report: BrokerFeeReport;
+  lines: BrokerFeeReportLine[];
+  documentUrl: string;
+}
+
 // Mirrors billing.api.FeeLedgerAdminApi.FeeLedgerDetailView — computationDetailJson is the raw
 // JSON text (self-contained by design, see SettlementComputation's own Javadoc); render it as a
 // real line-item breakdown, not a passthrough JSON dump.

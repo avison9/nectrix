@@ -62,6 +62,16 @@ nectrix:
     # Defaults to false — same "opt-in, no test context accidentally fires it" reasoning as
     # invitations.token-refresh.enabled below.
     enabled: ${ARCHIVAL_SWEEP_ENABLED:false}
+  # TICKET-120 — signed management-agreement documents (modules:trading's own
+  # AgreementDocumentStorageClient). A separate bucket/prefix from archival's — these are LIVE
+  # documents a Follower fetches on demand, not deleted-account history.
+  documents:
+    bucket: ${DOCUMENTS_BUCKET:nectrix-documents}
+    region: ${AWS_REGION:us-east-1}
+    endpoint-override: ${DOCUMENTS_ENDPOINT_OVERRIDE:}
+    public-endpoint-override: ${DOCUMENTS_PUBLIC_ENDPOINT_OVERRIDE:}
+    access-key: ${DOCUMENTS_ACCESS_KEY:}
+    secret-key: ${DOCUMENTS_SECRET_KEY:}
     # 90 days, expressed in seconds — how long a broker account must have sat DISCONNECTED
     # before the scheduled sweep archives and deletes it.
     stale-after-seconds: ${ARCHIVAL_STALE_AFTER_SECONDS:7776000}

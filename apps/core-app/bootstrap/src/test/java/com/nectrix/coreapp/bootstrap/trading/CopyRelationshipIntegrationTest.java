@@ -21,6 +21,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import tools.jackson.databind.ObjectMapper;
 
 /**
@@ -33,6 +35,22 @@ import tools.jackson.databind.ObjectMapper;
 @Tag("integration")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class CopyRelationshipIntegrationTest {
+
+  /**
+   * TICKET-120 — overrides {@code nectrix.documents.public-endpoint-override} for this test only:
+   * the devcontainer's own env default ({@code http://localhost:9000}) is what a real HOST browser
+   * resolves, but this test's own HTTP client runs INSIDE the devcontainer's own docker network,
+   * where MinIO is only reachable as {@code minio:9000} — same "test needs to reach whatever's
+   * actually resolvable from where IT runs, not where a real browser would" reasoning, honestly
+   * distinct from the real host/browser-reachability concern {@code
+   * AgreementDocumentStorageProperties}' own Javadoc documents (that real concern isn't testable
+   * from here at all, matching this codebase's own established live-verification-runbook precedent
+   * for untestable-from-CI concerns).
+   */
+  @DynamicPropertySource
+  static void documentsPublicEndpoint(DynamicPropertyRegistry registry) {
+    registry.add("nectrix.documents.public-endpoint-override", () -> "http://minio:9000");
+  }
 
   @LocalServerPort private int port;
 
@@ -312,6 +330,84 @@ class CopyRelationshipIntegrationTest {
             chain.follower().accessToken());
 
     assertThat(response.status()).isEqualTo(409);
+  }
+
+  /**
+   * TICKET-120 AC1 — a {@code BROKER_PARTNERSHIP} relationship genuinely cannot reach {@code
+   * ACTIVE} until sign-agreement runs: {@code acknowledgeRisk} alone only ever gets it as far as
+   * {@code PENDING_AGREEMENT} (see {@code
+   * acknowledgeRisk_withBrokerPartnership_movesToPendingAgreement} above), and there is no other
+   * endpoint that sets status directly.
+   */
+  @Test
+  void copyRelationship_withBrokerPartnership_cannotReachActiveWithoutSigningAgreement() {
+    Chain chain = insertCopyRelationship("PENDING_AGREEMENT", "BROKER_PARTNERSHIP");
+
+    HttpResult before =
+        request(
+            "GET",
+            "/api/v1/copy-relationships/" + chain.id(),
+            null,
+            chain.follower().accessToken());
+    assertThat(before.body().get("status")).isEqualTo("PENDING_AGREEMENT");
+
+    HttpResult agreementBeforeSigning =
+        request(
+            "GET",
+            "/api/v1/copy-relationships/" + chain.id() + "/agreement",
+            null,
+            chain.follower().accessToken());
+    assertThat(agreementBeforeSigning.status()).isEqualTo(404);
+
+    HttpResult signed =
+        request(
+            "POST",
+            "/api/v1/copy-relationships/" + chain.id() + "/sign-agreement",
+            null,
+            chain.follower().accessToken());
+    assertThat(signed.status()).isEqualTo(200);
+    assertThat(signed.body().get("status")).isEqualTo("ACTIVE");
+  }
+
+  /**
+   * TICKET-120 AC2 — a signed agreement's document is retrievable from MinIO via a real, working
+   * short-lived signed URL (fetched with a plain, unauthenticated HTTP client — proving the URL
+   * itself carries the necessary signature, not a bearer token), and its content matches the real
+   * relationship it was signed for.
+   */
+  @Test
+  void getAgreement_afterSigning_returnsAWorkingPresignedUrlWithRealContent() {
+    Chain chain = insertCopyRelationship("PENDING_AGREEMENT", "BROKER_PARTNERSHIP");
+    request(
+        "POST",
+        "/api/v1/copy-relationships/" + chain.id() + "/sign-agreement",
+        null,
+        chain.follower().accessToken());
+
+    HttpResult agreement =
+        request(
+            "GET",
+            "/api/v1/copy-relationships/" + chain.id() + "/agreement",
+            null,
+            chain.follower().accessToken());
+    assertThat(agreement.status()).isEqualTo(200);
+    assertThat(agreement.body().get("status")).isEqualTo("SIGNED");
+    String documentUrl = (String) agreement.body().get("document_url");
+    assertThat(documentUrl).isNotBlank();
+
+    HttpResponse<String> fetched =
+        uncheckedSend(HttpRequest.newBuilder(URI.create(documentUrl)).GET().build());
+    assertThat(fetched.statusCode()).isEqualTo(200);
+    assertThat(fetched.body()).contains(chain.id().toString());
+    assertThat(fetched.body()).contains("20.00").contains("BROKER_PARTNERSHIP");
+  }
+
+  private HttpResponse<String> uncheckedSend(HttpRequest request) {
+    try {
+      return httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+    } catch (Exception e) {
+      throw new IllegalStateException(e);
+    }
   }
 
   // ==================== pause/resume ====================

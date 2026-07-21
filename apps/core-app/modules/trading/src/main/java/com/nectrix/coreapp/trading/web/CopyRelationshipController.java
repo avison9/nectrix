@@ -110,9 +110,17 @@ public class CopyRelationshipController {
   }
 
   @PostMapping("/api/v1/copy-relationships/{id}/sign-agreement")
-  public CopyRelationshipView signAgreement(@PathVariable UUID id) {
+  public CopyRelationshipView signAgreement(
+      @AuthenticationPrincipal Jwt jwt, @PathVariable UUID id) {
     CopyRelationship existing = service.getCopyRelationship(id);
-    return toView(service.signAgreement(existing));
+    return toView(service.signAgreement(existing, currentUserId(jwt)));
+  }
+
+  /** AC2 — a short-lived signed URL, never the raw document. */
+  @GetMapping("/api/v1/copy-relationships/{id}/agreement")
+  public CopyRelationshipService.ManagementAgreementView getAgreement(@PathVariable UUID id) {
+    CopyRelationship existing = service.getCopyRelationship(id);
+    return service.getAgreement(existing);
   }
 
   @PostMapping("/api/v1/copy-relationships/{id}/pause")

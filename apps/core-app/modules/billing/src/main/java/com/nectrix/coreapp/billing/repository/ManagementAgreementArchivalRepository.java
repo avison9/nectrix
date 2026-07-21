@@ -7,19 +7,25 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
 /**
- * TICKET-101 follow-up — {@code management_agreements} has no repository anywhere in the codebase
- * today (only ever referenced in raw SQL, 007-billing.sql); this module reads it the same way it
- * already reads {@code copy_relationships}/{@code copied_trades} directly via JdbcTemplate (see
- * this module's own build.gradle.kts). Read-only: the row's own {@code ON DELETE CASCADE} from
- * {@code copy_relationships} means archival never needs to delete it explicitly — only export it
- * before that cascade fires.
+ * TICKET-101 follow-up — {@code management_agreements} archival export, reading it the same way
+ * this module already reads {@code copy_relationships}/{@code copied_trades} directly via
+ * JdbcTemplate (see this module's own build.gradle.kts). Read-only: the row's own {@code ON DELETE
+ * CASCADE} from {@code copy_relationships} means archival never needs to delete it explicitly —
+ * only export it before that cascade fires.
+ *
+ * <p>Named {@code *ArchivalRepository}, not the bare {@code ManagementAgreementRepository} name —
+ * {@code trading.repository.ManagementAgreementRepository} is the table's real read/write owner
+ * (see that class's own Javadoc for why signing lives in {@code modules:trading}, not here); a
+ * bare-name collision between the two is a real Spring bean-name conflict (both default to {@code
+ * managementAgreementRepository}), not just a naming preference — confirmed by {@code
+ * ConflictingBeanDefinitionException} the one time this wasn't yet renamed.
  */
 @Repository
-public class ManagementAgreementRepository {
+public class ManagementAgreementArchivalRepository {
 
   private final JdbcTemplate jdbcTemplate;
 
-  public ManagementAgreementRepository(JdbcTemplate jdbcTemplate) {
+  public ManagementAgreementArchivalRepository(JdbcTemplate jdbcTemplate) {
     this.jdbcTemplate = jdbcTemplate;
   }
 

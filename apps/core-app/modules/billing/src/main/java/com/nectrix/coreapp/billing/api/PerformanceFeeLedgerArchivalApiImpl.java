@@ -2,8 +2,8 @@ package com.nectrix.coreapp.billing.api;
 
 import com.nectrix.coreapp.billing.api.PerformanceFeeLedgerArchiveExport.FeeLedgerRecord;
 import com.nectrix.coreapp.billing.api.PerformanceFeeLedgerArchiveExport.ManagementAgreementRecord;
-import com.nectrix.coreapp.billing.repository.ManagementAgreementRepository;
-import com.nectrix.coreapp.billing.repository.ManagementAgreementRepository.ManagementAgreementExportRow;
+import com.nectrix.coreapp.billing.repository.ManagementAgreementArchivalRepository;
+import com.nectrix.coreapp.billing.repository.ManagementAgreementArchivalRepository.ManagementAgreementExportRow;
 import com.nectrix.coreapp.billing.repository.PerformanceFeeLedgerRepository;
 import com.nectrix.coreapp.billing.repository.PerformanceFeeLedgerRepository.LedgerExportRow;
 import java.util.List;
@@ -14,11 +14,11 @@ import org.springframework.stereotype.Service;
 public class PerformanceFeeLedgerArchivalApiImpl implements PerformanceFeeLedgerArchivalApi {
 
   private final PerformanceFeeLedgerRepository performanceFeeLedgerRepository;
-  private final ManagementAgreementRepository managementAgreementRepository;
+  private final ManagementAgreementArchivalRepository managementAgreementRepository;
 
   public PerformanceFeeLedgerArchivalApiImpl(
       PerformanceFeeLedgerRepository performanceFeeLedgerRepository,
-      ManagementAgreementRepository managementAgreementRepository) {
+      ManagementAgreementArchivalRepository managementAgreementRepository) {
     this.performanceFeeLedgerRepository = performanceFeeLedgerRepository;
     this.managementAgreementRepository = managementAgreementRepository;
   }

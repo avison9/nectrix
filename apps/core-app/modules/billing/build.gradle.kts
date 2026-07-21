@@ -8,6 +8,9 @@ plugins {
 dependencyManagement {
     imports {
         mavenBom("org.springframework.boot:spring-boot-dependencies:4.1.0")
+        // TICKET-120 — FeeReportDocumentStorageClient's AWS S3 SDK v2 dependency, same "each
+        // module/app separately imports the BOM" reasoning as modules:trading's identical import.
+        mavenBom("software.amazon.awssdk:bom:2.31.68")
     }
 }
 
@@ -30,4 +33,10 @@ dependencies {
     implementation("org.springframework.security:spring-security-oauth2-jose")
     implementation("com.nectrix:event-contracts") // BillingEvent (already scaffolded proto)
     implementation("com.stripe:stripe-java:29.4.0")
+    // TICKET-120 — FeeReportDocumentStorageClient (MinIO locally/in CI, real AWS S3 in production).
+    implementation("software.amazon.awssdk:s3")
+    // TICKET-120 — BrokerFeeReportService's own audit trail on every send/confirm-deducted/
+    // confirm-paid transition (AC5). Shared-kernel utility (same tier as modules:crypto), not a
+    // bounded-context module — same reasoning modules:invitations' own audit dependency documents.
+    implementation(project(":modules:audit"))
 }

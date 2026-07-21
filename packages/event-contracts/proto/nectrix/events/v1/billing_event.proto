@@ -17,6 +17,13 @@ enum BillingEventType {
   BILLING_EVENT_TYPE_INVOICE_GENERATED = 2;
   BILLING_EVENT_TYPE_INVOICE_PAID = 3;
   BILLING_EVENT_TYPE_INVOICE_FAILED = 4;
+  // TICKET-120 — BrokerFeeReportService's own 4 real triggers, each mapped to the same
+  // notifications.FEE_REPORT_STATUS_CHANGED type by BillingNotificationConsumer (only the body
+  // text varies per trigger, not the notification type itself).
+  BILLING_EVENT_TYPE_FEE_REPORT_GENERATED = 5;
+  BILLING_EVENT_TYPE_FEE_REPORT_SENT = 6;
+  BILLING_EVENT_TYPE_FEE_REPORT_CONFIRMED_DEDUCTED = 7;
+  BILLING_EVENT_TYPE_FEE_REPORT_CONFIRMED_PAID = 8;
 }
 
 message BillingEvent {
@@ -26,4 +33,5 @@ message BillingEvent {
   optional string invoice_id = 4;
   optional double amount = 5;
   optional string currency = 6;
+  optional string fee_report_id = 7; // TICKET-120 — set only for the FEE_REPORT_* event types above.
 }

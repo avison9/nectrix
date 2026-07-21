@@ -21,11 +21,11 @@ import org.springframework.stereotype.Component;
 import redis.clients.jedis.UnifiedJedis;
 
 /**
- * TICKET-115 — consumes {@code billing} for {@code invoice.generated} notifications only (the
- * ticket's own required event) — {@code FEE_PERIOD_CLOSED}/{@code INVOICE_PAID}/{@code
- * INVOICE_FAILED} are real {@link BillingEventType} values but not in this ticket's MVP set,
- * ignored here. Unlike the other 3 consumers, {@link BillingEvent} already carries {@code user_id}
- * directly — no cross-module lookup needed.
+ * TICKET-115 — consumes {@code billing} for {@code invoice.generated} notifications (the ticket's
+ * own required event) plus TICKET-120's 4 {@code FEE_REPORT_*} triggers — {@code
+ * FEE_PERIOD_CLOSED}/{@code INVOICE_PAID}/{@code INVOICE_FAILED} are real {@link BillingEventType}
+ * values but not in either ticket's set, ignored here. Unlike the other 3 consumers, {@link
+ * BillingEvent} already carries {@code user_id} directly — no cross-module lookup needed.
  */
 @Component
 public class BillingNotificationConsumer {
@@ -72,9 +72,6 @@ public class BillingNotificationConsumer {
   }
 
   private void handle(BillingEvent event, NotificationDispatchService dispatchService) {
-    if (event.getEventType() != BillingEventType.BILLING_EVENT_TYPE_INVOICE_GENERATED) {
-      return;
-    }
     UUID userId;
     try {
       userId = UUID.fromString(event.getUserId());
@@ -83,11 +80,41 @@ public class BillingNotificationConsumer {
           "notifications: BillingEvent with unparsable user_id={}, dropping", event.getUserId());
       return;
     }
-    dispatchService.dispatch(
-        userId, NotificationEventTypes.INVOICE_GENERATED, "New invoice", body(event));
+    switch (event.getEventType()) {
+      case BILLING_EVENT_TYPE_INVOICE_GENERATED ->
+          dispatchService.dispatch(
+              userId, NotificationEventTypes.INVOICE_GENERATED, "New invoice", invoiceBody(event));
+      case BILLING_EVENT_TYPE_FEE_REPORT_GENERATED ->
+          dispatchService.dispatch(
+              userId,
+              NotificationEventTypes.FEE_REPORT_STATUS_CHANGED,
+              "Fee report generated",
+              "A new broker fee report has been generated and is ready to review.");
+      case BILLING_EVENT_TYPE_FEE_REPORT_SENT ->
+          dispatchService.dispatch(
+              userId,
+              NotificationEventTypes.FEE_REPORT_STATUS_CHANGED,
+              "Fee report sent",
+              "Your broker fee report has been marked as sent to the broker.");
+      case BILLING_EVENT_TYPE_FEE_REPORT_CONFIRMED_DEDUCTED ->
+          dispatchService.dispatch(
+              userId,
+              NotificationEventTypes.FEE_REPORT_STATUS_CHANGED,
+              "Fee report deducted",
+              "The broker has confirmed your fee report was deducted.");
+      case BILLING_EVENT_TYPE_FEE_REPORT_CONFIRMED_PAID ->
+          dispatchService.dispatch(
+              userId,
+              NotificationEventTypes.FEE_REPORT_STATUS_CHANGED,
+              "Fee report paid",
+              "The broker has confirmed your fee report was paid out.");
+      default -> {
+        // FEE_PERIOD_CLOSED/INVOICE_PAID/INVOICE_FAILED/UNSPECIFIED — not in either ticket's set.
+      }
+    }
   }
 
-  private String body(BillingEvent event) {
+  private String invoiceBody(BillingEvent event) {
     if (event.hasAmount() && event.hasCurrency()) {
       return String.format(
           Locale.ROOT,

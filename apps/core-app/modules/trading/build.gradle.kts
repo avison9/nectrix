@@ -38,4 +38,8 @@ dependencies {
     // org.springframework.security.oauth2.jwt.Jwt principal type for
     // @AuthenticationPrincipal Jwt bindings.
     implementation("org.springframework.security:spring-security-oauth2-jose")
+    // TICKET-120 — AgreementDocumentStorageClient's real AWS S3 SDK v2 client (MinIO locally/in
+    // CI, real AWS S3 in production), same "each module/app separately imports the AWS SDK BOM"
+    // reasoning as bootstrap's own ArchivalBlobStorageClient dependency.
+    implementation("software.amazon.awssdk:s3")
 }

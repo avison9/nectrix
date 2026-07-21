@@ -1,7 +1,12 @@
 package com.nectrix.coreapp.trading.service;
 
 import com.nectrix.coreapp.trading.domain.CopyRelationship;
+import com.nectrix.coreapp.trading.domain.ManagementAgreement;
 import com.nectrix.coreapp.trading.repository.CopyRelationshipRepository;
+import com.nectrix.coreapp.trading.repository.ManagementAgreementRepository;
+import com.nectrix.coreapp.trading.storage.AgreementDocumentStorageClient;
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.security.access.prepost.PostAuthorize;
@@ -34,11 +39,18 @@ public class CopyRelationshipService {
 
   private final CopyRelationshipRepository repository;
   private final CopyRelationshipUpdatePublisher updatePublisher;
+  private final ManagementAgreementRepository managementAgreementRepository;
+  private final AgreementDocumentStorageClient documentStorageClient;
 
   public CopyRelationshipService(
-      CopyRelationshipRepository repository, CopyRelationshipUpdatePublisher updatePublisher) {
+      CopyRelationshipRepository repository,
+      CopyRelationshipUpdatePublisher updatePublisher,
+      ManagementAgreementRepository managementAgreementRepository,
+      AgreementDocumentStorageClient documentStorageClient) {
     this.repository = repository;
     this.updatePublisher = updatePublisher;
+    this.managementAgreementRepository = managementAgreementRepository;
+    this.documentStorageClient = documentStorageClient;
   }
 
   @PostAuthorize("@perms.isOwnerOrStaff(authentication, returnObject.followerUserId())")
@@ -67,11 +79,70 @@ public class CopyRelationshipService {
     return reload(existing.id());
   }
 
-  public CopyRelationship signAgreement(CopyRelationship existing) {
+  /**
+   * TICKET-120 — the affirmative "I have read and agree" click IS the signature (no third-party
+   * e-signature provider, see this ticket's own out-of-scope note); {@code callerUserId} (the
+   * Follower, already ownership-checked via {@link #getCopyRelationship}) plus the server's own
+   * timestamp stand in for a signature reference. The document is generated and durably uploaded to
+   * blob storage BEFORE the relationship ever reaches {@code ACTIVE} — if the upload fails, nothing
+   * below has run yet, so a relationship can never end up {@code ACTIVE} without a real,
+   * retrievable agreement document behind it.
+   */
+  public CopyRelationship signAgreement(CopyRelationship existing, UUID callerUserId) {
     requireStatus(existing, "PENDING_AGREEMENT", "sign-agreement");
+    Instant signedAt = Instant.now();
+    String documentKey = "agreements/" + existing.id() + "/" + signedAt + ".txt";
+    String document = renderAgreementDocument(existing, callerUserId, signedAt);
+    documentStorageClient.putObject(documentKey, document.getBytes(StandardCharsets.UTF_8));
+    managementAgreementRepository.insertSigned(
+        existing.id(), documentKey, "user:" + callerUserId + "@" + signedAt);
     repository.updateStatus(existing.id(), "ACTIVE");
     return reload(existing.id());
   }
+
+  /**
+   * AC2 — never the raw document, always a short-lived signed URL (see {@code
+   * AgreementDocumentStorageClient#presignedGetUrl}'s own Javadoc).
+   *
+   * @throws ManagementAgreementNotFoundException if this relationship hasn't been signed yet.
+   */
+  public ManagementAgreementView getAgreement(CopyRelationship existing) {
+    ManagementAgreement agreement =
+        managementAgreementRepository
+            .findByCopyRelationshipId(existing.id())
+            .orElseThrow(ManagementAgreementNotFoundException::new);
+    return new ManagementAgreementView(
+        agreement.id(),
+        agreement.status(),
+        agreement.signedAt(),
+        documentStorageClient.presignedGetUrl(agreement.documentObjectKey()).toString());
+  }
+
+  private String renderAgreementDocument(
+      CopyRelationship relationship, UUID callerUserId, Instant signedAt) {
+    return """
+        NECTRIX MANAGEMENT AGREEMENT
+        ============================
+        Copy relationship: %s
+        Signed by (Follower user id): %s
+        Signed at: %s
+        Fee collection method: %s
+        Performance fee: %s%%
+
+        By clicking "I have read and agree," the Follower named above authorizes the
+        performance fee described here to be reported to their broker and deducted from
+        their trading account under the Broker Partnership fee-collection workflow.
+        """
+        .formatted(
+            relationship.id(),
+            callerUserId,
+            signedAt,
+            relationship.feeCollectionMethod(),
+            relationship.performanceFeePercent());
+  }
+
+  public record ManagementAgreementView(
+      UUID id, String status, Instant signedAt, String documentUrl) {}
 
   public CopyRelationship pause(CopyRelationship existing) {
     requireStatus(existing, "ACTIVE", "pause");

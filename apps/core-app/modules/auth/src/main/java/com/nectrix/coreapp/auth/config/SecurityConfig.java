@@ -267,6 +267,11 @@ public class SecurityConfig {
                     .authenticated()
                     .requestMatchers(HttpMethod.POST, "/api/v1/copy-relationships/*/sign-agreement")
                     .authenticated()
+                    // TICKET-120 — AC2's presigned-URL retrieval; ownership enforced the same way
+                    // every other by-id copy-relationships route is (getCopyRelationship's own
+                    // @PostAuthorize).
+                    .requestMatchers(HttpMethod.GET, "/api/v1/copy-relationships/*/agreement")
+                    .authenticated()
                     .requestMatchers(HttpMethod.POST, "/api/v1/copy-relationships/*/pause")
                     .authenticated()
                     .requestMatchers(HttpMethod.POST, "/api/v1/copy-relationships/*/resume")
@@ -347,6 +352,22 @@ public class SecurityConfig {
                     .requestMatchers(HttpMethod.GET, "/api/v1/master/broker-ib-links")
                     .authenticated()
                     .requestMatchers(HttpMethod.POST, "/api/v1/master/broker-ib-links/*/deactivate")
+                    .authenticated()
+                    // TICKET-120 — Master-scoped BrokerFeeReport generation/review/send/confirm
+                    // (role check is @PreAuthorize("hasRole('MASTER')") method-security, see
+                    // BrokerFeeReportController), same reasoning as the two matcher groups above.
+                    .requestMatchers(HttpMethod.POST, "/api/v1/master/fee-reports")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.GET, "/api/v1/master/fee-reports")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.GET, "/api/v1/master/fee-reports/*")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.POST, "/api/v1/master/fee-reports/*/send")
+                    .authenticated()
+                    .requestMatchers(
+                        HttpMethod.POST, "/api/v1/master/fee-reports/*/confirm-deducted")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.POST, "/api/v1/master/fee-reports/*/confirm-paid")
                     .authenticated()
                     // TICKET-118 — public, token-gated (rate-limited in-controller, not here —
                     // see PublicInvitationController/AcceptInviteController's own

@@ -1,7 +1,25 @@
 import Link from "next/link";
-import { listMySettlements } from "@nectrix/api-client";
+import { listMyBrokerFeeReports, listMySettlements } from "@nectrix/api-client";
+import type { BrokerFeeReport } from "@nectrix/api-client";
 import { coreAppBaseUrl } from "@/lib/core-app";
 import { requireSession } from "@/lib/auth";
+import { GenerateFeeReportForm } from "./fee-reports/GenerateFeeReportForm";
+
+const FEE_REPORT_STATUS_LABEL: Record<BrokerFeeReport["status"], string> = {
+  DRAFT: "Draft",
+  SENT: "Sent",
+  BROKER_CONFIRMED_DEDUCTED: "Deducted",
+  BROKER_CONFIRMED_PAID: "Paid",
+  FAILED: "Failed",
+};
+
+const FEE_REPORT_STATUS_TONE: Record<BrokerFeeReport["status"], string> = {
+  DRAFT: "bg-[var(--surface-2)] text-[var(--text-2)]",
+  SENT: "bg-amber-500/15 text-amber-500",
+  BROKER_CONFIRMED_DEDUCTED: "bg-amber-500/15 text-amber-500",
+  BROKER_CONFIRMED_PAID: "bg-[var(--pos)]/15 text-[var(--pos)]",
+  FAILED: "bg-[var(--neg)]/10 text-[var(--neg)]",
+};
 
 const SAMPLE_TIERS = [
   { range: "$0 – $10,000 profit", fee: "20%" },
@@ -10,17 +28,21 @@ const SAMPLE_TIERS = [
 ];
 
 /**
- * Mirrors Nectrix.dc.html's `MASTER · COMMISSION` (`vMasterCommission`, `:861-945`). TICKET-120
- * (broker fee reports/agreements, the fee-rate *setup* form below) hasn't been built anywhere
- * yet — that section mirrors the mock's own static sample fee schedule and stays inert. TICKET-117
- * follow-up added the real "Settlement history" section beneath it: real
- * performance_fee_ledger rows for this Master's own relationships, each linking to a detail page
- * with a "Raise a dispute" action — the fee engine itself (HWM, profit-only billing) has been real
- * and live server-side since TICKET-113.
+ * Mirrors Nectrix.dc.html's `MASTER · COMMISSION` (`vMasterCommission`, `:861-945`) for the top
+ * mock section — the fee-*rate* setup form (base %, tiered schedule, billing-cycle toggle) below
+ * stays inert: TICKET-120's own scope is the Broker Partnership REPORT workflow, not a general
+ * fee-rate-configuration endpoint (no such endpoint exists anywhere), so that part is still a
+ * distinct, unbuilt capability. TICKET-117 follow-up added the real "Settlement history" section;
+ * TICKET-120 adds "Broker fee reports" beneath it — both real sections appended below the mock's
+ * own inert area, same "extend, don't touch the placeholder" precedent {@code ib-partners} and
+ * this page's own settlement-history addition already established.
  */
 export default async function MasterCommissionPage() {
   const { accessToken } = await requireSession();
-  const settlements = await listMySettlements(coreAppBaseUrl(), accessToken);
+  const [settlements, feeReports] = await Promise.all([
+    listMySettlements(coreAppBaseUrl(), accessToken),
+    listMyBrokerFeeReports(coreAppBaseUrl(), accessToken),
+  ]);
 
   return (
     <div className="mx-auto max-w-[1000px]">
@@ -153,6 +175,42 @@ export default async function MasterCommissionPage() {
               <div className="mt-0.5 font-mono text-[13.5px] font-semibold text-[var(--text)]">
                 ${r.netToMasterAmount.toFixed(2)}
               </div>
+            </div>
+          </Link>
+        ))}
+      </div>
+
+      <h2 className="mt-8 text-[16px] font-semibold text-[var(--text)]">Broker fee reports</h2>
+      <p className="mt-1 text-[12.5px] text-[var(--text-2)]">
+        For Broker Partnership relationships — bundle pending fees, send the report to your
+        broker, then confirm once they've deducted and paid out.
+      </p>
+      <div className="mt-3">
+        <GenerateFeeReportForm />
+      </div>
+      <div className="mt-3 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)]">
+        {feeReports.length === 0 && (
+          <p className="px-5 py-6 text-[13px] text-[var(--text-3)]">
+            No fee reports yet — generate one above once you have pending Broker Partnership fees.
+          </p>
+        )}
+        {feeReports.map((r) => (
+          <Link
+            key={r.id}
+            href={`/commission/fee-reports/${r.id}`}
+            className="flex items-center gap-3.5 border-t border-[var(--border)] px-5 py-3.5 first:border-t-0 hover:bg-[var(--surface-2)]"
+          >
+            <div className="flex-1">
+              <div className="text-[13.5px] font-semibold text-[var(--text)]">
+                {r.brokerType} · {new Date(r.periodStart).toLocaleDateString(undefined, { month: "short", year: "numeric" })}
+                {" – "}
+                {new Date(r.periodEnd).toLocaleDateString(undefined, { month: "short", year: "numeric" })}
+              </div>
+              <span
+                className={`mt-0.5 inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold ${FEE_REPORT_STATUS_TONE[r.status]}`}
+              >
+                {FEE_REPORT_STATUS_LABEL[r.status]}
+              </span>
             </div>
           </Link>
         ))}
