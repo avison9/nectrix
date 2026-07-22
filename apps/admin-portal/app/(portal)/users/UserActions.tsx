@@ -16,6 +16,18 @@ import { deleteUserAction, reinstateUserAction, suspendUserAction } from "./acti
  * it isn't Server Component data) apply the endpoint's own real response immediately. The detail
  * page instead passes nothing and falls back to router.refresh(), which correctly re-fetches real
  * Server Component data there.
+ *
+ * Bugfix — this used to gate on {@code window.confirm(...)}. A real, live-verified browser
+ * behavior (Chrome and others): after a page has triggered a few {@code confirm()}/{@code
+ * alert()} dialogs, the dialog itself grows a "Prevent this page from creating additional
+ * dialogs" checkbox — checking it makes the BROWSER silently suppress every future {@code
+ * window.confirm()} call on that page for the rest of the tab's life, with {@code confirm()}
+ * immediately returning {@code false} and no dialog shown at all. That looked exactly like "the
+ * button stopped responding": the onClick handler still fired, but {@code if
+ * (!window.confirm(...)) return;} silently took the early-return branch every time afterward, with
+ * no visible sign why. A native dialog should never be able to permanently disable a page's own
+ * critical actions like this, so the confirm step is now in-page state (below) instead — nothing
+ * the browser itself can suppress.
  */
 export function UserActions({
   user,
@@ -27,6 +39,7 @@ export function UserActions({
   const router = useRouter();
   const [error, setError] = useState<string | undefined>();
   const [pending, startTransition] = useTransition();
+  const [confirming, setConfirming] = useState<"suspend-reinstate" | "delete" | null>(null);
 
   const isActive = user.status === "ACTIVE";
 
@@ -43,11 +56,8 @@ export function UserActions({
     }
   }
 
-  function onSuspendReinstate() {
-    const action = isActive ? "Suspend" : "Reinstate";
-    if (!window.confirm(`${action} this account?`)) {
-      return;
-    }
+  function onConfirmSuspendReinstate() {
+    setConfirming(null);
     startTransition(async () => {
       const result = isActive
         ? await suspendUserAction(user.id)
@@ -56,14 +66,8 @@ export function UserActions({
     });
   }
 
-  function onDelete() {
-    if (
-      !window.confirm(
-        `Delete ${user.email}? This deactivates the account for good — it can't sign in again.`,
-      )
-    ) {
-      return;
-    }
+  function onConfirmDelete() {
+    setConfirming(null);
     startTransition(async () => {
       const result = await deleteUserAction(user.id);
       applyResult(result);
@@ -74,25 +78,55 @@ export function UserActions({
     return <span className="text-[12.5px] text-[var(--text-3)]">Deleted</span>;
   }
 
+  if (confirming) {
+    const isDelete = confirming === "delete";
+    return (
+      <div className="flex flex-col items-end gap-1">
+        <div className="flex flex-nowrap items-center gap-2">
+          <span className="whitespace-nowrap text-[12px] text-[var(--text-2)]">
+            {isDelete ? "Delete?" : isActive ? "Suspend?" : "Reinstate?"}
+          </span>
+          <button
+            type="button"
+            disabled={pending}
+            onClick={isDelete ? onConfirmDelete : onConfirmSuspendReinstate}
+            className="h-9 shrink-0 whitespace-nowrap rounded-[9px] border border-[var(--border)] px-3 text-[12.5px] font-semibold text-[var(--neg)] transition-colors hover:bg-[var(--neg)]/8 disabled:opacity-60"
+          >
+            {pending ? "Working…" : "Yes"}
+          </button>
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => setConfirming(null)}
+            className="h-9 shrink-0 whitespace-nowrap rounded-[9px] border border-[var(--border)] px-3 text-[12.5px] font-semibold text-[var(--text-2)] transition-colors hover:bg-[var(--surface-2)] disabled:opacity-60"
+          >
+            Cancel
+          </button>
+        </div>
+        {error && <p className="text-[11.5px] text-[var(--neg)]">{error}</p>}
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col items-end gap-1">
       <div className="flex flex-nowrap gap-2">
         <button
           type="button"
           disabled={pending}
-          onClick={onSuspendReinstate}
+          onClick={() => setConfirming("suspend-reinstate")}
           className={`h-9 shrink-0 whitespace-nowrap rounded-[9px] border border-[var(--border)] px-3 text-[12.5px] font-semibold transition-colors disabled:opacity-60 ${
             isActive
               ? "text-[var(--neg)] hover:bg-[var(--neg)]/8"
               : "text-[var(--pos)] hover:bg-[var(--pos)]/8"
           }`}
         >
-          {pending ? "Working…" : isActive ? "Suspend" : "Reinstate"}
+          {isActive ? "Suspend" : "Reinstate"}
         </button>
         <button
           type="button"
           disabled={pending}
-          onClick={onDelete}
+          onClick={() => setConfirming("delete")}
           className="h-9 shrink-0 whitespace-nowrap rounded-[9px] border border-[var(--border)] px-3 text-[12.5px] font-semibold text-[var(--neg)] transition-colors hover:bg-[var(--neg)]/8 disabled:opacity-60"
         >
           Delete

@@ -51,6 +51,7 @@ import type {
   TierChangeTargetRole,
   UserDetail,
   UserStatus,
+  UserStatusCounts,
   UserSummary,
 } from "@nectrix/domain-model";
 
@@ -100,6 +101,7 @@ export type {
   TierChangeTargetRole,
   UserDetail,
   UserStatus,
+  UserStatusCounts,
   UserSummary,
 };
 
@@ -1113,6 +1115,17 @@ export async function searchUsers(
 ): Promise<UserSummary[]> {
   const params = new URLSearchParams({ search, page: String(page), pageSize: String(pageSize) });
   return coreAppFetch<UserSummary[]>(baseUrl, `/api/v1/admin/users?${params.toString()}`, {
+    method: "GET",
+    accessToken,
+  });
+}
+
+/** TICKET-117 follow-up — the Users page's own summary card (total/active/suspended/deleted). */
+export async function getUserStatusCounts(
+  baseUrl: string,
+  accessToken: string,
+): Promise<UserStatusCounts> {
+  return coreAppFetch<UserStatusCounts>(baseUrl, "/api/v1/admin/users/counts", {
     method: "GET",
     accessToken,
   });

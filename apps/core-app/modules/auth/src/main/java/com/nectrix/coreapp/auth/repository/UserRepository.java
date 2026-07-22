@@ -109,21 +109,52 @@ public class UserRepository {
    * TICKET-117 — admin user search. {@code query} matches against email or display_name,
    * case-insensitively, substring — a blank/null query returns every user (newest first), matching
    * the mock's own "browse everyone, narrow as you type" behavior.
+   *
+   * <p>Bugfix — a blank query now excludes {@code DELETED} users (the default browse view should
+   * only ever show ACTIVE/SUSPENDED accounts an admin might actually need to act on — a deleted
+   * account isn't actionable). A real, non-blank query still matches against every status including
+   * DELETED, since deliberately looking one up by email/name (e.g. to confirm it really was
+   * deleted) is a legitimate, real admin need this shouldn't hide.
    */
   public List<User> search(String query, int page, int pageSize) {
-    String pattern = "%" + (query == null ? "" : query.trim()) + "%";
+    String trimmed = query == null ? "" : query.trim();
+    String pattern = "%" + trimmed + "%";
+    boolean hasQuery = !trimmed.isEmpty();
     return jdbcTemplate.query(
         """
         SELECT * FROM users
-        WHERE email ILIKE ? OR display_name ILIKE ?
+        WHERE (email ILIKE ? OR display_name ILIKE ?)
+          AND (? OR status <> 'DELETED')
         ORDER BY created_at DESC
         LIMIT ? OFFSET ?
         """,
         ROW_MAPPER,
         pattern,
         pattern,
+        hasQuery,
         pageSize,
         page * pageSize);
+  }
+
+  /** TICKET-117 follow-up — the Users page's own summary card: total/active/suspended/deleted. */
+  public record UserStatusCounts(long total, long active, long suspended, long deleted) {}
+
+  public UserStatusCounts countByStatus() {
+    return jdbcTemplate.queryForObject(
+        """
+        SELECT
+          count(*) AS total,
+          count(*) FILTER (WHERE status = 'ACTIVE') AS active,
+          count(*) FILTER (WHERE status = 'SUSPENDED') AS suspended,
+          count(*) FILTER (WHERE status = 'DELETED') AS deleted
+        FROM users
+        """,
+        (rs, rowNum) ->
+            new UserStatusCounts(
+                rs.getLong("total"),
+                rs.getLong("active"),
+                rs.getLong("suspended"),
+                rs.getLong("deleted")));
   }
 
   public List<String> findRoleNames(UUID userId) {

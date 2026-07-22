@@ -92,7 +92,7 @@ func (ea *fakeEAHTTP) pollAndDispatchOnceNoFatal() {
 	if err != nil {
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var res pollResponse
 	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
 		return
@@ -204,7 +204,7 @@ func TestHTTPPoll_UnknownSessionTokenRejected(t *testing.T) {
 	ea := newFakeEAHTTP(t, ts.URL)
 	ea.sessionToken = "not-a-real-token"
 	resp := ea.post(t, "/ea/poll", pollRequest{SessionToken: ea.sessionToken})
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("expected 401 for unknown session token, got %d", resp.StatusCode)
 	}

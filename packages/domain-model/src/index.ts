@@ -333,6 +333,15 @@ export interface UserDetail {
   brokerAccounts: BrokerAccountSummary[];
 }
 
+// TICKET-117 follow-up — mirrors auth.api.UserAdminApi.UserStatusCountsView. Backs the Users
+// page's own summary card.
+export interface UserStatusCounts {
+  total: number;
+  active: number;
+  suspended: number;
+  deleted: number;
+}
+
 export type FeeLedgerStatus =
   | "PENDING"
   | "INVOICED"

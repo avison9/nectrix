@@ -23,4 +23,9 @@ public interface UserAdminApi {
    *     endpoints) are responsible for only ever passing ACTIVE/SUSPENDED.
    */
   void updateStatus(UUID id, String status);
+
+  /** Backs the Users page's own summary card: total/active/suspended/deleted. */
+  UserStatusCountsView getStatusCounts();
+
+  record UserStatusCountsView(long total, long active, long suspended, long deleted) {}
 }

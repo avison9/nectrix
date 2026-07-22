@@ -35,6 +35,13 @@ public class UserAdminApiImpl implements UserAdminApi {
     userRepository.updateStatus(id, status);
   }
 
+  @Override
+  public UserStatusCountsView getStatusCounts() {
+    UserRepository.UserStatusCounts counts = userRepository.countByStatus();
+    return new UserStatusCountsView(
+        counts.total(), counts.active(), counts.suspended(), counts.deleted());
+  }
+
   private UserView toView(User user) {
     return new UserView(
         user.id(),

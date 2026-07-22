@@ -226,6 +226,20 @@ public class AdminController {
   }
 
   /**
+   * TICKET-117 follow-up — the Users page's own summary card (total/active/suspended/deleted).
+   * Registered before {@link #getUser}'s {@code /{id}} mapping below — Spring ranks a literal path
+   * segment as more specific than a {@code {variable}} one regardless of declaration order, so
+   * {@code /counts} always wins over {@code /{id}} for this exact literal request, the same
+   * well-established {@code /me}-vs-{@code /{id}} pattern this codebase already uses elsewhere
+   * (e.g. tier-change-requests' own {@code /me}).
+   */
+  @GetMapping("/api/v1/admin/users/counts")
+  @PreAuthorize("hasAnyRole('ADMIN','SUPPORT')")
+  public UserAdminApi.UserStatusCountsView getUserStatusCounts() {
+    return userAdminApi.getStatusCounts();
+  }
+
+  /**
    * TICKET-117 — admin user detail, including linked broker accounts (via {@link
    * BrokerAccountLookupApi#listForUser}) with each account's real {@code connectionStatus}/{@code
    * lastHealthCheckAt} — the whole reason this endpoint exists rather than just reusing {@link
