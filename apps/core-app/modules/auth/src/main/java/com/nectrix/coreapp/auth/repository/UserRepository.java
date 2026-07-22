@@ -110,51 +110,34 @@ public class UserRepository {
    * case-insensitively, substring — a blank/null query returns every user (newest first), matching
    * the mock's own "browse everyone, narrow as you type" behavior.
    *
-   * <p>Bugfix — a blank query now excludes {@code DELETED} users (the default browse view should
-   * only ever show ACTIVE/SUSPENDED accounts an admin might actually need to act on — a deleted
-   * account isn't actionable). A real, non-blank query still matches against every status including
-   * DELETED, since deliberately looking one up by email/name (e.g. to confirm it really was
-   * deleted) is a legitimate, real admin need this shouldn't hide.
+   * <p>Bugfix follow-up — {@code status} is the Users page's own explicit status filter beside the
+   * search box ({@code ACTIVE}/{@code SUSPENDED}/{@code DELETED}). Blank/null means the default
+   * view, which excludes DELETED (nothing actionable an admin could do with one) — the filter must
+   * be set to {@code DELETED} explicitly to find one on purpose (e.g. to confirm a deletion really
+   * took effect).
    */
-  public List<User> search(String query, int page, int pageSize) {
+  public List<User> search(String query, String status, int page, int pageSize) {
     String trimmed = query == null ? "" : query.trim();
     String pattern = "%" + trimmed + "%";
-    boolean hasQuery = !trimmed.isEmpty();
+    String trimmedStatus = status == null ? "" : status.trim();
+    boolean hasStatusFilter = !trimmedStatus.isEmpty();
     return jdbcTemplate.query(
         """
         SELECT * FROM users
         WHERE (email ILIKE ? OR display_name ILIKE ?)
-          AND (? OR status <> 'DELETED')
+          AND (? = FALSE OR status = ?)
+          AND (? = TRUE OR status <> 'DELETED')
         ORDER BY created_at DESC
         LIMIT ? OFFSET ?
         """,
         ROW_MAPPER,
         pattern,
         pattern,
-        hasQuery,
+        hasStatusFilter,
+        trimmedStatus,
+        hasStatusFilter,
         pageSize,
         page * pageSize);
-  }
-
-  /** TICKET-117 follow-up — the Users page's own summary card: total/active/suspended/deleted. */
-  public record UserStatusCounts(long total, long active, long suspended, long deleted) {}
-
-  public UserStatusCounts countByStatus() {
-    return jdbcTemplate.queryForObject(
-        """
-        SELECT
-          count(*) AS total,
-          count(*) FILTER (WHERE status = 'ACTIVE') AS active,
-          count(*) FILTER (WHERE status = 'SUSPENDED') AS suspended,
-          count(*) FILTER (WHERE status = 'DELETED') AS deleted
-        FROM users
-        """,
-        (rs, rowNum) ->
-            new UserStatusCounts(
-                rs.getLong("total"),
-                rs.getLong("active"),
-                rs.getLong("suspended"),
-                rs.getLong("deleted")));
   }
 
   public List<String> findRoleNames(UUID userId) {

@@ -176,13 +176,13 @@ class Ticket117IntegrationTest {
   }
 
   /**
-   * Bugfix — the default (blank-query) browse view must never surface a DELETED account (nothing
-   * actionable an admin could do with one), but a real, deliberate search by email must still be
-   * able to find it (e.g. to confirm a deletion really took effect) — see UserRepository#search's
-   * own Javadoc for the full reasoning.
+   * Bugfix follow-up — the default (no status filter) browse view must never surface a DELETED
+   * account (nothing actionable an admin could do with one), but the Users page's own explicit
+   * status filter must still be able to find one on purpose (e.g. to confirm a deletion really
+   * took effect) — see UserRepository#search's own Javadoc for the full reasoning.
    */
   @Test
-  void deletedUser_excludedFromDefaultSearch_butReturnedWhenSearchedByEmail() {
+  void deletedUser_excludedFromDefaultBrowse_butReturnedByExplicitStatusFilter() {
     String email = "ticket117-deleted-" + UUID.randomUUID() + "@example.com";
     UUID userId = createTestUser(email);
     UUID adminId = createTestUser("ticket117-admin-" + UUID.randomUUID() + "@example.com");
@@ -200,47 +200,15 @@ class Ticket117IntegrationTest {
     assertThat(defaultBrowse)
         .noneSatisfy(row -> assertThat(row.get("id")).isEqualTo(userId.toString()));
 
-    List<Map<String, Object>> explicitSearch =
+    List<Map<String, Object>> searchWithoutStatusFilter =
         requestList("/api/v1/admin/users?search=" + email.split("@")[0], adminToken);
-    assertThat(explicitSearch).anySatisfy(row -> assertThat(row.get("email")).isEqualTo(email));
-  }
+    assertThat(searchWithoutStatusFilter)
+        .noneSatisfy(row -> assertThat(row.get("id")).isEqualTo(userId.toString()));
 
-  /** TICKET-117 follow-up — the Users page's own summary card, backed by a real aggregate query. */
-  @Test
-  void userStatusCounts_reflectsRealCountsAcrossStatuses() {
-    UUID adminId = createTestUser("ticket117-counts-admin-" + UUID.randomUUID() + "@example.com");
-    grantRole(adminId, "ADMIN");
-    String adminToken = accessTokenFor(emailFor(adminId));
-
-    Long before =
-        jdbcTemplate.queryForObject(
-            "SELECT count(*) FROM users WHERE status = 'ACTIVE'", Long.class);
-
-    UUID activeUser =
-        createTestUser("ticket117-counts-active-" + UUID.randomUUID() + "@example.com");
-    UUID suspendedUser =
-        createTestUser("ticket117-counts-suspended-" + UUID.randomUUID() + "@example.com");
-    UUID deletedUser =
-        createTestUser("ticket117-counts-deleted-" + UUID.randomUUID() + "@example.com");
-    jdbcTemplate.update("UPDATE users SET status = 'SUSPENDED' WHERE id = ?", suspendedUser);
-    jdbcTemplate.update("UPDATE users SET status = 'DELETED' WHERE id = ?", deletedUser);
-    assertThat(activeUser).isNotNull();
-
-    HttpResult response = request("GET", "/api/v1/admin/users/counts", null, adminToken);
-    assertThat(response.status()).isEqualTo(200);
-    long total = ((Number) response.body().get("total")).longValue();
-    long active = ((Number) response.body().get("active")).longValue();
-    long suspended = ((Number) response.body().get("suspended")).longValue();
-    long deleted = ((Number) response.body().get("deleted")).longValue();
-
-    // Real counts across the whole (shared, never-truncated) test database — assert the totals
-    // grew by exactly the rows this test itself just seeded, not an exact absolute value (other
-    // tests in this suite seed their own users concurrently). `before` is captured AFTER adminId
-    // already exists, so only activeUser is a net-new ACTIVE row from this point on.
-    assertThat(active).isGreaterThanOrEqualTo(before + 1);
-    assertThat(suspended).isGreaterThanOrEqualTo(1);
-    assertThat(deleted).isGreaterThanOrEqualTo(1);
-    assertThat(total).isEqualTo(active + suspended + deleted);
+    List<Map<String, Object>> explicitStatusFilter =
+        requestList("/api/v1/admin/users?status=DELETED", adminToken);
+    assertThat(explicitStatusFilter)
+        .anySatisfy(row -> assertThat(row.get("email")).isEqualTo(email));
   }
 
   @Test

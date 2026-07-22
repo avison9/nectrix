@@ -69,7 +69,7 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
         <table className="w-full border-collapse text-[13px]">
           <thead>
             <tr className="border-b border-[var(--border)] text-left">
-              {["Broker", "Login", "Status", "Last health check"].map((heading) => (
+              {["Broker", "Platform", "Login", "Status", "Last health check"].map((heading) => (
                 <th
                   key={heading}
                   className="px-5 py-2.5 text-[11.5px] font-semibold tracking-wide text-[var(--text-3)] uppercase"
@@ -82,14 +82,15 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
           <tbody>
             {brokerAccounts.length === 0 && (
               <tr>
-                <td colSpan={4} className="px-5 py-8 text-center text-[var(--text-3)]">
+                <td colSpan={5} className="px-5 py-8 text-center text-[var(--text-3)]">
                   No linked broker accounts.
                 </td>
               </tr>
             )}
             {brokerAccounts.map((account) => (
               <tr key={account.id} className="border-b border-[var(--border)] last:border-0">
-                <td className="px-5 py-2.5 text-[var(--text)]">{account.brokerType}</td>
+                <td className="px-5 py-2.5 text-[var(--text)]">{account.brokerName ?? "—"}</td>
+                <td className="px-5 py-2.5 text-[var(--text-2)]">{account.brokerType}</td>
                 <td className="px-5 py-2.5 font-mono text-[12px] text-[var(--text-2)]">
                   {account.brokerAccountLogin}
                 </td>

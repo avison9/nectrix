@@ -10,7 +10,12 @@ import java.util.UUID;
  */
 public interface UserAdminApi {
 
-  List<UserView> search(String query, int page, int pageSize);
+  /**
+   * @param status the Users page's own status filter — {@code ACTIVE}/{@code SUSPENDED}/{@code
+   *     DELETED}, or blank/null for the default view. See {@code UserRepository#search}'s own
+   *     Javadoc for the default view's exact semantics.
+   */
+  List<UserView> search(String query, String status, int page, int pageSize);
 
   /**
    * @throws java.util.NoSuchElementException if no such user exists.
@@ -23,9 +28,4 @@ public interface UserAdminApi {
    *     endpoints) are responsible for only ever passing ACTIVE/SUSPENDED.
    */
   void updateStatus(UUID id, String status);
-
-  /** Backs the Users page's own summary card: total/active/suspended/deleted. */
-  UserStatusCountsView getStatusCounts();
-
-  record UserStatusCountsView(long total, long active, long suspended, long deleted) {}
 }

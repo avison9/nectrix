@@ -8,30 +8,49 @@ import { UserActions } from "./UserActions";
 
 const DEBOUNCE_MS = 300;
 
-/** TICKET-117 — the /users directory's search + results table, {@code isAdmin} gates the Suspend/Reinstate column. */
+/**
+ * TICKET-117 — the /users directory's search + results table, {@code isAdmin} gates the
+ * Suspend/Reinstate column.
+ *
+ * <p>Bugfix follow-up — {@code status} filters beside the search box: blank is the default view
+ * (excludes DELETED, see searchUsersAction's own doc), or an explicit ACTIVE/SUSPENDED/DELETED.
+ */
 export function UserSearch({ isAdmin }: { isAdmin: boolean }) {
   const [query, setQuery] = useState("");
+  const [status, setStatus] = useState("");
   const [results, setResults] = useState<UserSummary[]>([]);
   const [pending, startTransition] = useTransition();
 
   useEffect(() => {
     const timer = setTimeout(() => {
       startTransition(async () => {
-        const found = await searchUsersAction(query);
+        const found = await searchUsersAction(query, status);
         setResults(found);
       });
     }, DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [query]);
+  }, [query, status]);
 
   return (
     <div>
-      <input
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        placeholder="Search by email or name…"
-        className="h-10 w-full max-w-md rounded-[10px] border border-[var(--border)] bg-transparent px-3.5 text-[13.5px] text-[var(--text)] outline-none focus:border-[var(--accent)]"
-      />
+      <div className="flex flex-wrap gap-3">
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search by email or name…"
+          className="h-10 w-full max-w-md rounded-[10px] border border-[var(--border)] bg-transparent px-3.5 text-[13.5px] text-[var(--text)] outline-none focus:border-[var(--accent)]"
+        />
+        <select
+          value={status}
+          onChange={(e) => setStatus(e.target.value)}
+          className="h-10 rounded-[10px] border border-[var(--border)] bg-transparent px-3 text-[13.5px] text-[var(--text)] outline-none focus:border-[var(--accent)]"
+        >
+          <option value="">All (Active & Suspended)</option>
+          <option value="ACTIVE">Active</option>
+          <option value="SUSPENDED">Suspended</option>
+          <option value="DELETED">Deleted</option>
+        </select>
+      </div>
 
       <div className="mt-4 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)]">
         <table className="w-full border-collapse text-[13px]">

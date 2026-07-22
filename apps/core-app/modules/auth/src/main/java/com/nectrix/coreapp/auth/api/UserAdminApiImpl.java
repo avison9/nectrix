@@ -17,8 +17,10 @@ public class UserAdminApiImpl implements UserAdminApi {
   }
 
   @Override
-  public List<UserView> search(String query, int page, int pageSize) {
-    return userRepository.search(query, page, pageSize).stream().map(this::toView).toList();
+  public List<UserView> search(String query, String status, int page, int pageSize) {
+    return userRepository.search(query, status, page, pageSize).stream()
+        .map(this::toView)
+        .toList();
   }
 
   @Override
@@ -33,13 +35,6 @@ public class UserAdminApiImpl implements UserAdminApi {
   @Override
   public void updateStatus(UUID id, String status) {
     userRepository.updateStatus(id, status);
-  }
-
-  @Override
-  public UserStatusCountsView getStatusCounts() {
-    UserRepository.UserStatusCounts counts = userRepository.countByStatus();
-    return new UserStatusCountsView(
-        counts.total(), counts.active(), counts.suspended(), counts.deleted());
   }
 
   private UserView toView(User user) {

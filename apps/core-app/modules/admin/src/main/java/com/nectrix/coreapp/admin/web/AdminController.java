@@ -215,28 +215,20 @@ public class AdminController {
   /**
    * TICKET-117 — admin user search. A blank/absent {@code search} returns every user (newest
    * first), see {@code UserRepository#search}'s own Javadoc.
+   *
+   * <p>Bugfix follow-up — {@code status} is the Users page's own status filter (beside the
+   * name/email search box): {@code ACTIVE}/{@code SUSPENDED}/{@code DELETED}, or blank/absent for
+   * the default view (every status except DELETED — see {@code UserRepository#search}'s own
+   * Javadoc for why DELETED is never shown unless explicitly filtered for).
    */
   @GetMapping("/api/v1/admin/users")
   @PreAuthorize("hasAnyRole('ADMIN','SUPPORT')")
   public List<UserView> searchUsers(
       @RequestParam(required = false, defaultValue = "") String search,
+      @RequestParam(required = false, defaultValue = "") String status,
       @RequestParam(defaultValue = "0") int page,
       @RequestParam(defaultValue = "25") int pageSize) {
-    return userAdminApi.search(search, page, pageSize);
-  }
-
-  /**
-   * TICKET-117 follow-up — the Users page's own summary card (total/active/suspended/deleted).
-   * Registered before {@link #getUser}'s {@code /{id}} mapping below — Spring ranks a literal path
-   * segment as more specific than a {@code {variable}} one regardless of declaration order, so
-   * {@code /counts} always wins over {@code /{id}} for this exact literal request, the same
-   * well-established {@code /me}-vs-{@code /{id}} pattern this codebase already uses elsewhere
-   * (e.g. tier-change-requests' own {@code /me}).
-   */
-  @GetMapping("/api/v1/admin/users/counts")
-  @PreAuthorize("hasAnyRole('ADMIN','SUPPORT')")
-  public UserAdminApi.UserStatusCountsView getUserStatusCounts() {
-    return userAdminApi.getStatusCounts();
+    return userAdminApi.search(search, status, page, pageSize);
   }
 
   /**

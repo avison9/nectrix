@@ -51,7 +51,6 @@ import type {
   TierChangeTargetRole,
   UserDetail,
   UserStatus,
-  UserStatusCounts,
   UserSummary,
 } from "@nectrix/domain-model";
 
@@ -101,7 +100,6 @@ export type {
   TierChangeTargetRole,
   UserDetail,
   UserStatus,
-  UserStatusCounts,
   UserSummary,
 };
 
@@ -1105,27 +1103,26 @@ export async function startSubscriptionCheckout(
 // TICKET-117 — Admin MVP (System Health + User Management + Disputes). ADMIN/SUPPORT
 // server-side calls, same convention every other admin-portal-facing function above uses.
 
-/** A blank/absent `search` returns every user (newest first) — see UserRepository#search's own Javadoc. */
+/**
+ * A blank/absent `search` returns every user (newest first) — see UserRepository#search's own
+ * Javadoc. `status` is the Users page's own status filter beside the search box
+ * (ACTIVE/SUSPENDED/DELETED) — blank/absent means the default view (every status except DELETED).
+ */
 export async function searchUsers(
   baseUrl: string,
   accessToken: string,
   search = "",
+  status = "",
   page = 0,
   pageSize = 25,
 ): Promise<UserSummary[]> {
-  const params = new URLSearchParams({ search, page: String(page), pageSize: String(pageSize) });
-  return coreAppFetch<UserSummary[]>(baseUrl, `/api/v1/admin/users?${params.toString()}`, {
-    method: "GET",
-    accessToken,
+  const params = new URLSearchParams({
+    search,
+    status,
+    page: String(page),
+    pageSize: String(pageSize),
   });
-}
-
-/** TICKET-117 follow-up — the Users page's own summary card (total/active/suspended/deleted). */
-export async function getUserStatusCounts(
-  baseUrl: string,
-  accessToken: string,
-): Promise<UserStatusCounts> {
-  return coreAppFetch<UserStatusCounts>(baseUrl, "/api/v1/admin/users/counts", {
+  return coreAppFetch<UserSummary[]>(baseUrl, `/api/v1/admin/users?${params.toString()}`, {
     method: "GET",
     accessToken,
   });
