@@ -27,6 +27,7 @@ export async function linkCtraderAccountAction(input: {
   displayLabel: string;
   connectionRole: ConnectionRole;
   openedViaIbLinkId?: string;
+  brokerName?: string;
 }): Promise<{ id: string } | { error: string; requiresTwoFactor?: boolean }> {
   const { accessToken } = await requireSession();
   try {

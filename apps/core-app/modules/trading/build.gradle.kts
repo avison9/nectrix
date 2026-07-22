@@ -25,6 +25,10 @@ dependencyManagement {
 dependencies {
     implementation(project(":modules:invitations"))
     implementation(project(":modules:social"))
+    // TICKET-118 follow-up — NotificationDispatchApi, for ProspectNominationService to notify a
+    // Master when a Follower nominates a prospect. Safe one-way edge: notifications has zero
+    // dependencies of its own on any bounded-context module, so this can never cycle.
+    implementation(project(":modules:notifications"))
     implementation("org.springframework.boot:spring-boot-starter-jdbc") // JdbcTemplate (money_management_profiles)
     // TICKET-111 — CopyRelationshipController.
     implementation("org.springframework.boot:spring-boot-starter-web") // @RestController
@@ -34,4 +38,8 @@ dependencies {
     // org.springframework.security.oauth2.jwt.Jwt principal type for
     // @AuthenticationPrincipal Jwt bindings.
     implementation("org.springframework.security:spring-security-oauth2-jose")
+    // TICKET-120 — AgreementDocumentStorageClient's real AWS S3 SDK v2 client (MinIO locally/in
+    // CI, real AWS S3 in production), same "each module/app separately imports the AWS SDK BOM"
+    // reasoning as bootstrap's own ArchivalBlobStorageClient dependency.
+    implementation("software.amazon.awssdk:s3")
 }

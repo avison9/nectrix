@@ -2,6 +2,7 @@ package com.nectrix.coreapp.invitations.web;
 
 import com.nectrix.coreapp.invitations.service.InvalidInvitationException;
 import com.nectrix.coreapp.invitations.service.InvitationNotFoundException;
+import com.nectrix.coreapp.invitations.service.InvitationNotResendableException;
 import com.nectrix.coreapp.invitations.service.InvitationRateLimitExceededException;
 import com.nectrix.coreapp.invitations.service.MasterProfileRequiredException;
 import org.springframework.http.HttpStatus;
@@ -33,6 +34,12 @@ public class InvitationExceptionHandler {
   @ExceptionHandler(InvitationRateLimitExceededException.class)
   public ResponseEntity<ErrorBody> handleRateLimitExceeded() {
     return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(new ErrorBody("rate_limited"));
+  }
+
+  @ExceptionHandler(InvitationNotResendableException.class)
+  public ResponseEntity<ErrorBody> handleNotResendable() {
+    return ResponseEntity.status(HttpStatus.CONFLICT)
+        .body(new ErrorBody("invitation_not_resendable"));
   }
 
   @ExceptionHandler(MasterProfileRequiredException.class)

@@ -175,6 +175,42 @@ class Ticket117IntegrationTest {
         "SELECT email FROM users WHERE id = ?", String.class, userId);
   }
 
+  /**
+   * Bugfix follow-up — the default (no status filter) browse view must never surface a DELETED
+   * account (nothing actionable an admin could do with one), but the Users page's own explicit
+   * status filter must still be able to find one on purpose (e.g. to confirm a deletion really took
+   * effect) — see UserRepository#search's own Javadoc for the full reasoning.
+   */
+  @Test
+  void deletedUser_excludedFromDefaultBrowse_butReturnedByExplicitStatusFilter() {
+    String email = "ticket117-deleted-" + UUID.randomUUID() + "@example.com";
+    UUID userId = createTestUser(email);
+    UUID adminId = createTestUser("ticket117-admin-" + UUID.randomUUID() + "@example.com");
+    grantRole(adminId, "ADMIN");
+    String adminToken = accessTokenFor(emailFor(adminId));
+
+    HttpResult delete = request("DELETE", "/api/v1/admin/users/" + userId, null, adminToken);
+    assertThat(delete.status()).isEqualTo(200);
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT status FROM users WHERE id = ?", String.class, userId))
+        .isEqualTo("DELETED");
+
+    List<Map<String, Object>> defaultBrowse = requestList("/api/v1/admin/users", adminToken);
+    assertThat(defaultBrowse)
+        .noneSatisfy(row -> assertThat(row.get("id")).isEqualTo(userId.toString()));
+
+    List<Map<String, Object>> searchWithoutStatusFilter =
+        requestList("/api/v1/admin/users?search=" + email.split("@")[0], adminToken);
+    assertThat(searchWithoutStatusFilter)
+        .noneSatisfy(row -> assertThat(row.get("id")).isEqualTo(userId.toString()));
+
+    List<Map<String, Object>> explicitStatusFilter =
+        requestList("/api/v1/admin/users?status=DELETED", adminToken);
+    assertThat(explicitStatusFilter)
+        .anySatisfy(row -> assertThat(row.get("email")).isEqualTo(email));
+  }
+
   @Test
   void suspendedUser_cannotLogin_andCannotRefreshAnExistingToken() {
     String email = "ticket117-suspend-" + UUID.randomUUID() + "@example.com";

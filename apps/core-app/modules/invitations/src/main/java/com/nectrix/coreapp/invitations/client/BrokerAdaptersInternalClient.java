@@ -162,7 +162,12 @@ public class BrokerAdaptersInternalClient {
   public record CtraderAccount(
       long ctidTraderAccountId, boolean isLive, long traderLogin, String brokerTitleShort) {}
 
-  /** Mirrors go-domain's AccountSnapshot JSON shape exactly (already camelCase on the wire). */
+  /**
+   * Mirrors go-domain's AccountSnapshot JSON shape exactly (already camelCase on the wire). {@code
+   * leverage} is a pre-formatted "1:N" ratio string, empty for MT4/MT5 (their own wire protocol
+   * carries no leverage field yet — see go-domain's own AccountSnapshot Javadoc) and real for
+   * cTrader (ProtoOATrader.leverageInCents, already fetched during the same snapshot call).
+   */
   public record AccountSnapshot(
       String brokerAccountId,
       String currency,
@@ -171,7 +176,8 @@ public class BrokerAdaptersInternalClient {
       double usedMargin,
       double freeMargin,
       Double marginLevelPct,
-      String asOf) {}
+      String asOf,
+      String leverage) {}
 
   /** Mirrors go-domain's NormalizedPosition JSON shape exactly. */
   public record NormalizedPosition(

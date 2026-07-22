@@ -4,23 +4,25 @@
 # operates at L3/L4 (source pod/namespace + port), not HTTP path, so it
 # can't by itself distinguish /internal/** from /api/v1/** on the same
 # port 8080 — the path-level distinction is enforced at the application
-# layer (SecurityConfig's two SecurityFilterChains, plus the fact that
-# deploy/base/gateway's Ingress only ever forwards /api/v1/** traffic, never
-# /internal/**). What this policy DOES enforce for real: core-app's port
-# 8080 is reachable ONLY from the gateway namespace (public API traffic,
-# proxied in from deploy/base/gateway's Ingress), the copy-engine
-# namespace (where apps/broker-adapters actually runs — see
+# layer (SecurityConfig's two SecurityFilterChains). What this policy DOES
+# enforce for real: core-app's port 8080 is reachable ONLY from: the
+# kube-system namespace (k3s's built-in Traefik ingress controller —
+# core-app.ingress.yaml's own Ingress terminates there, NOT proxied through
+# deploy/base/gateway, which is an explicitly deferred placeholder with no
+# real proxy logic — see that Ingress/Deployment's own comments), the
+# copy-engine namespace (where apps/broker-adapters actually runs — see
 # deploy/base/broker-adapters/deployment.yaml's own namespace: copy-engine),
 # and admin-portal/web (both call core-app directly, server-side, via
 # CORE_APP_BASE_URL=http://core-app.core-app.svc.cluster.local:8080 — see
-# apps/admin-portal/lib/core-app.ts and apps/web/lib/core-app.ts — never
-# proxied through gateway at all, so the original gateway+copy-engine-only
-# list was a real gap, invisible until a real, persistent environment
-# exercised an actual login instead of just staging/production's ephemeral
-# rollout-health smoke test). Nothing else in the cluster, and nothing
-# outside it, can reach core-app directly. Same shape as copy-engine's own
-# broker-egress policy (deploy/base/copy-engine/network-policy.yaml),
-# mirrored for ingress instead of egress.
+# apps/admin-portal/lib/core-app.ts and apps/web/lib/core-app.ts). The
+# gateway namespace is kept in the allow-list too even though nothing
+# currently routes through it, in case a later ticket's real API Gateway/BFF
+# ends up proxying to core-app after all — a redundant allow, not a required
+# one, so removing it later is safe. Nothing else in the cluster, and
+# nothing outside it, can reach core-app directly. Same shape as
+# copy-engine's own broker-egress policy
+# (deploy/base/copy-engine/network-policy.yaml), mirrored for ingress
+# instead of egress.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -32,6 +34,9 @@ spec:
     - Ingress
   ingress:
     - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: gateway

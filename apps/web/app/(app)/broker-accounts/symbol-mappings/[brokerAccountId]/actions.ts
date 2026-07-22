@@ -1,9 +1,26 @@
 "use server";
 
-import { ApiError, confirmSymbolMapping, createOrConfirmSymbolMapping } from "@nectrix/api-client";
+import {
+  ApiError,
+  confirmSymbolMapping,
+  createOrConfirmSymbolMapping,
+  listSymbolMappings,
+} from "@nectrix/api-client";
 import type { SymbolMappingEntry } from "@nectrix/api-client";
 import { coreAppBaseUrl } from "@/lib/core-app";
 import { requireSession } from "@/lib/auth";
+
+/**
+ * apps/broker-adapters only populates suggestions once its own reconcile loop ticks (up to ~30s
+ * after linking, see reconcile.go's own reconcileInterval) — this page had no way to notice once
+ * that happened without a manual reload. Polled from the client while the list is still empty.
+ */
+export async function refetchSymbolMappingsAction(
+  brokerAccountId: string,
+): Promise<SymbolMappingEntry[]> {
+  const { accessToken } = await requireSession();
+  return listSymbolMappings(coreAppBaseUrl(), accessToken, brokerAccountId);
+}
 
 export async function confirmSymbolMappingAction(
   brokerAccountId: string,

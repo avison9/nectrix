@@ -173,4 +173,40 @@ public class CopiedTradeRepository {
   }
 
   private record Filter(String fromWhere, List<Object> params) {}
+
+  /**
+   * TICKET-101 follow-up — full, unpaginated export for the archival flow (as opposed to {@link
+   * #findPage}'s UI-facing pagination) — every copied trade tied to any of the given relationships,
+   * regardless of status.
+   */
+  public List<CopiedTrade> findAllForRelationshipIds(List<UUID> copyRelationshipIds) {
+    if (copyRelationshipIds.isEmpty()) {
+      return List.of();
+    }
+    String placeholders = String.join(",", copyRelationshipIds.stream().map(id -> "?").toList());
+    return jdbcTemplate.query(
+        "SELECT "
+            + SELECT_COLUMNS
+            + "FROM copied_trades ct JOIN trade_signals ts ON ts.id = ct.trade_signal_id "
+            + "WHERE ct.copy_relationship_id IN ("
+            + placeholders
+            + ")",
+        ROW_MAPPER,
+        copyRelationshipIds.toArray());
+  }
+
+  /**
+   * Must run BEFORE {@code trade_signals}/{@code copy_relationships} are deleted for the same
+   * relationships — this table has no {@code ON DELETE CASCADE} from either parent (see {@code
+   * CopyRelationshipArchivalApiImpl}'s own ordering).
+   */
+  public void deleteForRelationshipIds(List<UUID> copyRelationshipIds) {
+    if (copyRelationshipIds.isEmpty()) {
+      return;
+    }
+    String placeholders = String.join(",", copyRelationshipIds.stream().map(id -> "?").toList());
+    jdbcTemplate.update(
+        "DELETE FROM copied_trades WHERE copy_relationship_id IN (" + placeholders + ")",
+        copyRelationshipIds.toArray());
+  }
 }

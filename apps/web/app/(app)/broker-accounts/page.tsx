@@ -1,23 +1,41 @@
 import Link from "next/link";
 import { getBrokerAccountSnapshot, listBrokerAccounts } from "@nectrix/api-client";
-import type { BrokerAccountSnapshot, BrokerAccountSummary } from "@nectrix/domain-model";
+import type { BrokerAccountSnapshot, BrokerAccountSummary, BrokerType } from "@nectrix/domain-model";
 import { coreAppBaseUrl } from "@/lib/core-app";
 import { requireSession } from "@/lib/auth";
 import { DemoLiveTag } from "@/components/DemoLiveTag";
 import { ConnectionStatusBadge } from "@/components/ConnectionStatusBadge";
 import { DisconnectButton } from "./DisconnectButton";
+import { DeleteButton } from "./DeleteButton";
 
+const PLATFORM_LABEL: Record<BrokerType, string> = {
+  CTRADER: "cTrader",
+  MT5: "MT5",
+  MT4: "MT4",
+};
+
+// apps/broker-adapters' snapshot.currency is still a real TODO (the assetId->currency-code lookup
+// isn't built yet — see snapshot.go), so it can arrive empty even for a connected account. Falls
+// back to the account's own (reliable) currency, then a plain, uncrashable "value BAL" rendering
+// rather than letting Intl.NumberFormat throw RangeError on a blank/invalid ISO code.
 function money(value: number, currency: string): string {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(value);
+  if (!currency || currency.length !== 3) {
+    return `${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency || "?"}`;
+  }
+  try {
+    return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(value);
+  } catch {
+    return `${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`;
+  }
 }
 
 /**
  * Mirrors Nectrix.dc.html's `MASTER · ACCOUNTS` card grid (`vMasterAccounts`, `:946-994`) — real
- * data throughout (listBrokerAccounts/getBrokerAccountSnapshot already existed, this page just never
- * matched the mock's design). `leverage`/`server` aren't fields AccountSnapshot exposes, so those
- * two mock fields are simply omitted rather than fabricated. Snapshot fetches run in parallel and
- * tolerate individual failures (e.g. a disconnected account) — one bad snapshot shouldn't blank the
- * whole page.
+ * data throughout. `leverage` is real for cTrader (ProtoOATrader.leverageInCents), "—" for MT4/MT5
+ * (no leverage field in that wire protocol yet, a genuine EA-side gap). `server` is real for
+ * MT4/MT5 (user-entered at link time), never populated for cTrader (no server concept there).
+ * Snapshot fetches run in parallel and tolerate individual failures (e.g. a disconnected account) —
+ * one bad snapshot shouldn't blank the whole page.
  */
 export default async function BrokerAccountsPage() {
   const { accessToken } = await requireSession();
@@ -76,7 +94,9 @@ function AccountCard({
   snapshot: BrokerAccountSnapshot | undefined;
   accessToken: string;
 }) {
-  const initial = (account.displayLabel ?? account.brokerType).slice(0, 1).toUpperCase();
+  const initial = (account.brokerName ?? account.displayLabel ?? account.brokerType)
+    .slice(0, 1)
+    .toUpperCase();
 
   return (
     <div className="flex flex-col rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-5">
@@ -92,29 +112,50 @@ function AccountCard({
             #{account.brokerAccountLogin} · {account.connectionRole}
           </div>
         </div>
-        <DemoLiveTag isDemo={account.isDemo} />
+        <div className="flex flex-col items-end gap-1">
+          <DemoLiveTag isDemo={account.isDemo} />
+          {account.serverName && (
+            <span className="max-w-[110px] truncate font-mono text-[10.5px] text-[var(--text-3)]">
+              {account.serverName}
+            </span>
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-3.5 border-y border-[var(--border)] py-4">
         <div>
           <div className="text-[11px] text-[var(--text-3)]">Balance</div>
           <div className="mt-0.5 font-mono text-[15px] font-semibold text-[var(--text)]">
-            {snapshot ? money(snapshot.balance, snapshot.currency) : "—"}
+            {snapshot ? money(snapshot.balance, snapshot.currency || account.currency) : "—"}
           </div>
         </div>
         <div>
           <div className="text-[11px] text-[var(--text-3)]">Equity</div>
           <div className="mt-0.5 font-mono text-[15px] font-semibold text-[var(--text)]">
-            {snapshot ? money(snapshot.equity, snapshot.currency) : "—"}
+            {snapshot ? money(snapshot.equity, snapshot.currency || account.currency) : "—"}
           </div>
         </div>
         <div>
           <div className="text-[11px] text-[var(--text-3)]">Broker</div>
-          <div className="mt-0.5 text-[13.5px] text-[var(--text-2)]">{account.brokerType}</div>
+          <div className="mt-0.5 text-[13.5px] text-[var(--text-2)]">
+            {account.brokerName ?? account.brokerType}
+          </div>
+        </div>
+        <div>
+          <div className="text-[11px] text-[var(--text-3)]">Platform</div>
+          <div className="mt-0.5 text-[13.5px] text-[var(--text-2)]">{PLATFORM_LABEL[account.brokerType]}</div>
         </div>
         <div>
           <div className="text-[11px] text-[var(--text-3)]">Currency</div>
           <div className="mt-0.5 font-mono text-[13px] text-[var(--text-2)]">{account.currency}</div>
+        </div>
+        <div>
+          <div className="text-[11px] text-[var(--text-3)]">Leverage</div>
+          {/* Real for cTrader (ProtoOATrader.leverageInCents). MT4/MT5 shows "—" — that wire
+              protocol carries no leverage field yet, a genuine EA-side gap, not a display bug. */}
+          <div className="mt-0.5 font-mono text-[13px] text-[var(--text-2)]">
+            {snapshot?.leverage || "—"}
+          </div>
         </div>
       </div>
 
@@ -126,12 +167,19 @@ function AccountCard({
         />
         <div className="flex gap-2">
           <Link
-            href={`/broker-accounts/role/${account.id}`}
+            href={`/broker-accounts/${account.id}`}
             className="flex h-9 items-center rounded-[9px] border border-[var(--border)] px-3 text-[12.5px] font-semibold text-[var(--text)] transition-colors hover:bg-[var(--surface-2)]"
           >
             Manage
           </Link>
-          <DisconnectButton id={account.id} label={account.displayLabel ?? account.brokerAccountLogin} />
+          {account.connectionStatus === "DISCONNECTED" ? (
+            <DeleteButton id={account.id} label={account.displayLabel ?? account.brokerAccountLogin} />
+          ) : (
+            <DisconnectButton
+              id={account.id}
+              label={account.displayLabel ?? account.brokerAccountLogin}
+            />
+          )}
         </div>
       </div>
     </div>

@@ -109,19 +109,33 @@ public class UserRepository {
    * TICKET-117 — admin user search. {@code query} matches against email or display_name,
    * case-insensitively, substring — a blank/null query returns every user (newest first), matching
    * the mock's own "browse everyone, narrow as you type" behavior.
+   *
+   * <p>Bugfix follow-up — {@code status} is the Users page's own explicit status filter beside the
+   * search box ({@code ACTIVE}/{@code SUSPENDED}/{@code DELETED}). Blank/null means the default
+   * view, which excludes DELETED (nothing actionable an admin could do with one) — the filter must
+   * be set to {@code DELETED} explicitly to find one on purpose (e.g. to confirm a deletion really
+   * took effect).
    */
-  public List<User> search(String query, int page, int pageSize) {
-    String pattern = "%" + (query == null ? "" : query.trim()) + "%";
+  public List<User> search(String query, String status, int page, int pageSize) {
+    String trimmed = query == null ? "" : query.trim();
+    String pattern = "%" + trimmed + "%";
+    String trimmedStatus = status == null ? "" : status.trim();
+    boolean hasStatusFilter = !trimmedStatus.isEmpty();
     return jdbcTemplate.query(
         """
         SELECT * FROM users
-        WHERE email ILIKE ? OR display_name ILIKE ?
+        WHERE (email ILIKE ? OR display_name ILIKE ?)
+          AND (? = FALSE OR status = ?)
+          AND (? = TRUE OR status <> 'DELETED')
         ORDER BY created_at DESC
         LIMIT ? OFFSET ?
         """,
         ROW_MAPPER,
         pattern,
         pattern,
+        hasStatusFilter,
+        trimmedStatus,
+        hasStatusFilter,
         pageSize,
         page * pageSize);
   }

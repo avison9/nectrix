@@ -33,7 +33,20 @@ public class CTraderOAuthClient {
     this.config = props.ctraderOauth();
   }
 
-  /** Builds the URL the user's browser is redirected to, embedding our own CSRF {@code state}. */
+  /**
+   * Builds the URL the user's browser is redirected to, embedding our own CSRF {@code state}.
+   *
+   * <p>{@code client_id}/{@code client_secret} identify OUR app to Spotware, the same for every
+   * Nectrix user — they are never how an individual end user's own cTrader account gets chosen.
+   * Each end user authenticates directly with Spotware using their OWN cTrader ID/password (Nectrix
+   * never sees those credentials), and the consent screen lists whichever accounts THAT login owns.
+   * {@code prompt=login} forces Spotware to always show its own login form rather than silently
+   * reusing an already-active Spotware browser session — without it, a browser that's still logged
+   * into connect.spotware.com as one cTrader ID (e.g. from registering this app) would silently
+   * re-authorize as that same account on every subsequent "Connect to cTrader" click, for any
+   * Nectrix user, in that browser — never actually prompting a different end user to sign in as
+   * themselves.
+   */
   public String buildAuthorizeUrl(String state) {
     return AUTHORIZE_ENDPOINT
         + "?client_id="
@@ -43,7 +56,8 @@ public class CTraderOAuthClient {
         + "&scope="
         + encode("trading")
         + "&state="
-        + encode(state);
+        + encode(state)
+        + "&prompt=login";
   }
 
   /** Exchanges an authorization code for real, usable OAuth tokens. */

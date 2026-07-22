@@ -10,6 +10,7 @@ import {
   signAgreementAction,
   stopCopyRelationshipAction,
 } from "./actions";
+import { ViewAgreementLink } from "./ViewAgreementLink";
 
 /**
  * AC2/AC3 — these buttons are only ever a convenience: core-app itself
@@ -106,6 +107,10 @@ export function CopyRelationshipActions({ relationship }: { relationship: CopyRe
           This relationship is stopped. Any open positions are force-closed automatically.
         </p>
       )}
+
+      {relationship.feeCollectionMethod === "BROKER_PARTNERSHIP" &&
+        relationship.status !== "PENDING_RISK_ACK" &&
+        relationship.status !== "PENDING_AGREEMENT" && <ViewAgreementLink id={relationship.id} />}
 
       {error && <p className="text-[12.5px] text-[var(--neg)]">{error}</p>}
     </div>

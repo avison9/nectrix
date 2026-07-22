@@ -1,11 +1,16 @@
 # A namespace-scoped Role (not ClusterRole) living IN mt-terminals — the
 # ServiceAccount this binds to (copy-engine/mt-terminal-host) can only ever
-# touch Deployments/Secrets inside this one namespace, nothing cluster-wide
-# and nothing in any other namespace (verified for real by
-# infra/kind/mt-terminal-host-test's negative RBAC assertion). Deliberately
-# no access to pods/exec/logs — this process only ever manages the
-# Deployment/Secret objects themselves, never needs to reach into a running
-# terminal container directly.
+# touch Deployments/Secrets/Pods inside this one namespace, nothing
+# cluster-wide and nothing in any other namespace (verified for real by
+# infra/kind/mt-terminal-host-test's negative RBAC assertion).
+#
+# TICKET-123 — pods get/list/watch added, read-only. Still deliberately no
+# exec/logs/pod-mutation access: this process reads pod PHASE/READY/RESTART
+# COUNT (for GET /internal/terminals/status, see main.go) to give Admin/
+# Support real visibility into a terminal's health, but never reaches INTO a
+# running terminal container, and never creates/deletes a Pod object
+# directly (Pod lifecycle stays entirely owned by the Deployment object
+# itself, which this Role already has full create/update/patch/delete on).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -18,3 +23,6 @@ rules:
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]

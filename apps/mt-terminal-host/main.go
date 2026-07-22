@@ -17,6 +17,7 @@ import (
 	"github.com/avison9/nectrix/mt-terminal-host/internal/coreappclient"
 	"github.com/avison9/nectrix/mt-terminal-host/internal/k8sprovision"
 	"github.com/avison9/nectrix/mt-terminal-host/internal/reconcile"
+	"github.com/avison9/nectrix/mt-terminal-host/internal/terminalstatus"
 )
 
 const (
@@ -83,6 +84,11 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(healthResponse{Service: serviceName, Status: "ok"})
 	})
+	// TICKET-123 — Admin/Support pod-health visibility. Core App calls in (the reverse direction
+	// from every other /internal/** route in this monorepo, see terminalstatus's own doc comment);
+	// deploy/base/mt-terminal-host/network-policy.yaml is what actually restricts reachability to
+	// core-app's namespace, this shared-secret check is defense in depth on top of that.
+	mux.Handle("/internal/", terminalstatus.NewMux(provisioner, internalServiceToken, logger))
 
 	server := &http.Server{Addr: addr, Handler: mux}
 

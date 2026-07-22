@@ -323,4 +323,72 @@ public class PerformanceFeeLedgerRepository {
         Timestamp.from(periodStart),
         Timestamp.from(periodEnd));
   }
+
+  /**
+   * TICKET-101 follow-up — full row shape for the archival flow's export, every column (including
+   * {@code created_at}, which none of the UI-facing view records above carry).
+   */
+  public record LedgerExportRow(
+      UUID id,
+      UUID copyRelationshipId,
+      Instant periodStart,
+      Instant periodEnd,
+      BigDecimal startingHwm,
+      BigDecimal endingEquity,
+      BigDecimal newProfitAboveHwm,
+      BigDecimal masterFeeAmount,
+      BigDecimal platformTakeAmount,
+      BigDecimal netToMasterAmount,
+      String computationDetailJson,
+      String status,
+      Instant createdAt) {}
+
+  /**
+   * Full, unpaginated export for every {@code performance_fee_ledger} row tied to any of the given
+   * relationships — feeds {@code billing.api.PerformanceFeeLedgerArchivalApi}.
+   */
+  public List<LedgerExportRow> findAllForRelationshipIds(List<UUID> copyRelationshipIds) {
+    if (copyRelationshipIds.isEmpty()) {
+      return List.of();
+    }
+    String placeholders = String.join(",", copyRelationshipIds.stream().map(id -> "?").toList());
+    return jdbcTemplate.query(
+        "SELECT id, copy_relationship_id, period_start, period_end, starting_hwm, ending_equity, "
+            + "new_profit_above_hwm, master_fee_amount, platform_take_amount, net_to_master_amount, "
+            + "computation_detail::text AS computation_detail, status, created_at "
+            + "FROM performance_fee_ledger WHERE copy_relationship_id IN ("
+            + placeholders
+            + ")",
+        (rs, rowNum) ->
+            new LedgerExportRow(
+                UUID.fromString(rs.getString("id")),
+                UUID.fromString(rs.getString("copy_relationship_id")),
+                rs.getTimestamp("period_start").toInstant(),
+                rs.getTimestamp("period_end").toInstant(),
+                rs.getBigDecimal("starting_hwm"),
+                rs.getBigDecimal("ending_equity"),
+                rs.getBigDecimal("new_profit_above_hwm"),
+                rs.getBigDecimal("master_fee_amount"),
+                rs.getBigDecimal("platform_take_amount"),
+                rs.getBigDecimal("net_to_master_amount"),
+                rs.getString("computation_detail"),
+                rs.getString("status"),
+                rs.getTimestamp("created_at").toInstant()),
+        copyRelationshipIds.toArray());
+  }
+
+  /**
+   * Archival's own delete step for this table — must run BEFORE {@code copy_relationships} is
+   * deleted for the same ids (this table has no {@code ON DELETE CASCADE} of its own; see {@code
+   * CopyRelationshipArchivalApi}'s own Javadoc for the full cross-module ordering).
+   */
+  public void deleteForRelationshipIds(List<UUID> copyRelationshipIds) {
+    if (copyRelationshipIds.isEmpty()) {
+      return;
+    }
+    String placeholders = String.join(",", copyRelationshipIds.stream().map(id -> "?").toList());
+    jdbcTemplate.update(
+        "DELETE FROM performance_fee_ledger WHERE copy_relationship_id IN (" + placeholders + ")",
+        copyRelationshipIds.toArray());
+  }
 }

@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -47,11 +48,23 @@ public class BrokerAccountController {
   }
 
   @PatchMapping("/api/v1/broker-accounts/{id}")
-  public BrokerAccount patch(@PathVariable UUID id, @RequestBody PatchRequest request) {
+  public BrokerAccount patch(
+      @AuthenticationPrincipal Jwt jwt, @PathVariable UUID id, @RequestBody PatchRequest request) {
     // Explicit fetch-then-check-then-mutate — see BrokerAccountService's own Javadoc for why the
     // ownership check can't live inside the mutating method itself.
     BrokerAccount existing = service.getBrokerAccount(id);
-    return service.updateBrokerAccount(existing, request.displayLabel(), request.connectionRole());
+    return service.updateBrokerAccount(
+        existing, request.displayLabel(), request.connectionRole(), callerRoles(jwt));
+  }
+
+  /**
+   * TICKET-101 follow-up — the user's own deliberate "stop this account" step, required before
+   * {@link #delete} (see {@code BrokerAccountService#deleteBrokerAccount}'s own Javadoc).
+   */
+  @PostMapping("/api/v1/broker-accounts/{id}/disconnect")
+  public BrokerAccount disconnect(@PathVariable UUID id) {
+    BrokerAccount existing = service.getBrokerAccount(id);
+    return service.disconnectBrokerAccount(existing);
   }
 
   @DeleteMapping("/api/v1/broker-accounts/{id}")
@@ -75,6 +88,11 @@ public class BrokerAccountController {
 
   private UUID currentUserId(Jwt jwt) {
     return UUID.fromString(jwt.getSubject());
+  }
+
+  private List<String> callerRoles(Jwt jwt) {
+    List<String> roles = jwt.getClaimAsStringList("roles");
+    return roles != null ? roles : List.of();
   }
 
   public record PatchRequest(String displayLabel, String connectionRole) {}

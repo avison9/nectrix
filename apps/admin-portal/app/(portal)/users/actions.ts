@@ -66,14 +66,20 @@ export async function provisionUserAction(
   return { success: `${email} was provisioned as ${role}.` };
 }
 
-/** TICKET-117 — the search input's own Server Action; a blank query returns every user. */
-export async function searchUsersAction(query: string): Promise<UserSummary[]> {
+/**
+ * TICKET-117 — the search input's own Server Action; a blank query returns every user.
+ *
+ * <p>Bugfix follow-up — {@code status} is the status filter beside the search box
+ * (ACTIVE/SUSPENDED/DELETED); blank means the default view (see searchUsers's own doc for what
+ * that excludes).
+ */
+export async function searchUsersAction(query: string, status = ""): Promise<UserSummary[]> {
   const jar = await cookies();
   const accessToken = jar.get("access_token")?.value;
   if (!accessToken) {
     return [];
   }
-  return searchUsers(coreAppBaseUrl(), accessToken, query);
+  return searchUsers(coreAppBaseUrl(), accessToken, query, status);
 }
 
 export interface UserStatusActionState {

@@ -36,10 +36,16 @@ jobs:
       # only requires *something* resolvable (see AwsEnvelopeKmsClient).
       AWS_REGION: us-east-1
       KMS_ENDPOINT_OVERRIDE: http://localhost:4566
+      # TICKET-101 follow-up — MinIO accepts any dummy AWS credentials, same reasoning as
+      # LocalStack above (see ArchivalBlobStorageClient).
+      ARCHIVAL_BUCKET: nectrix-archival
+      ARCHIVAL_ENDPOINT_OVERRIDE: http://localhost:9000
+      ARCHIVAL_ACCESS_KEY: nectrix
+      ARCHIVAL_SECRET_KEY: ci-throwaway-password
     steps:
       - uses: actions/checkout@v7.0.0
-      - name: Start ephemeral infra (Postgres, Redis, Kafka, LocalStack)
-        run: docker compose -f docker-compose.yml up -d --wait postgres redis kafka localstack
+      - name: Start ephemeral infra (Postgres, Redis, Kafka, LocalStack, MinIO)
+        run: docker compose -f docker-compose.yml up -d --wait postgres redis kafka localstack minio
       - name: Create Kafka topic catalog (TICKET-007)
         run: ./infra/kafka/create-topics.sh
       - uses: actions/setup-java@v5.4.0
@@ -52,6 +58,8 @@ jobs:
         run: ./gradlew :db:update
       - name: Create the envelope-encryption KMS key in LocalStack (TICKET-011)
         run: ./infra/localstack/init-kms.sh
+      - name: Create the archival bucket in MinIO (TICKET-101 follow-up)
+        run: ./infra/minio/init-bucket.sh
       - name: core-app infra connectivity + schema/audit-log + auth (TICKET-005) + envelope-encryption (TICKET-011) integration tests
         working-directory: apps/core-app
         run: ./gradlew integrationTest
@@ -574,6 +582,9 @@ jobs:
             --from-literal=internal-service-token='DEPLOY_SCRIPT_INTERNAL_SERVICE_TOKEN' \
             --from-literal=mt-terminal-provisioner-token='DEPLOY_SCRIPT_MT_TERMINAL_PROVISIONER_TOKEN' \
             --from-literal=postgres-app-password='DEPLOY_SCRIPT_POSTGRES_APP_PASSWORD' \
+            --from-literal=ctrader-client-id='DEPLOY_SCRIPT_CTRADER_CLIENT_ID' \
+            --from-literal=ctrader-client-secret='DEPLOY_SCRIPT_CTRADER_CLIENT_SECRET' \
+            --from-literal=minio-root-password='DEPLOY_SCRIPT_MINIO_ROOT_PASSWORD' \
             --dry-run=client -o yaml | sudo -E kubectl apply -f -
           sudo -E kubectl create namespace admin-portal --dry-run=client -o yaml | sudo -E kubectl apply -f -
           sudo -E kubectl create secret generic admin-portal-secrets -n admin-portal \
@@ -653,6 +664,7 @@ jobs:
             -e "s|DEPLOY_SCRIPT_POSTGRES_APP_PASSWORD|${{ secrets.DEV_POSTGRES_APP_PASSWORD }}|g" \
             -e "s|DEPLOY_SCRIPT_CTRADER_CLIENT_ID|${{ secrets.DEV_CTRADER_CLIENT_ID != '' && secrets.DEV_CTRADER_CLIENT_ID || 'dev-placeholder-client-id' }}|g" \
             -e "s|DEPLOY_SCRIPT_CTRADER_CLIENT_SECRET|${{ secrets.DEV_CTRADER_CLIENT_SECRET != '' && secrets.DEV_CTRADER_CLIENT_SECRET || 'dev-placeholder-client-secret' }}|g" \
+            -e "s|DEPLOY_SCRIPT_MINIO_ROOT_PASSWORD|${{ secrets.DEV_MINIO_ROOT_PASSWORD }}|g" \
             /tmp/deploy-dev.sh
           gcloud compute scp --tunnel-through-iap --zone="${{ vars.GCP_DEV_VM_ZONE }}" \
             /tmp/deploy-dev.sh "${{ vars.GCP_DEV_VM_NAME }}:/tmp/deploy-dev.sh"

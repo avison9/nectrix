@@ -1,0 +1,34 @@
+# TICKET-123 — core-app becomes an HTTP client of mt-terminal-host for the first time (every other
+# /internal/** caller in this monorepo has a Go service calling INTO core-app, never the reverse —
+# see internal/terminalstatus's own doc comment). This is the ingress-side allow-rule that makes
+# that reachable: mt-terminal-host's Deployment lives in the copy-engine namespace (deploy/base/
+# mt-terminal-host/deployment.yaml), which already carries a namespace-wide EGRESS policy
+# (deploy/base/copy-engine/network-policy.yaml, podSelector: {}) — that policy says nothing about
+# ingress, and NetworkPolicies are purely additive per pod-selector match, so this new, narrowly
+# podSelector-scoped ingress policy is safe to add alongside it without touching broker-adapters/
+# mt5-bridge-gateway, the other two services sharing this namespace.
+#
+# Deliberately podSelector: {app: mt-terminal-host}, NOT {} (unlike core-app-ingress's own
+# namespace-wide {} — core-app has the whole core-app namespace to itself, copy-engine does not):
+# a blanket podSelector: {} here would also silently start restricting ingress to broker-adapters/
+# mt5-bridge-gateway, which currently have no ingress policy of their own at all (open by K8s'
+# default-allow-until-a-policy-exists semantics) — not this ticket's concern to change.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mt-terminal-host-ingress
+  namespace: copy-engine
+spec:
+  podSelector:
+    matchLabels:
+      app: mt-terminal-host
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: core-app
+      ports:
+        - protocol: TCP
+          port: 8093

@@ -74,7 +74,8 @@ public class BrokerAccountMtController {
         body.isDemo(),
         body.displayLabel(),
         body.connectionRole(),
-        body.openedViaIbLinkId());
+        body.openedViaIbLinkId(),
+        body.brokerName());
   }
 
   public record LinkRequestBody(
@@ -84,7 +85,8 @@ public class BrokerAccountMtController {
       boolean isDemo,
       String displayLabel,
       String connectionRole,
-      UUID openedViaIbLinkId) {}
+      UUID openedViaIbLinkId,
+      String brokerName) {}
 
   public record LinkResponse(
       String id, String pairingToken, String gatewayUrl, String connectionStatus) {

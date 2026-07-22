@@ -73,7 +73,18 @@ func (a *CTraderAdapter) GetAccountSnapshot(ctx context.Context, handle domain.C
 		FreeMargin:      equity - usedMargin,
 		MarginLevelPct:  marginLevelPct,
 		AsOf:            time.Now().UTC().Format(time.RFC3339Nano),
+		Leverage:        formatLeverage(trader.GetLeverageInCents()),
 	}, nil
+}
+
+// formatLeverage turns cTrader's own leverageInCents encoding (its own doc-comment: "If leverage =
+// 1:50 then value = 5000") into a plain "1:N" ratio string. The trader object fetched above already
+// carries this — it was simply never read past Balance/MoneyDigits until now.
+func formatLeverage(leverageInCents uint32) string {
+	if leverageInCents == 0 {
+		return ""
+	}
+	return fmt.Sprintf("1:%d", leverageInCents/100)
 }
 
 // unrealizedPnL computes one position's real unrealized profit/loss:

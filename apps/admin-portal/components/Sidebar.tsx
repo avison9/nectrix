@@ -11,6 +11,7 @@ interface NavItem {
 
 // TICKET-012's own scope list: System Health / Users / Disputes / Audit Log
 // (each a stub except Users' provisioning form and Audit Log, which are real).
+// TICKET-122 added Tier-Change Requests alongside them.
 const NAV_ITEMS: NavItem[] = [
   {
     href: "/system-health",
@@ -21,6 +22,11 @@ const NAV_ITEMS: NavItem[] = [
     href: "/users",
     label: "Users",
     icon: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M11 3a4 4 0 1 1 0 8 4 4 0 0 1 0-8ZM22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75",
+  },
+  {
+    href: "/tier-change-requests",
+    label: "Tier-Change Requests",
+    icon: "M17 1l4 4-4 4M3 11V9a4 4 0 0 1 4-4h14M7 23l-4-4 4-4M21 13v2a4 4 0 0 1-4 4H3",
   },
   {
     href: "/disputes",

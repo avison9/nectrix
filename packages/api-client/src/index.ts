@@ -17,6 +17,8 @@ import type {
   CopiedTradesPage,
   CopiedTradeStatus,
   ConnectionRole,
+  BrokerFeeReport,
+  BrokerFeeReportDetail,
   ConnectionStatus,
   ConsumerGroupLag,
   CopyEngineHealth,
@@ -36,12 +38,17 @@ import type {
   LeaderboardPeriod,
   LeaderboardSort,
   MasterProfile,
+  MyProspectNomination,
   NormalizedPosition,
   NormalizedTradeEvent,
   PendingInvitation,
+  ProspectNomination,
   PublicMasterProfile,
   SymbolMappingEntry,
   SystemHealthSnapshot,
+  TierChangeRequest,
+  TierChangeRequestStatus,
+  TierChangeTargetRole,
   UserDetail,
   UserStatus,
   UserSummary,
@@ -61,6 +68,8 @@ export type {
   CopiedTradesPage,
   CopiedTradeStatus,
   ConnectionRole,
+  BrokerFeeReport,
+  BrokerFeeReportDetail,
   ConnectionStatus,
   ConsumerGroupLag,
   CopyEngineHealth,
@@ -80,10 +89,15 @@ export type {
   LeaderboardPeriod,
   LeaderboardSort,
   MasterProfile,
+  MyProspectNomination,
   PendingInvitation,
+  ProspectNomination,
   PublicMasterProfile,
   SymbolMappingEntry,
   SystemHealthSnapshot,
+  TierChangeRequest,
+  TierChangeRequestStatus,
+  TierChangeTargetRole,
   UserDetail,
   UserStatus,
   UserSummary,
@@ -335,6 +349,40 @@ export async function deleteBrokerAccount(
   });
 }
 
+/**
+ * Required before {@link deleteBrokerAccount} — deleting a still-connected account is rejected
+ * (`broker_account_not_disconnected`, 409). See BrokerAccountService#deleteBrokerAccount's own
+ * Javadoc.
+ */
+export async function disconnectBrokerAccount(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<BrokerAccountSummary> {
+  return coreAppFetch<BrokerAccountSummary>(baseUrl, `/api/v1/broker-accounts/${id}/disconnect`, {
+    method: "POST",
+    accessToken,
+  });
+}
+
+/**
+ * TICKET-101 follow-up — the automatic fallback {@link deleteBrokerAccount} takes on
+ * `broker_account_in_use` (409): rather than dead-ending, this archives every referencing row
+ * (copy relationships, copied trades, trade signals, performance-fee-ledger entries, management
+ * agreements) to a durable blob first, then deletes them and the account row itself. See
+ * BrokerAccountArchivalOrchestrator's own Javadoc for the full ordering.
+ */
+export async function archiveAndDeleteBrokerAccount(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<{ blobKey: string; rowCounts: Record<string, number> }> {
+  return coreAppFetch(baseUrl, `/api/v1/broker-accounts/${id}/archive-and-delete`, {
+    method: "POST",
+    accessToken,
+  });
+}
+
 export async function getBrokerAccountSnapshot(
   baseUrl: string,
   accessToken: string,
@@ -394,6 +442,7 @@ export async function linkCtraderAccount(
     displayLabel: string;
     connectionRole?: ConnectionRole;
     openedViaIbLinkId?: string;
+    brokerName?: string;
   },
 ): Promise<BrokerAccountSummary> {
   return coreAppFetch<BrokerAccountSummary>(baseUrl, "/api/v1/broker/ctrader/link", {
@@ -406,6 +455,7 @@ export async function linkCtraderAccount(
       display_label: input.displayLabel,
       connection_role: input.connectionRole,
       opened_via_ib_link_id: input.openedViaIbLinkId,
+      broker_name: input.brokerName,
     }),
   });
 }
@@ -425,6 +475,7 @@ export interface MtLinkInput {
   displayLabel: string;
   connectionRole?: ConnectionRole;
   openedViaIbLinkId?: string;
+  brokerName: string;
 }
 
 function mtLinkBody(input: MtLinkInput) {
@@ -436,6 +487,7 @@ function mtLinkBody(input: MtLinkInput) {
     display_label: input.displayLabel,
     connection_role: input.connectionRole,
     opened_via_ib_link_id: input.openedViaIbLinkId,
+    broker_name: input.brokerName,
   });
 }
 
@@ -509,8 +561,10 @@ export async function createOrConfirmSymbolMapping(
 }
 
 /**
- * Returns [] gracefully when a Master has no active IB links (TICKET-119 isn't built yet — this
- * is TICKET-110's own narrow, additive read, see BrokerIbLinkController's Javadoc).
+ * Returns [] gracefully when a Master has no active IB links. TICKET-110's own narrow,
+ * additive read (any authenticated caller, e.g. a Follower during onboarding, may look up a
+ * specific Master's active links by id — see BrokerIbLinkController's own Javadoc for why that's
+ * safe) — for the calling Master's own full management view, see {@link listMyBrokerIbLinks}.
  */
 export async function listMasterIbLinks(
   baseUrl: string,
@@ -522,6 +576,47 @@ export async function listMasterIbLinks(
     `/api/v1/broker-accounts/ib-links?masterProfileId=${masterProfileId}`,
     { method: "GET", accessToken },
   );
+}
+
+// ==================== TICKET-119 — Broker IB Link Management (Master-scoped) ====================
+
+export async function createBrokerIbLink(
+  baseUrl: string,
+  accessToken: string,
+  input: { brokerType: string; brokerDisplayName: string; ibReferralUrlOrCode: string },
+): Promise<BrokerIbLink> {
+  return coreAppFetch<BrokerIbLink>(baseUrl, "/api/v1/master/broker-ib-links", {
+    method: "POST",
+    accessToken,
+    body: JSON.stringify({
+      broker_type: input.brokerType,
+      broker_display_name: input.brokerDisplayName,
+      ib_referral_url_or_code: input.ibReferralUrlOrCode,
+    }),
+  });
+}
+
+/** Every link the calling Master has ever created, active or not — see BrokerIbLinkService's own Javadoc. */
+export async function listMyBrokerIbLinks(
+  baseUrl: string,
+  accessToken: string,
+): Promise<BrokerIbLink[]> {
+  return coreAppFetch<BrokerIbLink[]>(baseUrl, "/api/v1/master/broker-ib-links", {
+    method: "GET",
+    accessToken,
+  });
+}
+
+/** Deliberately never a hard delete — see BrokerIbLinkRepository#deactivate's own Javadoc. */
+export async function deactivateBrokerIbLink(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<void> {
+  await coreAppFetch<null>(baseUrl, `/api/v1/master/broker-ib-links/${id}/deactivate`, {
+    method: "POST",
+    accessToken,
+  });
 }
 
 // ==================== TICKET-111 — Master Profile Creation & CopyRelationship State Machine ====================
@@ -638,6 +733,7 @@ export interface CopySettingsInput {
   maxLotPerTrade: number | null;
   maxOpenPositions: number | null;
   maxSlippagePips: number | null;
+  excludedSymbols: string[];
 }
 
 /**
@@ -663,6 +759,7 @@ export async function updateCopySettings(
       max_lot_per_trade: input.maxLotPerTrade,
       max_open_positions: input.maxOpenPositions,
       max_slippage_pips: input.maxSlippagePips,
+      excluded_symbols: input.excludedSymbols,
     }),
   });
 }
@@ -716,6 +813,22 @@ export async function signAgreement(
   id: string,
 ): Promise<CopyRelationship> {
   return copyRelationshipAction(baseUrl, accessToken, id, "sign-agreement");
+}
+
+/**
+ * TICKET-120 AC2 — {@code documentUrl} is a short-lived signed URL, never a public one; throws
+ * ApiError(404) if this relationship hasn't been signed yet (see
+ * ManagementAgreementNotFoundException).
+ */
+export async function getManagementAgreement(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<{ id: string; status: string; signedAt: string; documentUrl: string }> {
+  return coreAppFetch(baseUrl, `/api/v1/copy-relationships/${id}/agreement`, {
+    method: "GET",
+    accessToken,
+  });
 }
 
 export async function pauseCopyRelationship(
@@ -992,15 +1105,25 @@ export async function startSubscriptionCheckout(
 // TICKET-117 — Admin MVP (System Health + User Management + Disputes). ADMIN/SUPPORT
 // server-side calls, same convention every other admin-portal-facing function above uses.
 
-/** A blank/absent `search` returns every user (newest first) — see UserRepository#search's own Javadoc. */
+/**
+ * A blank/absent `search` returns every user (newest first) — see UserRepository#search's own
+ * Javadoc. `status` is the Users page's own status filter beside the search box
+ * (ACTIVE/SUSPENDED/DELETED) — blank/absent means the default view (every status except DELETED).
+ */
 export async function searchUsers(
   baseUrl: string,
   accessToken: string,
   search = "",
+  status = "",
   page = 0,
   pageSize = 25,
 ): Promise<UserSummary[]> {
-  const params = new URLSearchParams({ search, page: String(page), pageSize: String(pageSize) });
+  const params = new URLSearchParams({
+    search,
+    status,
+    page: String(page),
+    pageSize: String(pageSize),
+  });
   return coreAppFetch<UserSummary[]>(baseUrl, `/api/v1/admin/users?${params.toString()}`, {
     method: "GET",
     accessToken,
@@ -1165,6 +1288,176 @@ export async function raiseMySettlementDispute(
   });
 }
 
+// ==================== TICKET-120 — Broker Fee Reports (Master-scoped) ====================
+
+/** Throws ApiError(400, "no_pending_fees_to_report") if there's nothing to bundle for this (broker, period). */
+export async function generateBrokerFeeReport(
+  baseUrl: string,
+  accessToken: string,
+  input: { brokerType: string; periodStart: string; periodEnd: string },
+): Promise<BrokerFeeReport> {
+  return coreAppFetch<BrokerFeeReport>(baseUrl, "/api/v1/master/fee-reports", {
+    method: "POST",
+    accessToken,
+    body: JSON.stringify({
+      broker_type: input.brokerType,
+      period_start: input.periodStart,
+      period_end: input.periodEnd,
+    }),
+  });
+}
+
+export async function listMyBrokerFeeReports(
+  baseUrl: string,
+  accessToken: string,
+): Promise<BrokerFeeReport[]> {
+  return coreAppFetch<BrokerFeeReport[]>(baseUrl, "/api/v1/master/fee-reports", {
+    method: "GET",
+    accessToken,
+  });
+}
+
+export async function getMyBrokerFeeReport(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<BrokerFeeReportDetail> {
+  return coreAppFetch<BrokerFeeReportDetail>(baseUrl, `/api/v1/master/fee-reports/${id}`, {
+    method: "GET",
+    accessToken,
+  });
+}
+
+async function feeReportAction(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+  action: string,
+): Promise<BrokerFeeReport> {
+  return coreAppFetch<BrokerFeeReport>(baseUrl, `/api/v1/master/fee-reports/${id}/${action}`, {
+    method: "POST",
+    accessToken,
+  });
+}
+
+/** Only valid from DRAFT — core-app rejects otherwise. */
+export async function sendBrokerFeeReport(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<BrokerFeeReport> {
+  return feeReportAction(baseUrl, accessToken, id, "send");
+}
+
+/** Only valid from SENT — cascades every bundled performance_fee_ledger row to BROKER_CONFIRMED_DEDUCTED. */
+export async function confirmBrokerFeeReportDeducted(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<BrokerFeeReport> {
+  return feeReportAction(baseUrl, accessToken, id, "confirm-deducted");
+}
+
+/** Only valid from BROKER_CONFIRMED_DEDUCTED — cascades every bundled ledger row to BROKER_CONFIRMED_PAID. */
+export async function confirmBrokerFeeReportPaid(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<BrokerFeeReport> {
+  return feeReportAction(baseUrl, accessToken, id, "confirm-paid");
+}
+
+// ==================== TICKET-122 — Account Tier-Change Requests ====================
+
+/** Throws ApiError(409, "already_master_or_follower" | "pending_request_exists") or ApiError(400, "agreement_not_accepted"). */
+export async function submitTierChangeRequest(
+  baseUrl: string,
+  accessToken: string,
+  input: { targetMode: TierChangeTargetRole; agreementAccepted: boolean },
+): Promise<TierChangeRequest> {
+  return coreAppFetch<TierChangeRequest>(baseUrl, "/api/v1/account/tier-change-requests", {
+    method: "POST",
+    accessToken,
+    body: JSON.stringify({
+      target_mode: input.targetMode,
+      agreement_accepted: input.agreementAccepted,
+    }),
+  });
+}
+
+/**
+ * The caller's own most recent request, whatever its status — null if they've never submitted one
+ * (the controller returns 204 No Content for that case; coreAppFetch's own empty-body handling
+ * already turns that into a plain `null`, no special-casing needed here).
+ */
+export async function getMyTierChangeRequest(
+  baseUrl: string,
+  accessToken: string,
+): Promise<TierChangeRequest | null> {
+  return coreAppFetch<TierChangeRequest | null>(baseUrl, "/api/v1/account/tier-change-requests/me", {
+    method: "GET",
+    accessToken,
+  });
+}
+
+/** Admin Portal — the pending-review queue by default; pass status for APPROVED/REJECTED history. */
+export async function listTierChangeRequests(
+  baseUrl: string,
+  accessToken: string,
+  status: TierChangeRequestStatus = "PENDING",
+): Promise<TierChangeRequest[]> {
+  return coreAppFetch<TierChangeRequest[]>(
+    baseUrl,
+    `/api/v1/admin/tier-change-requests?status=${status}`,
+    { method: "GET", accessToken },
+  );
+}
+
+export async function getTierChangeRequest(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<TierChangeRequest> {
+  return coreAppFetch<TierChangeRequest>(baseUrl, `/api/v1/admin/tier-change-requests/${id}`, {
+    method: "GET",
+    accessToken,
+  });
+}
+
+async function tierChangeRequestDecision(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+  decision: "approve" | "reject",
+  reason: string | undefined,
+): Promise<TierChangeRequest> {
+  return coreAppFetch<TierChangeRequest>(
+    baseUrl,
+    `/api/v1/admin/tier-change-requests/${id}/${decision}`,
+    { method: "POST", accessToken, body: JSON.stringify({ reason: reason ?? null }) },
+  );
+}
+
+/** ADMIN/SUPER_ADMIN only — grants the requested role and notifies the user. */
+export async function approveTierChangeRequest(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+  reason?: string,
+): Promise<TierChangeRequest> {
+  return tierChangeRequestDecision(baseUrl, accessToken, id, "approve", reason);
+}
+
+/** ADMIN/SUPER_ADMIN only — leaves the user's roles unchanged and notifies them (with reason, if given). */
+export async function rejectTierChangeRequest(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+  reason?: string,
+): Promise<TierChangeRequest> {
+  return tierChangeRequestDecision(baseUrl, accessToken, id, "reject", reason);
+}
+
 // ==================== TICKET-118 — Invitation System (Master invites a Follower) ====================
 
 /** MASTER-only server-side call — scoped to the caller's own master_profile_id (InvitationController). */
@@ -1209,6 +1502,22 @@ export async function revokeInvitation(
   id: string,
 ): Promise<void> {
   await coreAppFetch<null>(baseUrl, `/api/v1/master/invitations/${id}/revoke`, {
+    method: "POST",
+    accessToken,
+  });
+}
+
+/**
+ * Resending isn't a one-shot affair — rotates the token/expiry and re-sends the email. Rate
+ * limited per-invitation (429) and 409s for ACCEPTED/REVOKED invitations — see
+ * InvitationService#resend's own Javadoc.
+ */
+export async function resendInvitation(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<Invitation> {
+  return coreAppFetch<Invitation>(baseUrl, `/api/v1/master/invitations/${id}/resend`, {
     method: "POST",
     accessToken,
   });
@@ -1298,5 +1607,69 @@ export async function createCopyRelationshipFromInvitation(
       max_open_positions: input.maxOpenPositions ?? null,
       max_slippage_pips: input.maxSlippagePips ?? null,
     }),
+  });
+}
+
+// ==================== TICKET-118 follow-up — prospect nominations (Follower -> Master inbox) ====================
+
+/** FOLLOWER-only server-side call — 409s (`no_master_to_nominate_to`) if the caller has no Master yet. */
+export async function nominateProspect(
+  baseUrl: string,
+  accessToken: string,
+  prospectEmail: string,
+): Promise<void> {
+  await coreAppFetch<null>(baseUrl, "/api/v1/prospect-nominations", {
+    method: "POST",
+    accessToken,
+    body: JSON.stringify({ prospect_email: prospectEmail }),
+  });
+}
+
+/** FOLLOWER-only server-side call — backs the real `/follower/referrals` referral-history table. */
+export async function listMyProspectNominations(
+  baseUrl: string,
+  accessToken: string,
+): Promise<MyProspectNomination[]> {
+  return coreAppFetch<MyProspectNomination[]>(baseUrl, "/api/v1/prospect-nominations/mine", {
+    method: "GET",
+    accessToken,
+  });
+}
+
+/** MASTER-only server-side call — backs the real `/inbox` page. */
+export async function listProspectNominations(
+  baseUrl: string,
+  accessToken: string,
+  status?: string,
+): Promise<ProspectNomination[]> {
+  const query = status ? `?status=${status}` : "";
+  return coreAppFetch<ProspectNomination[]>(baseUrl, `/api/v1/master/prospect-nominations${query}`, {
+    method: "GET",
+    accessToken,
+  });
+}
+
+/** Call after successfully creating the real invitation via {@link createInvitation}. */
+export async function markNominationInvited(
+  baseUrl: string,
+  accessToken: string,
+  nominationId: string,
+  invitationId: string,
+): Promise<void> {
+  await coreAppFetch<null>(baseUrl, `/api/v1/master/prospect-nominations/${nominationId}/mark-invited`, {
+    method: "POST",
+    accessToken,
+    body: JSON.stringify({ invitation_id: invitationId }),
+  });
+}
+
+export async function dismissNomination(
+  baseUrl: string,
+  accessToken: string,
+  nominationId: string,
+): Promise<void> {
+  await coreAppFetch<null>(baseUrl, `/api/v1/master/prospect-nominations/${nominationId}/dismiss`, {
+    method: "POST",
+    accessToken,
   });
 }

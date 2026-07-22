@@ -22,6 +22,7 @@ public class InvitationsRepository {
         String suggestedMoneyManagementProfileId =
             rs.getString("suggested_money_management_profile_id");
         String suggestedRiskProfileId = rs.getString("suggested_risk_profile_id");
+        Timestamp lastResentAt = rs.getTimestamp("last_resent_at");
         return new Invitation(
             UUID.fromString(rs.getString("id")),
             UUID.fromString(rs.getString("master_profile_id")),
@@ -37,7 +38,9 @@ public class InvitationsRepository {
             rs.getTimestamp("expires_at").toInstant(),
             acceptedAt != null ? acceptedAt.toInstant() : null,
             acceptedByUserId != null ? UUID.fromString(acceptedByUserId) : null,
-            rs.getTimestamp("created_at").toInstant());
+            rs.getTimestamp("created_at").toInstant(),
+            rs.getInt("resend_count"),
+            lastResentAt != null ? lastResentAt.toInstant() : null);
       };
 
   private final JdbcTemplate jdbcTemplate;
@@ -114,6 +117,24 @@ public class InvitationsRepository {
     jdbcTemplate.update(
         "UPDATE invitations SET status = 'ACCEPTED', accepted_at = now(), accepted_by_user_id = ? WHERE id = ?",
         acceptedByUserId,
+        id);
+  }
+
+  /**
+   * Rotates the token/expiry (a fresh 7-day window on every resend, same as a brand-new invitation)
+   * and flips an {@code EXPIRED} row back to {@code PENDING} — see {@link
+   * com.nectrix.coreapp.invitations.service.InvitationService#resend}.
+   */
+  public void markResent(UUID id, String newTokenHash, Instant newExpiresAt) {
+    jdbcTemplate.update(
+        """
+        UPDATE invitations
+        SET token_hash = ?, status = 'PENDING', expires_at = ?,
+            resend_count = resend_count + 1, last_resent_at = now()
+        WHERE id = ?
+        """,
+        newTokenHash,
+        Timestamp.from(newExpiresAt),
         id);
   }
 }

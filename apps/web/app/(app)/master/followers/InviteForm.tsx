@@ -2,9 +2,10 @@
 
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import type { BrokerIbLink } from "@nectrix/api-client";
 import { createInvitationAction } from "./actions";
 
-export function InviteForm() {
+export function InviteForm({ ibLinks }: { ibLinks: BrokerIbLink[] }) {
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
   const [error, setError] = useState<string | undefined>();
@@ -39,6 +40,20 @@ export function InviteForm() {
           placeholder="follower@email.com"
           className="h-[42px] min-w-[200px] flex-1 rounded-[11px] border border-[var(--border)] bg-transparent px-3.5 text-[13.5px] text-[var(--text)] outline-none focus:border-[var(--accent)]"
         />
+        {ibLinks.length > 0 && (
+          <select
+            name="suggestedBrokerIbLinkId"
+            defaultValue=""
+            className="h-[42px] rounded-[11px] border border-[var(--border)] bg-transparent px-3 text-[13.5px] text-[var(--text)] outline-none focus:border-[var(--accent)]"
+          >
+            <option value="">No suggested IB link</option>
+            {ibLinks.map((link) => (
+              <option key={link.id} value={link.id}>
+                {link.brokerDisplayName}
+              </option>
+            ))}
+          </select>
+        )}
         <button
           type="submit"
           disabled={pending}

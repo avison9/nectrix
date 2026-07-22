@@ -17,8 +17,8 @@ public class UserAdminApiImpl implements UserAdminApi {
   }
 
   @Override
-  public List<UserView> search(String query, int page, int pageSize) {
-    return userRepository.search(query, page, pageSize).stream().map(this::toView).toList();
+  public List<UserView> search(String query, String status, int page, int pageSize) {
+    return userRepository.search(query, status, page, pageSize).stream().map(this::toView).toList();
   }
 
   @Override

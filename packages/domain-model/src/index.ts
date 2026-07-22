@@ -33,6 +33,9 @@ export interface AccountSnapshot {
   freeMargin: number;
   marginLevelPct: number | null;
   asOf: string; // ISO-8601 timestamp
+  // Pre-formatted "1:N" ratio, e.g. "1:500" — empty for MT4/MT5 (no leverage field in that wire
+  // protocol yet, would need an EA-side change), real for cTrader (ProtoOATrader.leverageInCents).
+  leverage: string;
 }
 
 export type TradeDirection = "BUY" | "SELL";
@@ -134,13 +137,18 @@ export interface BrokerAccountSummary {
   openedViaIbLinkId: string | null;
   connectionStatus: ConnectionStatus;
   lastHealthCheckAt: string | null;
+  // TICKET-101/102 follow-up — brokerType (CTRADER/MT5/MT4) is the platform, not the broker's own
+  // brand name (e.g. "Pepperstone"). Both nullable: cTrader has no "server" concept, and accounts
+  // linked before this field existed have neither populated.
+  brokerName: string | null;
+  serverName: string | null;
 }
 
 // Mirrors BrokerAccountAdaptersInternalClient.AccountSnapshot's JSON shape.
 export type BrokerAccountSnapshot = AccountSnapshot;
 
-// Mirrors BrokerIbLink.java (docs/07-auth-onboarding-broker-linking.md §7.4) — read-only here,
-// creation/management is TICKET-119's own scope.
+// Mirrors BrokerIbLink.java (docs/07-auth-onboarding-broker-linking.md §7.4). TICKET-119 added the
+// real create/list/deactivate write path.
 export interface BrokerIbLink {
   id: string;
   masterProfileId: string;
@@ -236,6 +244,12 @@ export interface CopyRelationship {
   originatingFollowRequestId: string | null;
   highWaterMark: number | null;
   createdAt: string;
+  // Feature — a Follower-editable per-relationship symbol EXCLUSION list, empty by default
+  // (meaning "copy every symbol this Master trades", unchanged from before this field existed).
+  // Enforced in apps/copy-engine, only against new position opens — see that service's own
+  // dispatch.go comment for why an already-copied position must still close normally even after
+  // its symbol is added here.
+  excludedSymbols: string[];
 }
 
 // Mirrors CopyRelationshipController.TradesPage/CopiedTrade (read-only trades-history view).
@@ -323,6 +337,12 @@ export interface UserSummary {
 export interface UserDetail {
   user: UserSummary;
   brokerAccounts: BrokerAccountSummary[];
+  // Bugfix follow-up — this user's own MT4/MT5 accounts joined against their live pod status
+  // (see MtTerminalsSection below), so support/admin can troubleshoot a specific user's terminal
+  // from their own detail page instead of cross-referencing system-health by hand.
+  // reachable=true with an empty terminals list means this user has no MT4/MT5 accounts at all —
+  // distinct from reachable=false (mt-terminal-host itself unreachable).
+  mtTerminals: MtTerminalsSection;
 }
 
 export type FeeLedgerStatus =
@@ -345,6 +365,41 @@ export interface FeeLedgerEntry {
   platformTakeAmount: number;
   netToMasterAmount: number;
   status: FeeLedgerStatus;
+}
+
+// TICKET-120 — mirrors billing.domain.BrokerFeeReport.
+export type BrokerFeeReportStatus = "DRAFT" | "SENT" | "BROKER_CONFIRMED_DEDUCTED" | "BROKER_CONFIRMED_PAID" | "FAILED";
+
+export interface BrokerFeeReport {
+  id: string;
+  masterProfileId: string;
+  brokerType: BrokerType;
+  periodStart: string;
+  periodEnd: string;
+  status: BrokerFeeReportStatus;
+  reportObjectKey: string;
+  sentAt: string | null;
+  confirmedDeductedAt: string | null;
+  confirmedPaidAt: string | null;
+  generatedByUserId: string;
+  createdAt: string;
+}
+
+// Mirrors billing.domain.BrokerFeeReportLine.
+export interface BrokerFeeReportLine {
+  id: number;
+  brokerFeeReportId: string;
+  performanceFeeLedgerId: string;
+  followerBrokerAccountLogin: string;
+  feeAmount: number;
+  currency: string;
+}
+
+// Mirrors billing.service.BrokerFeeReportService.BrokerFeeReportDetail.
+export interface BrokerFeeReportDetail {
+  report: BrokerFeeReport;
+  lines: BrokerFeeReportLine[];
+  documentUrl: string;
 }
 
 // Mirrors billing.api.FeeLedgerAdminApi.FeeLedgerDetailView — computationDetailJson is the raw
@@ -406,12 +461,37 @@ export interface ConsumerGroupLag {
   lag: number;
 }
 
+// TICKET-123 — mirrors AdminController.TerminalHealthView. podProvisioned=false means no live
+// pod exists for this account at all (never provisioned, or torn down) — every pod* field is
+// null in that case, not a fabricated "unhealthy" value.
+export interface TerminalHealthView {
+  brokerAccountId: string;
+  brokerType: string;
+  brokerAccountLogin: string;
+  connectionStatus: string;
+  podProvisioned: boolean;
+  podPhase: string | null;
+  podReady: boolean | null;
+  podRestartCount: number | null;
+  podWaitingReason: string | null;
+  podLastTransitionTime: string | null;
+}
+
+// Mirrors AdminController.MtTerminalsSection. reachable=false means mt-terminal-host itself
+// couldn't be reached (distinct from "reachable, zero terminals" — terminals is empty in both
+// cases, so always check reachable first, never infer service health from list emptiness).
+export interface MtTerminalsSection {
+  reachable: boolean;
+  terminals: TerminalHealthView[];
+}
+
 // Mirrors AdminController.SystemHealthResponse.
 export interface SystemHealthSnapshot {
   brokerConnections: BrokerConnectionCount[];
   copyEngine: CopyEngineHealth;
   reconciliationDriftLastHour: number;
   kafkaConsumerLag: ConsumerGroupLag[];
+  mtTerminals: MtTerminalsSection;
 }
 
 // TICKET-118 — Invitation System (Master invites a Follower). Mirrors
@@ -436,6 +516,8 @@ export interface Invitation {
   acceptedAt: string | null;
   acceptedByUserId: string | null;
   createdAt: string;
+  resendCount: number;
+  lastResentAt: string | null;
 }
 
 // Mirrors PublicInvitationController.InvitationPreview — the public by-token accept-screen data.
@@ -452,4 +534,51 @@ export interface PendingInvitation {
   masterDisplayName: string;
   suggestedMoneyManagementProfileId: string | null;
   suggestedRiskProfileId: string | null;
+}
+
+// TICKET-118 follow-up — the "Follower refers a prospect, lands in their Master's inbox, Master
+// sends a real invitation" flow. Mirrors ProspectNominationController.NominationResponse
+// (apps/core-app/modules/trading).
+export type ProspectNominationStatus = "PENDING" | "INVITED" | "DISMISSED";
+
+export interface ProspectNomination {
+  id: string;
+  prospectEmail: string;
+  status: ProspectNominationStatus;
+  invitationId: string | null;
+  nominatedByDisplayName: string | null;
+  createdAt: string;
+  decidedAt: string | null;
+}
+
+// The Follower's own referral-history view — a richer, honest status than the raw DB enum above
+// (JOINED reflects the linked invitation's real acceptance, not a guess). Mirrors
+// ProspectNominationController.MyNominationResponse.
+export type MyProspectNominationStatus = "SENT" | "INVITED" | "JOINED" | "DISMISSED";
+
+export interface MyProspectNomination {
+  id: string;
+  prospectEmail: string;
+  status: MyProspectNominationStatus;
+  createdAt: string;
+  decidedAt: string | null;
+}
+
+// TICKET-122 — mirrors invitations.domain.TierChangeRequest /
+// invitations.api.TierChangeRequestAdminApi.TierChangeRequestView (both shapes are identical on
+// the wire; the admin view is just reachable by id rather than only "my own").
+export type TierChangeTargetRole = "MASTER" | "FOLLOWER";
+export type TierChangeRequestStatus = "PENDING" | "APPROVED" | "REJECTED";
+
+export interface TierChangeRequest {
+  id: string;
+  userId: string;
+  targetRole: TierChangeTargetRole;
+  status: TierChangeRequestStatus;
+  agreementVersion: string;
+  agreementAcceptedAt: string;
+  reviewedByUserId: string | null;
+  reviewReason: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
 }

@@ -42,6 +42,23 @@ services:
       # never sets KMS_ENDPOINT_OVERRIDE at all.
       AWS_REGION: us-east-1
       KMS_ENDPOINT_OVERRIDE: http://localstack:4566
+      # --- Broker account archival (TICKET-101 follow-up) ---
+      # Same in-network-vs-host-mapping reasoning as KMS_ENDPOINT_OVERRIDE above — real
+      # production blob storage never sets ARCHIVAL_ENDPOINT_OVERRIDE at all.
+      ARCHIVAL_BUCKET: ${ARCHIVAL_BUCKET:-nectrix-archival}
+      ARCHIVAL_ENDPOINT_OVERRIDE: http://minio:9000
+      ARCHIVAL_ACCESS_KEY: ${MINIO_ROOT_USER:-nectrix}
+      ARCHIVAL_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in your .env file}
+      ARCHIVAL_SWEEP_ENABLED: ${ARCHIVAL_SWEEP_ENABLED:-false}
+      # --- Signed management-agreement documents (TICKET-120) ---
+      DOCUMENTS_BUCKET: ${DOCUMENTS_BUCKET:-nectrix-documents}
+      DOCUMENTS_ENDPOINT_OVERRIDE: http://minio:9000
+      # Presigned URLs are handed to a browser running on the HOST, not inside this compose
+      # network — it can resolve localhost (MinIO's own port mapping) but not the `minio`
+      # hostname above, see DocumentStorageProperties' own Javadoc.
+      DOCUMENTS_PUBLIC_ENDPOINT_OVERRIDE: http://localhost:${MINIO_API_PORT:-9000}
+      DOCUMENTS_ACCESS_KEY: ${MINIO_ROOT_USER:-nectrix}
+      DOCUMENTS_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in your .env file}
       # --- Admin Portal (TICKET-012) ---
       # core-app runs as a plain `./gradlew bootRun` process inside this same
       # devcontainer (not its own compose service), reachable at its own
@@ -55,6 +72,11 @@ services:
       # until you register a cTrader Open API app and set these.
       CTRADER_CLIENT_ID: ${CTRADER_CLIENT_ID:-}
       CTRADER_CLIENT_SECRET: ${CTRADER_CLIENT_SECRET:-}
+      # Must match what's registered with the Spotware app behind CTRADER_CLIENT_ID above, and
+      # must be the web app's own callback PAGE (POST's the code to core-app server-side — see
+      # BrokerAccountOAuthController's own class Javadoc), not core-app's /callback endpoint
+      # directly (that's POST-only; a browser landing there via cTrader's own GET redirect 405s).
+      CTRADER_REDIRECT_URI: ${CTRADER_REDIRECT_URI:-}
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-}
       TOKEN_REFRESH_ENABLED: ${TOKEN_REFRESH_ENABLED:-false}
       # apps/broker-adapters (Go) also runs as a plain process inside this same

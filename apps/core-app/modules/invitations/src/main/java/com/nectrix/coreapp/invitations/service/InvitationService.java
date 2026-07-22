@@ -35,17 +35,20 @@ public class InvitationService {
   private final MasterProfileLookupRepository masterProfileLookupRepository;
   private final EmailApi emailApi;
   private final InvitationsProperties properties;
+  private final InvitationRateLimiterService rateLimiterService;
   private final SecureRandom secureRandom = new SecureRandom();
 
   public InvitationService(
       InvitationsRepository repository,
       MasterProfileLookupRepository masterProfileLookupRepository,
       EmailApi emailApi,
-      InvitationsProperties properties) {
+      InvitationsProperties properties,
+      InvitationRateLimiterService rateLimiterService) {
     this.repository = repository;
     this.masterProfileLookupRepository = masterProfileLookupRepository;
     this.emailApi = emailApi;
     this.properties = properties;
+    this.rateLimiterService = rateLimiterService;
   }
 
   /**
@@ -101,6 +104,40 @@ public class InvitationService {
       return;
     }
     repository.updateStatus(invitationId, "REVOKED");
+  }
+
+  /**
+   * Sending is deliberately not a one-shot affair — a Master can resend a {@code PENDING}
+   * invitation whose email never arrived, or revive an {@code EXPIRED} one, as many times as the
+   * per-invitation rate limit allows. Each resend rotates the token and issues a fresh {@value
+   * #EXPIRY_DAYS}-day expiry window (the old link stops working, same as {@link #revoke}'s own
+   * effect on the previous token) rather than re-sending the original link, so a resend also
+   * doubles as "extend this invite's expiry." {@code ACCEPTED}/{@code REVOKED} invitations aren't
+   * resendable — see {@link InvitationNotResendableException}.
+   */
+  public Invitation resend(UUID callerUserId, UUID invitationId) {
+    UUID masterProfileId = requireMasterProfileId(callerUserId);
+    Invitation invitation =
+        repository.findById(invitationId).orElseThrow(InvitationNotFoundException::new);
+    if (!invitation.masterProfileId().equals(masterProfileId)) {
+      throw new InvitationNotFoundException();
+    }
+    if ("ACCEPTED".equals(invitation.status()) || "REVOKED".equals(invitation.status())) {
+      throw new InvitationNotResendableException();
+    }
+    if (!rateLimiterService.tryConsumeResend(invitationId)) {
+      throw new InvitationRateLimitExceededException();
+    }
+    String rawToken = generateOpaqueToken();
+    String tokenHash = hashToken(rawToken);
+    Instant expiresAt = Instant.now().plus(EXPIRY_DAYS, ChronoUnit.DAYS);
+    repository.markResent(invitationId, tokenHash, expiresAt);
+    String link = properties.acceptUrlBase() + "?token=" + rawToken;
+    emailApi.sendRaw(
+        invitation.invitedEmail(),
+        "You've been invited to copy trade on Nectrix",
+        "Follow this link to accept your invitation: " + link);
+    return repository.findById(invitationId).orElseThrow(InvitationNotFoundException::new);
   }
 
   /**

@@ -32,6 +32,28 @@ public final class NotificationEventTypes {
   public static final String DRAWDOWN_THRESHOLD_BREACHED = "drawdown.threshold_breached";
   public static final String INVOICE_GENERATED = "invoice.generated";
 
+  /**
+   * TICKET-118 follow-up — a Follower nominated a prospect for their Master to invite (real
+   * dispatch target: {@code ProspectNominationService}, {@code modules:trading}, via the new {@code
+   * notifications.api.NotificationDispatchApi}).
+   */
+  public static final String PROSPECT_NOMINATION_RECEIVED = "prospect_nomination.received";
+
+  /**
+   * TICKET-120 — one type covering all 4 real triggers (generated/sent/confirmed-deducted/
+   * confirmed-paid) rather than 4 separate types: same target (the Master), same real distinction a
+   * recipient cares about ("something about my fee report changed"), the body text (not the event
+   * type) is what actually varies per trigger — see {@code BillingNotificationConsumer}.
+   */
+  public static final String FEE_REPORT_STATUS_CHANGED = "fee_report.status_changed";
+
+  /**
+   * TICKET-122 — one type covering both outcomes (approved/rejected), same "one type, body text
+   * carries the real distinction" reasoning {@link #FEE_REPORT_STATUS_CHANGED} already established
+   * — see {@code TierChangeRequestService#approve}/{@code #reject}.
+   */
+  public static final String TIER_CHANGE_REQUEST_DECIDED = "tier_change_request.decided";
+
   private static final Map<String, Set<Channel>> DEFAULT_ENABLED_CHANNELS =
       Map.of(
           COPIED_TRADE_OPENED, EnumSet.of(Channel.IN_APP, Channel.PUSH),
@@ -40,7 +62,10 @@ public final class NotificationEventTypes {
           BROKER_CONNECTION_DEGRADED, EnumSet.of(Channel.IN_APP, Channel.PUSH, Channel.EMAIL),
           BROKER_CONNECTION_LOST, EnumSet.of(Channel.IN_APP, Channel.PUSH, Channel.EMAIL),
           DRAWDOWN_THRESHOLD_BREACHED, EnumSet.of(Channel.IN_APP, Channel.PUSH, Channel.EMAIL),
-          INVOICE_GENERATED, EnumSet.of(Channel.IN_APP, Channel.EMAIL));
+          INVOICE_GENERATED, EnumSet.of(Channel.IN_APP, Channel.EMAIL),
+          PROSPECT_NOMINATION_RECEIVED, EnumSet.of(Channel.IN_APP, Channel.EMAIL),
+          FEE_REPORT_STATUS_CHANGED, EnumSet.of(Channel.IN_APP, Channel.EMAIL),
+          TIER_CHANGE_REQUEST_DECIDED, EnumSet.of(Channel.IN_APP, Channel.EMAIL));
 
   /**
    * Every channel a real, valid event type could ever plausibly be delivered on — used to build the

@@ -47,6 +47,36 @@ nectrix:
     kms:
       region: ${AWS_REGION:us-east-1}
       endpoint-override: ${KMS_ENDPOINT_OVERRIDE:}
+  # TICKET-101 follow-up — broker-account archival (ArchivalBlobStorageClient/
+  # BrokerAccountArchivalOrchestrator/BrokerAccountArchivalJob). endpoint-override is set only
+  # for MinIO (local dev/CI, docker-compose.yml); real production blob storage resolves
+  # credentials via the SDK's normal provider chain and needs no override here at all.
+  archival:
+    bucket: ${ARCHIVAL_BUCKET:nectrix-archival}
+    region: ${AWS_REGION:us-east-1}
+    endpoint-override: ${ARCHIVAL_ENDPOINT_OVERRIDE:}
+    # Unlike KMS_ENDPOINT_OVERRIDE's LocalStack target, MinIO genuinely validates credentials —
+    # see ArchivalStorageProperties' own Javadoc.
+    access-key: ${ARCHIVAL_ACCESS_KEY:}
+    secret-key: ${ARCHIVAL_SECRET_KEY:}
+    # Defaults to false — same "opt-in, no test context accidentally fires it" reasoning as
+    # invitations.token-refresh.enabled below.
+    enabled: ${ARCHIVAL_SWEEP_ENABLED:false}
+  # TICKET-120 — signed management-agreement documents (modules:trading's own
+  # AgreementDocumentStorageClient). A separate bucket/prefix from archival's — these are LIVE
+  # documents a Follower fetches on demand, not deleted-account history.
+  documents:
+    bucket: ${DOCUMENTS_BUCKET:nectrix-documents}
+    region: ${AWS_REGION:us-east-1}
+    endpoint-override: ${DOCUMENTS_ENDPOINT_OVERRIDE:}
+    public-endpoint-override: ${DOCUMENTS_PUBLIC_ENDPOINT_OVERRIDE:}
+    access-key: ${DOCUMENTS_ACCESS_KEY:}
+    secret-key: ${DOCUMENTS_SECRET_KEY:}
+    # 90 days, expressed in seconds — how long a broker account must have sat DISCONNECTED
+    # before the scheduled sweep archives and deletes it.
+    stale-after-seconds: ${ARCHIVAL_STALE_AFTER_SECONDS:7776000}
+    # Daily sweep cadence, expressed in seconds — a cheap no-op most days.
+    sweep-interval-seconds: ${ARCHIVAL_SWEEP_INTERVAL_SECONDS:86400}
   # TICKET-005 (Auth & Identity Service)
   auth:
     jwt:
@@ -84,7 +114,10 @@ nectrix:
     ctrader-oauth:
       client-id: ${CTRADER_CLIENT_ID:}
       client-secret: ${CTRADER_CLIENT_SECRET:}
-      redirect-uri: http://localhost:8080/api/v1/broker/ctrader/callback
+      # Must be an EXACT match of the redirect URI registered with the Spotware app
+      # behind CTRADER_CLIENT_ID (Spotware rejects mismatches) — real environments
+      # need a real public callback URL, not localhost.
+      redirect-uri: ${CTRADER_REDIRECT_URI:http://localhost:8080/api/v1/broker/ctrader/callback}
     broker-adapters:
       internal-base-url: ${BROKER_ADAPTERS_INTERNAL_BASE_URL:http://localhost:8091}
       service-token: ${INTERNAL_SERVICE_TOKEN}
@@ -139,3 +172,11 @@ nectrix:
     # Empty in every real deployment (prod/CI never set LOCAL_EMAIL_CATCHER_URL).
     local-email-catcher:
       url: ${LOCAL_EMAIL_CATCHER_URL:}
+  # TICKET-123 — mt-terminal-host's new internal terminal-pod-status endpoint. service-token is the
+  # same INTERNAL_SERVICE_TOKEN value every other /internal/** caller in this codebase already
+  # resolves (see nectrix.internal.service-token above) — mt-terminal-host validates it the same
+  # way apps/broker-adapters' own internalapi package does.
+  admin:
+    mt-terminal-host:
+      internal-base-url: ${MT_TERMINAL_HOST_INTERNAL_BASE_URL:http://localhost:8093}
+      service-token: ${INTERNAL_SERVICE_TOKEN}

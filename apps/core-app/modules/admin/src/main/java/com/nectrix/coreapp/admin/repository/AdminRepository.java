@@ -86,4 +86,30 @@ public class AdminRepository {
             Timestamp.from(since));
     return count == null ? 0 : count;
   }
+
+  /**
+   * TICKET-123 — every linked MT4/MT5 account, the Postgres side of the join {@code
+   * AdminController#getSystemHealth} makes against {@code MtTerminalHostClient}'s live pod
+   * statuses. {@code connectionStatus} is the broker-EA-session signal (already covered by {@link
+   * #countBrokerConnectionsByTypeAndStatus}) — carried here too so a caller can see it alongside
+   * the pod-infrastructure signal without a second round trip.
+   */
+  public record MtBrokerAccountRef(
+      UUID id, String brokerType, String brokerAccountLogin, String connectionStatus) {}
+
+  public List<MtBrokerAccountRef> listMtBrokerAccounts() {
+    return jdbcTemplate.query(
+        """
+        SELECT id, broker_type, broker_account_login, connection_status
+        FROM broker_accounts
+        WHERE broker_type IN ('MT4', 'MT5')
+        ORDER BY broker_type, broker_account_login
+        """,
+        (rs, rowNum) ->
+            new MtBrokerAccountRef(
+                UUID.fromString(rs.getString("id")),
+                rs.getString("broker_type"),
+                rs.getString("broker_account_login"),
+                rs.getString("connection_status")));
+  }
 }

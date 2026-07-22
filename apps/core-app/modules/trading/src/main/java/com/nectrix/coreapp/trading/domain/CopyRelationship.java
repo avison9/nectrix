@@ -2,6 +2,7 @@ package com.nectrix.coreapp.trading.domain;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -18,6 +19,13 @@ import java.util.UUID;
  * {@code chk_exactly_one_origin} CHECK) — TICKET-111 never creates a row itself (that's
  * TICKET-118's invite-acceptance flow, or Phase 2's FollowRequest path), it only operates on rows
  * that already exist.
+ *
+ * <p>Feature — {@code excludedSymbols} (035-copy-relationship-symbol-exclusions.sql) is a
+ * Follower-editable EXCLUSION list, not an allow-list: empty (the default) means "copy every symbol
+ * the Master trades", identical to this relationship's behavior before this column existed.
+ * Enforced in apps/copy-engine's dispatch.go, only against new position opens — never against
+ * close/modify/partial-close of an already-open position (see that file's own comment for why:
+ * excluding a symbol must never strand an already-copied position with no way to close it).
  */
 public record CopyRelationship(
     UUID id,
@@ -36,4 +44,5 @@ public record CopyRelationship(
     UUID originatingInvitationId,
     UUID originatingFollowRequestId,
     Instant createdAt,
-    Instant stoppedAt) {}
+    Instant stoppedAt,
+    List<String> excludedSymbols) {}

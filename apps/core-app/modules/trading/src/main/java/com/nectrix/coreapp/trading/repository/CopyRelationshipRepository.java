@@ -2,6 +2,8 @@ package com.nectrix.coreapp.trading.repository;
 
 import com.nectrix.coreapp.trading.domain.CopyRelationship;
 import java.math.BigDecimal;
+import java.sql.Array;
+import java.sql.PreparedStatement;
 import java.sql.Timestamp;
 import java.util.List;
 import java.util.Optional;
@@ -20,6 +22,13 @@ public class CopyRelationshipRepository {
         String originatingInvitationId = rs.getString("originating_invitation_id");
         String originatingFollowRequestId = rs.getString("originating_follow_request_id");
         Timestamp stoppedAt = rs.getTimestamp("stopped_at");
+        // Feature — same java.sql.Array read pattern social/MasterProfileRepository's own
+        // strategy_tags column already established (the one other TEXT[] column in this schema).
+        Array excludedSymbolsArray = rs.getArray("excluded_symbols");
+        List<String> excludedSymbols =
+            excludedSymbolsArray != null
+                ? List.of((String[]) excludedSymbolsArray.getArray())
+                : List.of();
         return new CopyRelationship(
             UUID.fromString(rs.getString("id")),
             UUID.fromString(rs.getString("master_profile_id")),
@@ -37,7 +46,8 @@ public class CopyRelationshipRepository {
             originatingInvitationId != null ? UUID.fromString(originatingInvitationId) : null,
             originatingFollowRequestId != null ? UUID.fromString(originatingFollowRequestId) : null,
             rs.getTimestamp("created_at").toInstant(),
-            stoppedAt != null ? stoppedAt.toInstant() : null);
+            stoppedAt != null ? stoppedAt.toInstant() : null,
+            excludedSymbols);
       };
 
   private final JdbcTemplate jdbcTemplate;
@@ -176,6 +186,23 @@ public class CopyRelationshipRepository {
         "UPDATE copy_relationships SET status = 'STOPPED', stopped_at = now() WHERE id = ?", id);
   }
 
+  /**
+   * Feature — the Follower-editable per-relationship symbol EXCLUSION list (see {@code
+   * CopyRelationship}'s own Javadoc for why exclusion-, not allow-, list). Caller is responsible
+   * for normalizing (uppercase/trim/dedupe/drop-blank) before calling this — this method stores
+   * exactly what it's given. Same {@code java.sql.Array} write pattern {@code
+   * social.MasterProfileRepository#update}'s own {@code strategy_tags} column already established.
+   */
+  public void updateExcludedSymbols(UUID id, List<String> excludedSymbols) {
+    jdbcTemplate.execute(
+        "UPDATE copy_relationships SET excluded_symbols = ? WHERE id = ?",
+        (PreparedStatement ps) -> {
+          ps.setArray(1, ps.getConnection().createArrayOf("text", excludedSymbols.toArray()));
+          ps.setObject(2, id);
+          return ps.executeUpdate();
+        });
+  }
+
   /** {@code PATCH /copy-relationships/{id}} — swap in a different mm/risk profile. */
   public void updateProfiles(UUID id, UUID moneyManagementProfileId, UUID riskProfileId) {
     jdbcTemplate.update(
@@ -188,5 +215,36 @@ public class CopyRelationshipRepository {
         moneyManagementProfileId,
         riskProfileId,
         id);
+  }
+
+  /**
+   * TICKET-101 follow-up — every relationship this account is party to, on either side (a {@code
+   * BOTH}-role account can be a Master in some relationships and a Follower in others
+   * simultaneously). Feeds the archival flow's export and cascade-delete.
+   */
+  public List<CopyRelationship> findAllByBrokerAccountId(UUID brokerAccountId) {
+    return jdbcTemplate.query(
+        """
+        SELECT * FROM copy_relationships
+        WHERE master_broker_account_id = ? OR follower_broker_account_id = ?
+        """,
+        ROW_MAPPER,
+        brokerAccountId,
+        brokerAccountId);
+  }
+
+  /**
+   * Archival's own final step for this table — {@code management_agreements} auto-cascades via its
+   * own {@code ON DELETE CASCADE}; {@code copied_trades}/{@code performance_fee_ledger} rows
+   * referencing these ids must already be gone (see {@code CopyRelationshipArchivalApiImpl}'s own
+   * ordering — neither has a cascade of its own).
+   */
+  public void deleteByIds(List<UUID> ids) {
+    if (ids.isEmpty()) {
+      return;
+    }
+    String placeholders = String.join(",", ids.stream().map(id -> "?").toList());
+    jdbcTemplate.update(
+        "DELETE FROM copy_relationships WHERE id IN (" + placeholders + ")", ids.toArray());
   }
 }

@@ -173,6 +173,31 @@ class BrokerAccountCrudIntegrationTest {
   }
 
   /**
+   * TICKET-101 follow-up — the MASTER role must be granted BEFORE the final {@code loginAsWithTotp}
+   * call: the access token's own {@code roles} claim is fixed at issuance, so granting a role to an
+   * already-logged-in {@link #loginNewUser}'s caller would have no effect on their existing token
+   * (a real mistake caught by this test itself failing the first time).
+   */
+  private NewUser loginNewMasterUser() {
+    String email = "broker-crud-master-" + UUID.randomUUID() + "@example.com";
+    UUID userId =
+        userProvisioningApi.createUser(
+            email, "correct horse battery staple", "Test User", null, null, null, "US");
+    userProvisioningApi.grantRole(userId, "MASTER");
+    String preEnrollmentToken = loginAs(email);
+
+    HttpResult enable = request("POST", "/api/v1/auth/2fa/enable", Map.of(), preEnrollmentToken);
+    String secret = (String) enable.body().get("secret");
+    request(
+        "POST",
+        "/api/v1/auth/2fa/verify",
+        Map.of("totp_code", generateTotpCode(secret)),
+        preEnrollmentToken);
+
+    return new NewUser(userId, loginAsWithTotp(email, secret));
+  }
+
+  /**
    * Direct SQL insert, mirroring BrokerAccountOAuthIntegrationTest's own insertRealBrokerAccount.
    */
   private UUID insertBrokerAccount(UUID userId, String connectionStatus) {
@@ -221,13 +246,27 @@ class BrokerAccountCrudIntegrationTest {
     return ibLinkId;
   }
 
+  // TICKET-101/102 follow-up — server_name is now really persisted (not always NULL, see
+  // BrokerAccountRepository's own class Javadoc), so broker_accounts' own UNIQUE(broker_type,
+  // broker_account_login, server_name) constraint genuinely applies now. A fixed literal server
+  // value collided with itself across repeated runs against this same persistent dev DB (no
+  // per-test rollback here) — suffixing it per JVM run restores re-runnability.
+  private static final String TEST_SERVER = "Pepperstone-Demo-" + UUID.randomUUID();
+
   private Map<String, Object> mt5LinkBody(String login) {
     return Map.of(
-        "login", login,
-        "password", "terminal-password-123",
-        "server", "Pepperstone-Demo",
-        "is_demo", true,
-        "display_label", "My MT5 Demo");
+        "login",
+        login,
+        "password",
+        "terminal-password-123",
+        "server",
+        TEST_SERVER,
+        "is_demo",
+        true,
+        "display_label",
+        "My MT5 Demo",
+        "broker_name",
+        "Pepperstone");
   }
 
   // ==================== list ====================
@@ -257,7 +296,9 @@ class BrokerAccountCrudIntegrationTest {
 
   @Test
   void patch_updatesDisplayLabelAndConnectionRole_onTheRealRow() {
-    NewUser user = loginNewUser();
+    // TICKET-101 follow-up — MASTER_ONLY now requires the real MASTER role (see
+    // MasterRoleRequiredException's own Javadoc), so this test's own caller needs it too.
+    NewUser user = loginNewMasterUser();
     UUID accountId = insertBrokerAccount(user.userId(), "CONNECTED");
 
     HttpResult response =
@@ -279,6 +320,29 @@ class BrokerAccountCrudIntegrationTest {
             "SELECT connection_role FROM broker_accounts WHERE id = ?", String.class, accountId);
     assertThat(storedLabel).isEqualTo("Renamed");
     assertThat(storedRole).isEqualTo("MASTER_ONLY");
+  }
+
+  @Test
+  void patch_toMasterOnly_withoutTheRealMasterRole_isRejected() {
+    // loginNewUser() only grants FOLLOWER — a Follower (or Individual-mode) caller must never be
+    // able to flip their own account to MASTER_ONLY and start broadcasting to real followers.
+    NewUser user = loginNewUser();
+    UUID accountId = insertBrokerAccount(user.userId(), "CONNECTED");
+
+    HttpResult response =
+        request(
+            "PATCH",
+            "/api/v1/broker-accounts/" + accountId,
+            Map.of("connection_role", "MASTER_ONLY"),
+            user.accessToken());
+
+    assertThat(response.status()).isEqualTo(403);
+    assertThat(response.body().get("error")).isEqualTo("master_role_required");
+
+    String storedRole =
+        jdbcTemplate.queryForObject(
+            "SELECT connection_role FROM broker_accounts WHERE id = ?", String.class, accountId);
+    assertThat(storedRole).isNotEqualTo("MASTER_ONLY");
   }
 
   @Test
@@ -357,6 +421,16 @@ class BrokerAccountCrudIntegrationTest {
     NewUser user = loginNewUser();
     UUID accountId = insertBrokerAccount(user.userId(), "CONNECTED");
 
+    // TICKET-101 follow-up — disconnecting first is mandatory now, not optional.
+    HttpResult disconnect =
+        request(
+            "POST",
+            "/api/v1/broker-accounts/" + accountId + "/disconnect",
+            null,
+            user.accessToken());
+    assertThat(disconnect.status()).isEqualTo(200);
+    assertThat(disconnect.body().get("connection_status")).isEqualTo("DISCONNECTED");
+
     HttpResult response =
         request("DELETE", "/api/v1/broker-accounts/" + accountId, null, user.accessToken());
     assertThat(response.status()).isEqualTo(204);
@@ -365,6 +439,42 @@ class BrokerAccountCrudIntegrationTest {
         jdbcTemplate.queryForObject(
             "SELECT count(*) FROM broker_accounts WHERE id = ?", Integer.class, accountId);
     assertThat(count).isZero();
+  }
+
+  @Test
+  void delete_aStillConnectedAccount_isRejected() {
+    NewUser user = loginNewUser();
+    UUID accountId = insertBrokerAccount(user.userId(), "CONNECTED");
+
+    HttpResult response =
+        request("DELETE", "/api/v1/broker-accounts/" + accountId, null, user.accessToken());
+
+    assertThat(response.status()).isEqualTo(409);
+    assertThat(response.body().get("error")).isEqualTo("broker_account_not_disconnected");
+    Integer count =
+        jdbcTemplate.queryForObject(
+            "SELECT count(*) FROM broker_accounts WHERE id = ?", Integer.class, accountId);
+    assertThat(count).isEqualTo(1);
+  }
+
+  @Test
+  void disconnect_forAnotherUsersAccount_isForbidden() {
+    NewUser owner = loginNewUser();
+    NewUser attacker = loginNewUser();
+    UUID accountId = insertBrokerAccount(owner.userId(), "CONNECTED");
+
+    HttpResult response =
+        request(
+            "POST",
+            "/api/v1/broker-accounts/" + accountId + "/disconnect",
+            null,
+            attacker.accessToken());
+
+    assertThat(response.status()).isEqualTo(403);
+    String status =
+        jdbcTemplate.queryForObject(
+            "SELECT connection_status FROM broker_accounts WHERE id = ?", String.class, accountId);
+    assertThat(status).isEqualTo("CONNECTED");
   }
 
   @Test
@@ -473,12 +583,18 @@ class BrokerAccountCrudIntegrationTest {
             "POST",
             "/api/v1/broker-accounts/mt5",
             Map.of(
-                "login", "700001",
-                "password", "terminal-password-123",
-                "server", "Pepperstone-Demo",
-                "is_demo", true,
-                "display_label", "My MT5 Demo",
-                "opened_via_ib_link_id", ibLinkId.toString()),
+                "login",
+                "700001",
+                "password",
+                "terminal-password-123",
+                "server",
+                TEST_SERVER,
+                "is_demo",
+                true,
+                "display_label",
+                "My MT5 Demo",
+                "opened_via_ib_link_id",
+                ibLinkId.toString()),
             follower.accessToken());
 
     assertThat(link.status()).isEqualTo(200);
@@ -500,12 +616,18 @@ class BrokerAccountCrudIntegrationTest {
             "POST",
             "/api/v1/broker-accounts/mt5",
             Map.of(
-                "login", "700002",
-                "password", "terminal-password-123",
-                "server", "Pepperstone-Demo",
-                "is_demo", true,
-                "display_label", "My MT5 Demo",
-                "opened_via_ib_link_id", UUID.randomUUID().toString()),
+                "login",
+                "700002",
+                "password",
+                "terminal-password-123",
+                "server",
+                TEST_SERVER,
+                "is_demo",
+                true,
+                "display_label",
+                "My MT5 Demo",
+                "opened_via_ib_link_id",
+                UUID.randomUUID().toString()),
             user.accessToken());
 
     assertThat(response.status()).isEqualTo(400);

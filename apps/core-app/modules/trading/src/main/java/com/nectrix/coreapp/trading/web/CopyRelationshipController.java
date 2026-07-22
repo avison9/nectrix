@@ -5,6 +5,7 @@ import com.nectrix.coreapp.trading.domain.CopyRelationship;
 import com.nectrix.coreapp.trading.domain.MoneyManagementProfile;
 import com.nectrix.coreapp.trading.domain.RiskProfile;
 import com.nectrix.coreapp.trading.repository.CopiedTradeRepository;
+import com.nectrix.coreapp.trading.repository.CopyRelationshipRepository;
 import com.nectrix.coreapp.trading.repository.MoneyManagementProfileRepository;
 import com.nectrix.coreapp.trading.repository.RiskProfileRepository;
 import com.nectrix.coreapp.trading.service.CopyRelationshipNotFoundException;
@@ -35,16 +36,19 @@ public class CopyRelationshipController {
   private final MoneyManagementProfileRepository moneyManagementProfileRepository;
   private final RiskProfileRepository riskProfileRepository;
   private final CopiedTradeRepository copiedTradeRepository;
+  private final CopyRelationshipRepository copyRelationshipRepository;
 
   public CopyRelationshipController(
       CopyRelationshipService service,
       MoneyManagementProfileRepository moneyManagementProfileRepository,
       RiskProfileRepository riskProfileRepository,
-      CopiedTradeRepository copiedTradeRepository) {
+      CopiedTradeRepository copiedTradeRepository,
+      CopyRelationshipRepository copyRelationshipRepository) {
     this.service = service;
     this.moneyManagementProfileRepository = moneyManagementProfileRepository;
     this.riskProfileRepository = riskProfileRepository;
     this.copiedTradeRepository = copiedTradeRepository;
+    this.copyRelationshipRepository = copyRelationshipRepository;
   }
 
   @GetMapping("/api/v1/copy-relationships")
@@ -100,7 +104,25 @@ public class CopyRelationshipController {
         null, // maxExposurePerSymbolLots — not part of this form
         null, // maxTotalExposureLots — not part of this form
         request.maxSlippagePips());
+    copyRelationshipRepository.updateExcludedSymbols(
+        id, normalizeSymbols(request.excludedSymbols()));
     return toView(service.getCopyRelationship(id));
+  }
+
+  /**
+   * Feature — never trust client-submitted casing/whitespace/duplicates for a list that
+   * apps/copy-engine compares against a live event's own canonical symbol code (e.g. "EURUSD")
+   * verbatim.
+   */
+  private static List<String> normalizeSymbols(List<String> symbols) {
+    if (symbols == null) {
+      return List.of();
+    }
+    return symbols.stream()
+        .filter(s -> s != null && !s.isBlank())
+        .map(s -> s.trim().toUpperCase())
+        .distinct()
+        .toList();
   }
 
   @PostMapping("/api/v1/copy-relationships/{id}/acknowledge-risk")
@@ -110,9 +132,17 @@ public class CopyRelationshipController {
   }
 
   @PostMapping("/api/v1/copy-relationships/{id}/sign-agreement")
-  public CopyRelationshipView signAgreement(@PathVariable UUID id) {
+  public CopyRelationshipView signAgreement(
+      @AuthenticationPrincipal Jwt jwt, @PathVariable UUID id) {
     CopyRelationship existing = service.getCopyRelationship(id);
-    return toView(service.signAgreement(existing));
+    return toView(service.signAgreement(existing, currentUserId(jwt)));
+  }
+
+  /** AC2 — a short-lived signed URL, never the raw document. */
+  @GetMapping("/api/v1/copy-relationships/{id}/agreement")
+  public CopyRelationshipService.ManagementAgreementView getAgreement(@PathVariable UUID id) {
+    CopyRelationship existing = service.getCopyRelationship(id);
+    return service.getAgreement(existing);
   }
 
   @PostMapping("/api/v1/copy-relationships/{id}/pause")
@@ -207,7 +237,8 @@ public class CopyRelationshipController {
         cr.originatingInvitationId(),
         cr.originatingFollowRequestId(),
         cr.highWaterMark(),
-        cr.createdAt());
+        cr.createdAt(),
+        cr.excludedSymbols());
   }
 
   private UUID currentUserId(Jwt jwt) {
@@ -217,7 +248,14 @@ public class CopyRelationshipController {
   public record PatchRequest(
       UUID moneyManagementProfileId, UUID riskProfileId, BigDecimal allocationWeight) {}
 
-  /** TICKET-116 — {@link #updateCopySettings}'s own request shape; always a full-object submit. */
+  /**
+   * TICKET-116 — {@link #updateCopySettings}'s own request shape; always a full-object submit.
+   *
+   * <p>Feature — {@code excludedSymbols} may be null (older clients / partial submits): treated the
+   * same as an empty list, never as "leave unchanged" — this endpoint is already documented as a
+   * full-object submit, and {@code CopyRelationshipRepository#updateExcludedSymbols} always
+   * overwrites the whole list.
+   */
   public record CopySettingsRequest(
       String method,
       BigDecimal fixedLotSize,
@@ -226,7 +264,8 @@ public class CopyRelationshipController {
       String roundingMode,
       BigDecimal maxLotPerTrade,
       Integer maxOpenPositions,
-      BigDecimal maxSlippagePips) {}
+      BigDecimal maxSlippagePips,
+      List<String> excludedSymbols) {}
 
   public record MoneyManagementProfileView(
       String method,
@@ -254,7 +293,8 @@ public class CopyRelationshipController {
       UUID originatingInvitationId,
       UUID originatingFollowRequestId,
       BigDecimal highWaterMark,
-      Instant createdAt) {}
+      Instant createdAt,
+      List<String> excludedSymbols) {}
 
   public record TradesPage(List<CopiedTrade> trades, long total, int page, int pageSize) {}
 }

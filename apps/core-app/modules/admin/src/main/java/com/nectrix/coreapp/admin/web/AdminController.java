@@ -1,7 +1,10 @@
 package com.nectrix.coreapp.admin.web;
 
+import com.nectrix.coreapp.admin.client.MtTerminalHostClient;
+import com.nectrix.coreapp.admin.client.MtTerminalHostClient.TerminalStatus;
 import com.nectrix.coreapp.admin.repository.AdminRepository;
 import com.nectrix.coreapp.admin.repository.AdminRepository.BrokerConnectionCount;
+import com.nectrix.coreapp.admin.repository.AdminRepository.MtBrokerAccountRef;
 import com.nectrix.coreapp.admin.service.KafkaConsumerLagService;
 import com.nectrix.coreapp.admin.service.KafkaConsumerLagService.ConsumerGroupLag;
 import com.nectrix.coreapp.audit.repository.AuditLogRepository;
@@ -16,11 +19,15 @@ import com.nectrix.coreapp.billing.api.FeeLedgerAdminApi.FeeLedgerSummaryView;
 import com.nectrix.coreapp.billing.api.FeeLedgerAdminApi.UnderlyingTradeView;
 import com.nectrix.coreapp.invitations.api.BrokerAccountLookupApi;
 import com.nectrix.coreapp.invitations.api.BrokerAccountView;
+import com.nectrix.coreapp.invitations.api.TierChangeRequestAdminApi;
+import com.nectrix.coreapp.invitations.api.TierChangeRequestAdminApi.TierChangeRequestView;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
@@ -75,7 +82,9 @@ public class AdminController {
   private final UserProvisioningApi userProvisioningApi;
   private final UserAdminApi userAdminApi;
   private final FeeLedgerAdminApi feeLedgerAdminApi;
+  private final TierChangeRequestAdminApi tierChangeRequestAdminApi;
   private final AdminRepository adminRepository;
+  private final MtTerminalHostClient mtTerminalHostClient;
   private final KafkaConsumerLagService kafkaConsumerLagService;
   private final AuditLogRepository auditLogRepository;
   private final ObjectMapper objectMapper;
@@ -89,7 +98,9 @@ public class AdminController {
       UserProvisioningApi userProvisioningApi,
       UserAdminApi userAdminApi,
       FeeLedgerAdminApi feeLedgerAdminApi,
+      TierChangeRequestAdminApi tierChangeRequestAdminApi,
       AdminRepository adminRepository,
+      MtTerminalHostClient mtTerminalHostClient,
       KafkaConsumerLagService kafkaConsumerLagService,
       AuditLogRepository auditLogRepository,
       ObjectMapper objectMapper) {
@@ -98,7 +109,9 @@ public class AdminController {
     this.userProvisioningApi = userProvisioningApi;
     this.userAdminApi = userAdminApi;
     this.feeLedgerAdminApi = feeLedgerAdminApi;
+    this.tierChangeRequestAdminApi = tierChangeRequestAdminApi;
     this.adminRepository = adminRepository;
+    this.mtTerminalHostClient = mtTerminalHostClient;
     this.kafkaConsumerLagService = kafkaConsumerLagService;
     this.auditLogRepository = auditLogRepository;
     this.objectMapper = objectMapper;
@@ -202,14 +215,20 @@ public class AdminController {
   /**
    * TICKET-117 — admin user search. A blank/absent {@code search} returns every user (newest
    * first), see {@code UserRepository#search}'s own Javadoc.
+   *
+   * <p>Bugfix follow-up — {@code status} is the Users page's own status filter (beside the
+   * name/email search box): {@code ACTIVE}/{@code SUSPENDED}/{@code DELETED}, or blank/absent for
+   * the default view (every status except DELETED — see {@code UserRepository#search}'s own Javadoc
+   * for why DELETED is never shown unless explicitly filtered for).
    */
   @GetMapping("/api/v1/admin/users")
   @PreAuthorize("hasAnyRole('ADMIN','SUPPORT')")
   public List<UserView> searchUsers(
       @RequestParam(required = false, defaultValue = "") String search,
+      @RequestParam(required = false, defaultValue = "") String status,
       @RequestParam(defaultValue = "0") int page,
       @RequestParam(defaultValue = "25") int pageSize) {
-    return userAdminApi.search(search, page, pageSize);
+    return userAdminApi.search(search, status, page, pageSize);
   }
 
   /**
@@ -217,13 +236,23 @@ public class AdminController {
    * BrokerAccountLookupApi#listForUser}) with each account's real {@code connectionStatus}/{@code
    * lastHealthCheckAt} — the whole reason this endpoint exists rather than just reusing {@link
    * #searchUsers}'s summary rows.
+   *
+   * <p>Bugfix follow-up — {@code mtTerminals} lets support/admin jump straight from a specific
+   * user's MT4/MT5 broker accounts to their live pod status, instead of the only previous path
+   * (manually eyeball-matching broker type + login against the unrelated, account-agnostic
+   * system-health page). Scoped to just this user's own MT4/MT5 accounts, reusing the exact same
+   * {@link TerminalHealthView} shape system-health's own MT terminals section returns, so the
+   * frontend can render both with one component. mt-terminal-host is only ever called when this
+   * user actually has an MT4/MT5 account — most users are CTRADER-only, and there's no reason to
+   * pay that outbound call on every single user-detail page view.
    */
   @GetMapping("/api/v1/admin/users/{id}")
   @PreAuthorize("hasAnyRole('ADMIN','SUPPORT')")
   public UserDetailResponse getUser(@PathVariable UUID id) {
     UserView user = userAdminApi.getUser(id);
     List<BrokerAccountView> brokerAccounts = brokerAccountLookupApi.listForUser(id);
-    return new UserDetailResponse(user, brokerAccounts);
+    MtTerminalsSection mtTerminals = buildMtTerminalsSectionForUser(brokerAccounts);
+    return new UserDetailResponse(user, brokerAccounts, mtTerminals);
   }
 
   /**
@@ -340,6 +369,75 @@ public class AdminController {
   }
 
   /**
+   * TICKET-122 — the pending-review queue. ADMIN+SUPPORT+SUPER_ADMIN can view (same "SUPPORT can
+   * view/assist but not action" split every other admin-view endpoint here uses) — only {@link
+   * #approveTierChangeRequest}/{@link #rejectTierChangeRequest} are role-granting and restricted
+   * further.
+   */
+  @GetMapping("/api/v1/admin/tier-change-requests")
+  @PreAuthorize("hasAnyRole('ADMIN','SUPPORT','SUPER_ADMIN')")
+  public List<TierChangeRequestView> listTierChangeRequests(
+      @RequestParam(defaultValue = "PENDING") String status,
+      @RequestParam(defaultValue = "0") int page,
+      @RequestParam(defaultValue = "25") int pageSize) {
+    return tierChangeRequestAdminApi.listByStatus(status, page, pageSize);
+  }
+
+  @GetMapping("/api/v1/admin/tier-change-requests/{id}")
+  @PreAuthorize("hasAnyRole('ADMIN','SUPPORT','SUPER_ADMIN')")
+  public TierChangeRequestView getTierChangeRequest(@PathVariable UUID id) {
+    return tierChangeRequestAdminApi.getDetail(id);
+  }
+
+  /**
+   * TICKET-122 — grants {@code MASTER}/{@code FOLLOWER} (a real privilege elevation), so ADMIN and
+   * SUPER_ADMIN only, not SUPPORT — same "SUPPORT cannot action platform state/financial ledgers"
+   * distinction {@code /ledger-adjustments} and {@link #resolveFeeLedgerDispute} both already
+   * establish. This is also the first real authorization check ever written against {@code
+   * SUPER_ADMIN} (TICKET-114 seeded the role with no consumer wired up yet) — deliberately included
+   * here alongside ADMIN rather than SUPER_ADMIN-only, matching the ticket's own summary line
+   * ("reviewed and approved or rejected by an Admin or Super Admin").
+   */
+  @PostMapping("/api/v1/admin/tier-change-requests/{id}/approve")
+  @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
+  public TierChangeRequestView approveTierChangeRequest(
+      @PathVariable UUID id,
+      @RequestBody TierChangeDecisionRequest request,
+      @AuthenticationPrincipal Jwt jwt) {
+    UUID actingAdminId = currentUserId(jwt);
+    TierChangeRequestView view =
+        tierChangeRequestAdminApi.approve(id, actingAdminId, request.reason());
+    auditLogRepository.insert(
+        actingAdminId,
+        "ADMIN",
+        "TIER_CHANGE_REQUEST_APPROVED",
+        "TIER_CHANGE_REQUEST",
+        id.toString(),
+        objectMapper.writeValueAsString(Map.of("targetRole", view.targetRole())));
+    return view;
+  }
+
+  @PostMapping("/api/v1/admin/tier-change-requests/{id}/reject")
+  @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
+  public TierChangeRequestView rejectTierChangeRequest(
+      @PathVariable UUID id,
+      @RequestBody TierChangeDecisionRequest request,
+      @AuthenticationPrincipal Jwt jwt) {
+    UUID actingAdminId = currentUserId(jwt);
+    TierChangeRequestView view =
+        tierChangeRequestAdminApi.reject(id, actingAdminId, request.reason());
+    auditLogRepository.insert(
+        actingAdminId,
+        "ADMIN",
+        "TIER_CHANGE_REQUEST_REJECTED",
+        "TIER_CHANGE_REQUEST",
+        id.toString(),
+        objectMapper.writeValueAsString(
+            Map.of("reason", request.reason() == null ? "" : request.reason())));
+    return view;
+  }
+
+  /**
    * TICKET-117 — System Health. Built from Postgres + a real Kafka consumer/AdminClient, not
    * Prometheus queries — the {@code nectrix-dev} VM's own docker-compose.yml explicitly excludes
    * the observability stack, so there's no Prometheus anywhere outside local dev/CI to query
@@ -359,7 +457,101 @@ public class AdminController {
     List<ConsumerGroupLag> consumerLag = kafkaConsumerLagService.currentLag();
     CopyEngineHealth copyEngine =
         new CopyEngineHealth((int) COPY_ENGINE_WINDOW.toMinutes(), tradesInWindow, failedInWindow);
-    return new SystemHealthResponse(brokerConnections, copyEngine, driftLastHour, consumerLag);
+    MtTerminalsSection mtTerminals = buildMtTerminalsSection();
+    return new SystemHealthResponse(
+        brokerConnections, copyEngine, driftLastHour, consumerLag, mtTerminals);
+  }
+
+  /**
+   * TICKET-123 — joins every linked MT4/MT5 {@code broker_accounts} row against mt-terminal-host's
+   * live pod statuses, so "no pod at all" (never provisioned, or torn down) is distinguishable from
+   * "pod exists but unhealthy" — both are real, different failure modes an Admin/Support user needs
+   * to tell apart (this ticket's own scope note). {@code reachable=false} (mt-terminal-host itself
+   * couldn't be reached) is a THIRD, distinct outcome from either of those — never collapsed into a
+   * fabricated "zero terminals" empty list.
+   */
+  private MtTerminalsSection buildMtTerminalsSection() {
+    List<MtBrokerAccountRef> accounts = adminRepository.listMtBrokerAccounts();
+    Optional<List<TerminalStatus>> podStatuses = mtTerminalHostClient.listTerminalStatuses();
+    if (podStatuses.isEmpty()) {
+      return new MtTerminalsSection(false, List.of());
+    }
+    Map<String, TerminalStatus> byAccountId = indexByAccountId(podStatuses.get());
+    List<TerminalHealthView> views =
+        accounts.stream()
+            .map(
+                account ->
+                    toTerminalHealthView(
+                        account.id(),
+                        account.brokerType(),
+                        account.brokerAccountLogin(),
+                        account.connectionStatus(),
+                        byAccountId))
+            .toList();
+    return new MtTerminalsSection(true, views);
+  }
+
+  /**
+   * Bugfix follow-up — the per-user counterpart to {@link #buildMtTerminalsSection()}, called from
+   * {@link #getUser}. {@code reachable=true} with an empty {@code terminals} list means this user
+   * genuinely has no MT4/MT5 accounts (mt-terminal-host was never even called) — distinct from
+   * {@code reachable=false}, which means this user DOES have one but mt-terminal-host itself
+   * couldn't be reached, same distinction {@link #buildMtTerminalsSection()} already makes.
+   */
+  private MtTerminalsSection buildMtTerminalsSectionForUser(
+      List<BrokerAccountView> brokerAccounts) {
+    List<BrokerAccountView> mtAccounts =
+        brokerAccounts.stream()
+            .filter(a -> "MT4".equals(a.brokerType()) || "MT5".equals(a.brokerType()))
+            .toList();
+    if (mtAccounts.isEmpty()) {
+      return new MtTerminalsSection(true, List.of());
+    }
+    Optional<List<TerminalStatus>> podStatuses = mtTerminalHostClient.listTerminalStatuses();
+    if (podStatuses.isEmpty()) {
+      return new MtTerminalsSection(false, List.of());
+    }
+    Map<String, TerminalStatus> byAccountId = indexByAccountId(podStatuses.get());
+    List<TerminalHealthView> views =
+        mtAccounts.stream()
+            .map(
+                account ->
+                    toTerminalHealthView(
+                        account.id(),
+                        account.brokerType(),
+                        account.brokerAccountLogin(),
+                        account.connectionStatus(),
+                        byAccountId))
+            .toList();
+    return new MtTerminalsSection(true, views);
+  }
+
+  private static Map<String, TerminalStatus> indexByAccountId(List<TerminalStatus> podStatuses) {
+    Map<String, TerminalStatus> byAccountId = new HashMap<>();
+    for (TerminalStatus status : podStatuses) {
+      byAccountId.put(status.brokerAccountId(), status);
+    }
+    return byAccountId;
+  }
+
+  private static TerminalHealthView toTerminalHealthView(
+      UUID accountId,
+      String brokerType,
+      String brokerAccountLogin,
+      String connectionStatus,
+      Map<String, TerminalStatus> byAccountId) {
+    TerminalStatus pod = byAccountId.get(accountId.toString());
+    return new TerminalHealthView(
+        accountId,
+        brokerType,
+        brokerAccountLogin,
+        connectionStatus,
+        pod != null,
+        pod == null ? null : pod.phase(),
+        pod == null ? null : pod.ready(),
+        pod == null ? null : pod.restartCount(),
+        pod == null ? null : pod.waitingReason(),
+        pod == null ? null : pod.lastTransitionTime());
   }
 
   private UUID currentUserId(Jwt jwt) {
@@ -372,12 +564,15 @@ public class AdminController {
   public record ProvisionUserRequest(
       String email, String password, String displayName, String role) {}
 
+  public record TierChangeDecisionRequest(String reason) {}
+
   public record ProvisionUserResponse(UUID id) {}
 
   public record AuditLogPageResponse(
       List<AuditLogRepository.AuditLogEntry> entries, long total, int page, int pageSize) {}
 
-  public record UserDetailResponse(UserView user, List<BrokerAccountView> brokerAccounts) {}
+  public record UserDetailResponse(
+      UserView user, List<BrokerAccountView> brokerAccounts, MtTerminalsSection mtTerminals) {}
 
   public record FeeLedgerDetailResponse(
       FeeLedgerDetailView ledger, List<UnderlyingTradeView> trades) {}
@@ -388,9 +583,35 @@ public class AdminController {
 
   public record CopyEngineHealth(int windowMinutes, long tradesInWindow, long failedInWindow) {}
 
+  /**
+   * TICKET-123 — one MT4/MT5 {@code broker_accounts} row joined against its live terminal pod (if
+   * any). {@code podProvisioned=false} means no live pod exists for this account at all (never
+   * provisioned, or torn down) — every {@code pod*} field is null in that case, not a fabricated
+   * "unhealthy" value.
+   */
+  public record TerminalHealthView(
+      UUID brokerAccountId,
+      String brokerType,
+      String brokerAccountLogin,
+      String connectionStatus,
+      boolean podProvisioned,
+      String podPhase,
+      Boolean podReady,
+      Integer podRestartCount,
+      String podWaitingReason,
+      String podLastTransitionTime) {}
+
+  /**
+   * {@code reachable=false} means mt-terminal-host itself couldn't be reached (a real, distinct
+   * failure mode from "reachable, zero terminals" — {@code terminals} is empty in both cases, so
+   * callers must check {@code reachable} first, never infer service health from list emptiness).
+   */
+  public record MtTerminalsSection(boolean reachable, List<TerminalHealthView> terminals) {}
+
   public record SystemHealthResponse(
       List<BrokerConnectionCount> brokerConnections,
       CopyEngineHealth copyEngine,
       long reconciliationDriftLastHour,
-      List<ConsumerGroupLag> kafkaConsumerLag) {}
+      List<ConsumerGroupLag> kafkaConsumerLag,
+      MtTerminalsSection mtTerminals) {}
 }

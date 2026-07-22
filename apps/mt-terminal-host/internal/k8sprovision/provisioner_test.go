@@ -3,7 +3,9 @@ package k8sprovision
 import (
 	"context"
 	"testing"
+	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
@@ -137,5 +139,152 @@ func TestListProvisionedAccountIDs_ReflectsMultipleAccounts(t *testing.T) {
 	}
 	if !got["acct-a"] || got["acct-b"] || !got["acct-c"] || len(got) != 2 {
 		t.Fatalf("unexpected provisioned account set: %v", ids)
+	}
+}
+
+// The fake clientset has no scheduler/controller to turn a Deployment into a real Pod (unlike a
+// real API server), so ListTerminalPodStatuses's own tests create Pod objects directly — this
+// helper builds one with the same labels EnsureTerminal's applyDeployment would give its own
+// managed Pod, so the label-selector logic under test is exercised exactly as it would be for real.
+func newTestPod(accountID, podName string, phase corev1.PodPhase, ready bool, restartCount int32, waitingReason string) *corev1.Pod {
+	containerStatus := corev1.ContainerStatus{
+		Name:         terminalContainerName,
+		Ready:        ready,
+		RestartCount: restartCount,
+	}
+	if waitingReason != "" {
+		containerStatus.State = corev1.ContainerState{
+			Waiting: &corev1.ContainerStateWaiting{Reason: waitingReason},
+		}
+	}
+	readyStatus := corev1.ConditionFalse
+	if ready {
+		readyStatus = corev1.ConditionTrue
+	}
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      podName,
+			Namespace: testNamespace,
+			Labels:    labelsFor(accountID),
+		},
+		Status: corev1.PodStatus{
+			Phase: phase,
+			Conditions: []corev1.PodCondition{
+				{Type: corev1.PodReady, Status: readyStatus, LastTransitionTime: metav1.NewTime(time.Now())},
+			},
+			ContainerStatuses: []corev1.ContainerStatus{containerStatus},
+		},
+	}
+}
+
+func TestListTerminalPodStatuses_ReturnsEmptyWhenNoPods(t *testing.T) {
+	p := newTestProvisioner()
+	statuses, err := p.ListTerminalPodStatuses(context.Background())
+	if err != nil {
+		t.Fatalf("ListTerminalPodStatuses: %v", err)
+	}
+	if len(statuses) != 0 {
+		t.Fatalf("expected no statuses, got %+v", statuses)
+	}
+}
+
+func TestListTerminalPodStatuses_ReflectsRunningHealthyPod(t *testing.T) {
+	p := newTestProvisioner()
+	ctx := context.Background()
+	pod := newTestPod("acct-1", "mt-terminal-acct-1-abc123", corev1.PodRunning, true, 0, "")
+	if _, err := p.clientset.CoreV1().Pods(testNamespace).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("create test pod: %v", err)
+	}
+
+	statuses, err := p.ListTerminalPodStatuses(ctx)
+	if err != nil {
+		t.Fatalf("ListTerminalPodStatuses: %v", err)
+	}
+	if len(statuses) != 1 {
+		t.Fatalf("expected exactly 1 status, got %+v", statuses)
+	}
+	got := statuses[0]
+	if got.BrokerAccountID != "acct-1" || got.Phase != "Running" || !got.Ready || got.RestartCount != 0 || got.WaitingReason != "" {
+		t.Fatalf("unexpected status: %+v", got)
+	}
+}
+
+// A pod stuck restarting still reports Phase=Running (Kubernetes keeps restarting the container
+// within the same Pod) — WaitingReason is what actually surfaces the crash loop, matching
+// TerminalPodStatus's own doc comment on exactly this distinction.
+func TestListTerminalPodStatuses_DetectsCrashLoopBackOff(t *testing.T) {
+	p := newTestProvisioner()
+	ctx := context.Background()
+	pod := newTestPod("acct-2", "mt-terminal-acct-2-def456", corev1.PodRunning, false, 7, "CrashLoopBackOff")
+	if _, err := p.clientset.CoreV1().Pods(testNamespace).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("create test pod: %v", err)
+	}
+
+	statuses, err := p.ListTerminalPodStatuses(ctx)
+	if err != nil {
+		t.Fatalf("ListTerminalPodStatuses: %v", err)
+	}
+	if len(statuses) != 1 {
+		t.Fatalf("expected exactly 1 status, got %+v", statuses)
+	}
+	got := statuses[0]
+	if got.Ready || got.RestartCount != 7 || got.WaitingReason != "CrashLoopBackOff" {
+		t.Fatalf("unexpected status: %+v", got)
+	}
+}
+
+func TestListTerminalPodStatuses_ReflectsMultipleAccountsIndependently(t *testing.T) {
+	p := newTestProvisioner()
+	ctx := context.Background()
+	pods := []*corev1.Pod{
+		newTestPod("acct-a", "mt-terminal-acct-a", corev1.PodRunning, true, 0, ""),
+		newTestPod("acct-b", "mt-terminal-acct-b", corev1.PodPending, false, 0, "ContainerCreating"),
+	}
+	for _, pod := range pods {
+		if _, err := p.clientset.CoreV1().Pods(testNamespace).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
+			t.Fatalf("create test pod %s: %v", pod.Name, err)
+		}
+	}
+
+	statuses, err := p.ListTerminalPodStatuses(ctx)
+	if err != nil {
+		t.Fatalf("ListTerminalPodStatuses: %v", err)
+	}
+	byAccount := map[string]TerminalPodStatus{}
+	for _, s := range statuses {
+		byAccount[s.BrokerAccountID] = s
+	}
+	if len(byAccount) != 2 {
+		t.Fatalf("expected 2 accounts, got %+v", statuses)
+	}
+	if byAccount["acct-a"].Phase != "Running" || !byAccount["acct-a"].Ready {
+		t.Fatalf("unexpected acct-a status: %+v", byAccount["acct-a"])
+	}
+	if byAccount["acct-b"].Phase != "Pending" || byAccount["acct-b"].WaitingReason != "ContainerCreating" {
+		t.Fatalf("unexpected acct-b status: %+v", byAccount["acct-b"])
+	}
+}
+
+func TestListTerminalPodStatuses_IgnoresPodsWithoutManagedByLabel(t *testing.T) {
+	p := newTestProvisioner()
+	ctx := context.Background()
+	unrelated := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "some-other-pod",
+			Namespace: testNamespace,
+			Labels:    map[string]string{"app": "not-a-terminal"},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+	if _, err := p.clientset.CoreV1().Pods(testNamespace).Create(ctx, unrelated, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("create unrelated pod: %v", err)
+	}
+
+	statuses, err := p.ListTerminalPodStatuses(ctx)
+	if err != nil {
+		t.Fatalf("ListTerminalPodStatuses: %v", err)
+	}
+	if len(statuses) != 0 {
+		t.Fatalf("expected the unrelated pod to be excluded by the label selector, got %+v", statuses)
 	}
 }

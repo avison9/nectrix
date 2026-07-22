@@ -1,11 +1,27 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { Suspense, useState, useTransition } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { verifyTwoFactorAction } from "./actions";
 
-export function TwoFactorVerifyForm() {
+/**
+ * Bugfix — {@code resume} names which in-progress broker link (its own page already stashed the
+ * non-secret parts of its state in localStorage before redirecting here, see
+ * CtraderCallbackClient/Mt5LinkClient's own Javadoc) to send the user back to, instead of always
+ * landing on the generic picker and losing that progress. Absent/unrecognized falls back to the
+ * picker, the previous unconditional behavior.
+ */
+const RESUME_TARGET: Record<string, string> = {
+  ctrader: "/broker-accounts/link/ctrader/callback",
+  mt5: "/broker-accounts/link/mt5",
+};
+
+// useSearchParams() opts into client-side rendering during prerendering unless wrapped in a
+// Suspense boundary -- next build fails outright without it (see ctrader/page.tsx's own
+// identical Javadoc note).
+function TwoFactorVerifyFormInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | undefined>();
   const [pending, startTransition] = useTransition();
@@ -19,7 +35,8 @@ export function TwoFactorVerifyForm() {
         setError(result.error);
         return;
       }
-      router.push("/broker-accounts/link");
+      const resume = searchParams.get("resume") ?? "";
+      router.push(RESUME_TARGET[resume] ?? "/broker-accounts/link");
     });
   }
 
@@ -52,5 +69,13 @@ export function TwoFactorVerifyForm() {
         {pending ? "Verifying…" : "Verify and continue"}
       </button>
     </form>
+  );
+}
+
+export function TwoFactorVerifyForm() {
+  return (
+    <Suspense fallback={null}>
+      <TwoFactorVerifyFormInner />
+    </Suspense>
   );
 }

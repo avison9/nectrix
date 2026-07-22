@@ -3,6 +3,7 @@
 import {
   ApiError,
   acknowledgeRisk,
+  getManagementAgreement,
   listCopyRelationshipTrades,
   pauseCopyRelationship,
   resumeCopyRelationship,
@@ -47,6 +48,18 @@ export async function resumeCopyRelationshipAction(id: string): Promise<ActionRe
 
 export async function stopCopyRelationshipAction(id: string): Promise<ActionResult> {
   return run(id, stopCopyRelationship);
+}
+
+export async function getAgreementUrlAction(
+  id: string,
+): Promise<{ documentUrl: string } | { error: string }> {
+  const { accessToken } = await requireSession();
+  try {
+    const agreement = await getManagementAgreement(coreAppBaseUrl(), accessToken, id);
+    return { documentUrl: agreement.documentUrl };
+  } catch {
+    return { error: "Couldn't load the signed agreement — please try again." };
+  }
 }
 
 export async function loadTradesPageAction(id: string, page: number): Promise<CopiedTradesPage> {

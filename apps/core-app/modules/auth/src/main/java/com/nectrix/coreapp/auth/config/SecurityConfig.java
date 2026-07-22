@@ -152,6 +152,17 @@ public class SecurityConfig {
                     .authenticated()
                     .requestMatchers(HttpMethod.DELETE, "/api/v1/broker-accounts/*")
                     .authenticated()
+                    // TICKET-101 follow-up — the user's own explicit "stop this account" step,
+                    // required before DELETE above (see BrokerAccountService#deleteBrokerAccount's
+                    // own Javadoc) — same fetch-then-check-then-mutate guard as PATCH/DELETE.
+                    .requestMatchers(HttpMethod.POST, "/api/v1/broker-accounts/*/disconnect")
+                    .authenticated()
+                    // TICKET-101 follow-up — the on-demand archive-and-delete trigger
+                    // (bootstrap.archival.BrokerAccountArchivalController), same
+                    // fetch-then-check-then-mutate ownership guard as DELETE/disconnect above.
+                    .requestMatchers(
+                        HttpMethod.POST, "/api/v1/broker-accounts/*/archive-and-delete")
+                    .authenticated()
                     .requestMatchers(HttpMethod.GET, "/api/v1/broker-accounts/*/snapshot")
                     .authenticated()
                     .requestMatchers(HttpMethod.GET, "/api/v1/broker-accounts/*/positions")
@@ -190,6 +201,24 @@ public class SecurityConfig {
                     .requestMatchers(HttpMethod.POST, "/api/v1/admin/fee-ledger/*/dispute")
                     .authenticated()
                     .requestMatchers(HttpMethod.POST, "/api/v1/admin/fee-ledger/*/resolve")
+                    .authenticated()
+                    // TICKET-122 — tier-change-request self-service (submit + own status) and the
+                    // admin list/approve/reject queue. RBAC split (approve/reject is ADMIN+
+                    // SUPER_ADMIN-only, listing is ADMIN+SUPPORT+SUPER_ADMIN) is method-security on
+                    // TierChangeRequestController/AdminController, same pattern as fee-ledger
+                    // above.
+                    .requestMatchers(HttpMethod.POST, "/api/v1/account/tier-change-requests")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.GET, "/api/v1/account/tier-change-requests/me")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.GET, "/api/v1/admin/tier-change-requests")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.GET, "/api/v1/admin/tier-change-requests/*")
+                    .authenticated()
+                    .requestMatchers(
+                        HttpMethod.POST, "/api/v1/admin/tier-change-requests/*/approve")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.POST, "/api/v1/admin/tier-change-requests/*/reject")
                     .authenticated()
                     // TICKET-117 — System Health.
                     .requestMatchers(HttpMethod.GET, "/api/v1/admin/system-health")
@@ -255,6 +284,11 @@ public class SecurityConfig {
                         HttpMethod.POST, "/api/v1/copy-relationships/*/acknowledge-risk")
                     .authenticated()
                     .requestMatchers(HttpMethod.POST, "/api/v1/copy-relationships/*/sign-agreement")
+                    .authenticated()
+                    // TICKET-120 — AC2's presigned-URL retrieval; ownership enforced the same way
+                    // every other by-id copy-relationships route is (getCopyRelationship's own
+                    // @PostAuthorize).
+                    .requestMatchers(HttpMethod.GET, "/api/v1/copy-relationships/*/agreement")
                     .authenticated()
                     .requestMatchers(HttpMethod.POST, "/api/v1/copy-relationships/*/pause")
                     .authenticated()
@@ -323,6 +357,36 @@ public class SecurityConfig {
                     .authenticated()
                     .requestMatchers(HttpMethod.POST, "/api/v1/master/invitations/*/revoke")
                     .authenticated()
+                    // TICKET-118 follow-up — resend isn't a one-shot affair; rotates the token
+                    // and re-sends the email, rate-limited per-invitation in InvitationService.
+                    .requestMatchers(HttpMethod.POST, "/api/v1/master/invitations/*/resend")
+                    .authenticated()
+                    // TICKET-119 — Master-scoped Broker IB Link CRUD (role check is
+                    // @PreAuthorize("hasRole('MASTER')") method-security, see
+                    // BrokerIbLinkController), same "route list doesn't care which module's
+                    // controller serves a path" reasoning as the invitations matchers above.
+                    .requestMatchers(HttpMethod.POST, "/api/v1/master/broker-ib-links")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.GET, "/api/v1/master/broker-ib-links")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.POST, "/api/v1/master/broker-ib-links/*/deactivate")
+                    .authenticated()
+                    // TICKET-120 — Master-scoped BrokerFeeReport generation/review/send/confirm
+                    // (role check is @PreAuthorize("hasRole('MASTER')") method-security, see
+                    // BrokerFeeReportController), same reasoning as the two matcher groups above.
+                    .requestMatchers(HttpMethod.POST, "/api/v1/master/fee-reports")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.GET, "/api/v1/master/fee-reports")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.GET, "/api/v1/master/fee-reports/*")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.POST, "/api/v1/master/fee-reports/*/send")
+                    .authenticated()
+                    .requestMatchers(
+                        HttpMethod.POST, "/api/v1/master/fee-reports/*/confirm-deducted")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.POST, "/api/v1/master/fee-reports/*/confirm-paid")
+                    .authenticated()
                     // TICKET-118 — public, token-gated (rate-limited in-controller, not here —
                     // see PublicInvitationController/AcceptInviteController's own
                     // InvitationRateLimiterService).
@@ -335,6 +399,23 @@ public class SecurityConfig {
                     .requestMatchers(HttpMethod.GET, "/api/v1/users/me/pending-invitation")
                     .authenticated()
                     .requestMatchers(HttpMethod.POST, "/api/v1/copy-relationships/from-invitation")
+                    .authenticated()
+                    // TICKET-118 follow-up — Follower refers a prospect (nominate), Master reviews
+                    // in their inbox (list/mark-invited/dismiss). Role split
+                    // (FOLLOWER creates, MASTER reviews) is method-security on
+                    // ProspectNominationController, same reasoning as every other role-gated
+                    // matcher above.
+                    .requestMatchers(HttpMethod.POST, "/api/v1/prospect-nominations")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.GET, "/api/v1/prospect-nominations/mine")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.GET, "/api/v1/master/prospect-nominations")
+                    .authenticated()
+                    .requestMatchers(
+                        HttpMethod.POST, "/api/v1/master/prospect-nominations/*/mark-invited")
+                    .authenticated()
+                    .requestMatchers(
+                        HttpMethod.POST, "/api/v1/master/prospect-nominations/*/dismiss")
                     .authenticated()
                     // -- add new protected/public auth-adjacent routes here — anyRequest() below
                     // is intentionally permitAll, not authenticated(), so genuinely unmapped

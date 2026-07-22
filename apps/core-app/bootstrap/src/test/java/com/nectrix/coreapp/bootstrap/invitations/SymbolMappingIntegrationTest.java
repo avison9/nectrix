@@ -275,6 +275,12 @@ class SymbolMappingIntegrationTest {
     return loginAsWithTotp(email, secret);
   }
 
+  // TICKET-101/102 follow-up — server_name is now really persisted, so broker_accounts' own
+  // UNIQUE(broker_type, broker_account_login, server_name) constraint genuinely applies now — a
+  // fixed literal server value collided with itself across repeated runs against this same
+  // persistent dev DB. Suffixing it per JVM run restores re-runnability.
+  private static final String TEST_SERVER = "Pepperstone-Demo-" + UUID.randomUUID();
+
   /** Real signup + real MT5 link, exactly like BrokerAccountMtIntegrationTest's own setup. */
   private UUID linkMt5Account(String bearerToken, String login) {
     HttpResult link =
@@ -282,11 +288,18 @@ class SymbolMappingIntegrationTest {
             "POST",
             "/api/v1/broker-accounts/mt5",
             Map.of(
-                "login", login,
-                "password", "terminal-password-123",
-                "server", "Pepperstone-Demo",
-                "is_demo", true,
-                "display_label", "My MT5 Demo"),
+                "login",
+                login,
+                "password",
+                "terminal-password-123",
+                "server",
+                TEST_SERVER,
+                "is_demo",
+                true,
+                "display_label",
+                "My MT5 Demo",
+                "broker_name",
+                "Pepperstone"),
             bearerToken);
     assertThat(link.status()).isEqualTo(200);
     return UUID.fromString((String) link.body().get("id"));
