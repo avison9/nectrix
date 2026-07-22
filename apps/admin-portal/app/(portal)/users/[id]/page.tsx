@@ -18,7 +18,12 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
   const accessToken = jar.get("access_token")!.value;
 
   const detail = await getUserDetail(coreAppBaseUrl(), accessToken, id);
-  const { user, brokerAccounts } = detail;
+  const { user, brokerAccounts, mtTerminals } = detail;
+  // Bugfix follow-up — only show the MT4/MT5 terminal section when it's actually relevant: either
+  // this user has at least one MT4/MT5 account, or mt-terminal-host is unreachable while they do
+  // (mtTerminals.reachable === true with zero terminals means neither applies, so most users —
+  // CTRADER-only — never see an empty section here).
+  const showMtTerminals = mtTerminals.terminals.length > 0 || !mtTerminals.reachable;
 
   return (
     <div className="max-w-3xl">
@@ -117,6 +122,85 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
           </tbody>
         </table>
       </div>
+
+      {showMtTerminals && (
+        <>
+          <h2 className="mt-8 text-[16px] font-semibold text-[var(--text)]">
+            MT4/MT5 terminal status
+          </h2>
+          <div className="mt-3 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-5">
+            {!mtTerminals.reachable ? (
+              <p className="text-[13px] text-[var(--neg)]">
+                mt-terminal-host is unreachable — pod status is currently unavailable (this is
+                distinct from &ldquo;no terminal provisioned&rdquo;, see the account&apos;s Status
+                column above).
+              </p>
+            ) : (
+              <table className="w-full border-collapse text-[13px]">
+                <thead>
+                  <tr className="border-b border-[var(--border)] text-left">
+                    <th className="pb-2 text-[11.5px] font-semibold uppercase tracking-wide text-[var(--text-3)]">
+                      Account
+                    </th>
+                    <th className="pb-2 text-[11.5px] font-semibold uppercase tracking-wide text-[var(--text-3)]">
+                      Pod status
+                    </th>
+                    <th className="pb-2 text-right text-[11.5px] font-semibold uppercase tracking-wide text-[var(--text-3)]">
+                      Restarts
+                    </th>
+                    <th className="pb-2 text-right text-[11.5px] font-semibold uppercase tracking-wide text-[var(--text-3)]">
+                      Last transition
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {mtTerminals.terminals.map((terminal) => (
+                    <tr
+                      key={terminal.brokerAccountId}
+                      className="border-b border-[var(--border)] last:border-0"
+                    >
+                      <td className="py-2 text-[var(--text)]">
+                        {terminal.brokerType} · {terminal.brokerAccountLogin}
+                      </td>
+                      <td className="py-2">
+                        {!terminal.podProvisioned ? (
+                          <span className="rounded-full bg-[var(--surface-2)] px-2.5 py-1 text-[12px] font-semibold text-[var(--text-2)]">
+                            No pod
+                          </span>
+                        ) : (
+                          <span
+                            className={`rounded-full px-2.5 py-1 text-[12px] font-semibold ${
+                              terminal.podReady
+                                ? "bg-[var(--pos)]/15 text-[var(--pos)]"
+                                : "bg-[var(--neg)]/15 text-[var(--neg)]"
+                            }`}
+                          >
+                            {terminal.podWaitingReason || terminal.podPhase}
+                          </span>
+                        )}
+                      </td>
+                      <td
+                        className={`py-2 text-right font-mono ${
+                          terminal.podProvisioned && (terminal.podRestartCount ?? 0) > 0
+                            ? "text-[var(--neg)]"
+                            : "text-[var(--text)]"
+                        }`}
+                      >
+                        {terminal.podProvisioned ? terminal.podRestartCount : "—"}
+                      </td>
+                      <td className="py-2 text-right text-[var(--text-2)]">
+                        {terminal.podLastTransitionTime
+                          ? new Date(terminal.podLastTransitionTime).toLocaleString()
+                          : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }

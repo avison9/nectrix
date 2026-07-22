@@ -733,6 +733,7 @@ export interface CopySettingsInput {
   maxLotPerTrade: number | null;
   maxOpenPositions: number | null;
   maxSlippagePips: number | null;
+  excludedSymbols: string[];
 }
 
 /**
@@ -758,6 +759,7 @@ export async function updateCopySettings(
       max_lot_per_trade: input.maxLotPerTrade,
       max_open_positions: input.maxOpenPositions,
       max_slippage_pips: input.maxSlippagePips,
+      excluded_symbols: input.excludedSymbols,
     }),
   });
 }

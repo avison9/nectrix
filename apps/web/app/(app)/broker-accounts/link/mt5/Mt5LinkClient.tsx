@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState, useTransition } from "react";
+import { Suspense, useEffect, useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { ConnectionRole } from "@nectrix/api-client";
 import { linkMtAccountAction } from "./actions";
@@ -10,6 +10,25 @@ const ROLE_LABEL: Record<ConnectionRole, string> = {
   MASTER_ONLY: "Master — other accounts copy trades from this one",
   BOTH: "Both — Individual mode, can act as either",
 };
+
+const PENDING_LINK_KEY = "mt_pending_link";
+
+/**
+ * Bugfix — restored after a 2FA-enrollment detour so the user doesn't have to retype everything.
+ * Deliberately excludes {@code password}: unlike cTrader's opaque, already-server-side
+ * {@code linkSessionId} (see CtraderCallbackClient's own Javadoc), this form's own credentials are
+ * the broker password itself, and persisting that in localStorage even briefly isn't worth the
+ * savings of one field — the user re-enters just the password, everything else is restored.
+ */
+interface PendingMtLink {
+  platform: "MT5" | "MT4";
+  brokerName: string;
+  login: string;
+  server: string;
+  isDemo: boolean;
+  displayLabel: string;
+  openedViaIbLinkId?: string;
+}
 
 /**
  * docs/07-auth-onboarding-broker-linking.md §7.7 -- the EA-bridge credential
@@ -23,7 +42,6 @@ const ROLE_LABEL: Record<ConnectionRole, string> = {
 function ConnectMt5Form({ accountRole }: { accountRole: ConnectionRole }) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const openedViaIbLinkId = searchParams.get("openedViaIbLinkId") ?? undefined;
 
   const [platform, setPlatform] = useState<"MT5" | "MT4">("MT5");
   const [brokerName, setBrokerName] = useState("");
@@ -32,9 +50,33 @@ function ConnectMt5Form({ accountRole }: { accountRole: ConnectionRole }) {
   const [server, setServer] = useState("");
   const [isDemo, setIsDemo] = useState(true);
   const [displayLabel, setDisplayLabel] = useState("");
+  const [openedViaIbLinkId, setOpenedViaIbLinkId] = useState<string | undefined>(
+    () => searchParams.get("openedViaIbLinkId") ?? undefined,
+  );
+  const [resumed, setResumed] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [result, setResult] = useState<{ pairingToken: string; gatewayUrl: string; id: string } | undefined>();
   const [pending, startTransition] = useTransition();
+
+  useEffect(() => {
+    const pendingRaw = window.localStorage.getItem(PENDING_LINK_KEY);
+    if (!pendingRaw) return;
+    window.localStorage.removeItem(PENDING_LINK_KEY);
+    const restored: PendingMtLink = JSON.parse(pendingRaw);
+    // Deferred into a promise continuation, not called synchronously in the effect body (matches
+    // CtraderCallbackClient's own identical fix).
+    Promise.resolve().then(() => {
+      setPlatform(restored.platform);
+      setBrokerName(restored.brokerName);
+      setLogin(restored.login);
+      setServer(restored.server);
+      setIsDemo(restored.isDemo);
+      setDisplayLabel(restored.displayLabel);
+      setOpenedViaIbLinkId(restored.openedViaIbLinkId);
+      setResumed(true);
+    });
+    // Only runs once, on mount.
+  }, []);
 
   function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -52,7 +94,17 @@ function ConnectMt5Form({ accountRole }: { accountRole: ConnectionRole }) {
       });
       if ("error" in linkResult) {
         if (linkResult.requiresTwoFactor) {
-          router.push("/broker-accounts/2fa-required");
+          const pending: PendingMtLink = {
+            platform,
+            brokerName,
+            login,
+            server,
+            isDemo,
+            displayLabel,
+            openedViaIbLinkId,
+          };
+          window.localStorage.setItem(PENDING_LINK_KEY, JSON.stringify(pending));
+          router.push("/broker-accounts/2fa-required?resume=mt5");
           return;
         }
         setError(linkResult.error);
@@ -104,6 +156,13 @@ function ConnectMt5Form({ accountRole }: { accountRole: ConnectionRole }) {
       <h1 className="text-[20px] font-semibold tracking-tight text-[var(--text)]">
         Connect MT5 or MT4
       </h1>
+
+      {resumed && (
+        <p className="mt-3 rounded-[10px] border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2.5 text-[12.5px] text-[var(--text-2)]">
+          Welcome back — we restored your details from before 2FA setup. Just re-enter your
+          password to finish connecting.
+        </p>
+      )}
 
       <form onSubmit={submit} className="mt-6 flex flex-col gap-3.5">
         <div className="flex gap-2">

@@ -31,11 +31,30 @@ type relationship struct {
 	moneyManagementProfileID uuid.UUID
 	riskProfileID            uuid.UUID
 	copyDirection            string // "SAME" | "REVERSE"
+	// excludedSymbols (035-copy-relationship-symbol-exclusions.sql) is a Follower-editable
+	// EXCLUSION list, empty by default -- see dispatchOrder's own comment for exactly where
+	// and why this is checked (only for a brand-new position open, never for a
+	// close/modify/partial-close of one already open).
+	excludedSymbols []string
 	// createdAt (TICKET-108) is only populated by loadActiveRelationshipsForDrawdownCheck
 	// (drawdown.go) -- matchRelationships' own SELECT/Scan below is
 	// untouched, leaving this zero-valued for the event-driven dispatch path,
 	// which never reads it.
 	createdAt time.Time
+}
+
+// excludesSymbol reports whether canonicalSymbol is in rel's own exclusion list -- a plain,
+// case-sensitive match against CopyRelationshipController's own server-side normalization
+// (uppercased before storage), and against domain.NormalizedTradeEvent's own
+// Position.Symbol.CanonicalCode, which is already the canonical uppercase code by the time it
+// reaches this pipeline (see normalizeStage).
+func (r relationship) excludesSymbol(canonicalSymbol string) bool {
+	for _, s := range r.excludedSymbols {
+		if s == canonicalSymbol {
+			return true
+		}
+	}
+	return false
 }
 
 // processSignalForAllRelationships is the Relationship Matcher (Appendix
@@ -81,7 +100,7 @@ func (p *Pipeline) processSignalForAllRelationships(ctx context.Context, masterA
 func (p *Pipeline) matchRelationships(ctx context.Context, masterAccountID uuid.UUID) ([]relationship, error) {
 	rows, err := p.pool.Query(ctx, `
 		SELECT id, master_broker_account_id, follower_broker_account_id,
-		       money_management_profile_id, risk_profile_id, copy_direction
+		       money_management_profile_id, risk_profile_id, copy_direction, excluded_symbols
 		FROM copy_relationships
 		WHERE master_broker_account_id = $1 AND status = 'ACTIVE'`, masterAccountID)
 	if err != nil {
@@ -92,7 +111,7 @@ func (p *Pipeline) matchRelationships(ctx context.Context, masterAccountID uuid.
 	var relationships []relationship
 	for rows.Next() {
 		var r relationship
-		if err := rows.Scan(&r.id, &r.masterBrokerAccountID, &r.followerBrokerAccountID, &r.moneyManagementProfileID, &r.riskProfileID, &r.copyDirection); err != nil {
+		if err := rows.Scan(&r.id, &r.masterBrokerAccountID, &r.followerBrokerAccountID, &r.moneyManagementProfileID, &r.riskProfileID, &r.copyDirection, &r.excludedSymbols); err != nil {
 			return nil, fmt.Errorf("scan copy_relationships row: %w", err)
 		}
 		relationships = append(relationships, r)
@@ -125,7 +144,17 @@ func (p *Pipeline) dispatchOrder(ctx context.Context, rel relationship, signalID
 
 	switch event.EventType {
 	case domain.TradeEventPositionOpened:
-		err = p.doDispatchOrder(ctx, rel, signalID, event)
+		// Feature -- excludedSymbols only ever blocks a BRAND NEW position from opening.
+		// PartiallyClosed/Closed/Modified below are deliberately never gated on it: a symbol
+		// added to the exclusion list after a position in it was already copied must not
+		// strand that already-open position with no way to ever receive its own close/modify
+		// events again.
+		if rel.excludesSymbol(event.Position.Symbol.CanonicalCode) {
+			slog.Default().Info("pipeline: symbol excluded for this relationship, skipping open",
+				"copyRelationshipId", rel.id, "canonicalSymbol", event.Position.Symbol.CanonicalCode)
+		} else {
+			err = p.doDispatchOrder(ctx, rel, signalID, event)
+		}
 	case domain.TradeEventPositionPartiallyClosed:
 		err = p.handlePartialClose(ctx, rel, signalID, event)
 	case domain.TradeEventPositionClosed:

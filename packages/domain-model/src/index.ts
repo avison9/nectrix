@@ -244,6 +244,12 @@ export interface CopyRelationship {
   originatingFollowRequestId: string | null;
   highWaterMark: number | null;
   createdAt: string;
+  // Feature — a Follower-editable per-relationship symbol EXCLUSION list, empty by default
+  // (meaning "copy every symbol this Master trades", unchanged from before this field existed).
+  // Enforced in apps/copy-engine, only against new position opens — see that service's own
+  // dispatch.go comment for why an already-copied position must still close normally even after
+  // its symbol is added here.
+  excludedSymbols: string[];
 }
 
 // Mirrors CopyRelationshipController.TradesPage/CopiedTrade (read-only trades-history view).
@@ -331,6 +337,12 @@ export interface UserSummary {
 export interface UserDetail {
   user: UserSummary;
   brokerAccounts: BrokerAccountSummary[];
+  // Bugfix follow-up — this user's own MT4/MT5 accounts joined against their live pod status
+  // (see MtTerminalsSection below), so support/admin can troubleshoot a specific user's terminal
+  // from their own detail page instead of cross-referencing system-health by hand.
+  // reachable=true with an empty terminals list means this user has no MT4/MT5 accounts at all —
+  // distinct from reachable=false (mt-terminal-host itself unreachable).
+  mtTerminals: MtTerminalsSection;
 }
 
 export type FeeLedgerStatus =

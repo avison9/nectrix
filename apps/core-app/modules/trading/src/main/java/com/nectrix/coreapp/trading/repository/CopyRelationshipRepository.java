@@ -2,6 +2,8 @@ package com.nectrix.coreapp.trading.repository;
 
 import com.nectrix.coreapp.trading.domain.CopyRelationship;
 import java.math.BigDecimal;
+import java.sql.Array;
+import java.sql.PreparedStatement;
 import java.sql.Timestamp;
 import java.util.List;
 import java.util.Optional;
@@ -20,6 +22,13 @@ public class CopyRelationshipRepository {
         String originatingInvitationId = rs.getString("originating_invitation_id");
         String originatingFollowRequestId = rs.getString("originating_follow_request_id");
         Timestamp stoppedAt = rs.getTimestamp("stopped_at");
+        // Feature — same java.sql.Array read pattern social/MasterProfileRepository's own
+        // strategy_tags column already established (the one other TEXT[] column in this schema).
+        Array excludedSymbolsArray = rs.getArray("excluded_symbols");
+        List<String> excludedSymbols =
+            excludedSymbolsArray != null
+                ? List.of((String[]) excludedSymbolsArray.getArray())
+                : List.of();
         return new CopyRelationship(
             UUID.fromString(rs.getString("id")),
             UUID.fromString(rs.getString("master_profile_id")),
@@ -37,7 +46,8 @@ public class CopyRelationshipRepository {
             originatingInvitationId != null ? UUID.fromString(originatingInvitationId) : null,
             originatingFollowRequestId != null ? UUID.fromString(originatingFollowRequestId) : null,
             rs.getTimestamp("created_at").toInstant(),
-            stoppedAt != null ? stoppedAt.toInstant() : null);
+            stoppedAt != null ? stoppedAt.toInstant() : null,
+            excludedSymbols);
       };
 
   private final JdbcTemplate jdbcTemplate;
@@ -174,6 +184,23 @@ public class CopyRelationshipRepository {
   public void markStopped(UUID id) {
     jdbcTemplate.update(
         "UPDATE copy_relationships SET status = 'STOPPED', stopped_at = now() WHERE id = ?", id);
+  }
+
+  /**
+   * Feature — the Follower-editable per-relationship symbol EXCLUSION list (see {@code
+   * CopyRelationship}'s own Javadoc for why exclusion-, not allow-, list). Caller is responsible
+   * for normalizing (uppercase/trim/dedupe/drop-blank) before calling this — this method stores
+   * exactly what it's given. Same {@code java.sql.Array} write pattern {@code
+   * social.MasterProfileRepository#update}'s own {@code strategy_tags} column already established.
+   */
+  public void updateExcludedSymbols(UUID id, List<String> excludedSymbols) {
+    jdbcTemplate.execute(
+        "UPDATE copy_relationships SET excluded_symbols = ? WHERE id = ?",
+        (PreparedStatement ps) -> {
+          ps.setArray(1, ps.getConnection().createArrayOf("text", excludedSymbols.toArray()));
+          ps.setObject(2, id);
+          return ps.executeUpdate();
+        });
   }
 
   /** {@code PATCH /copy-relationships/{id}} — swap in a different mm/risk profile. */

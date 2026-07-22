@@ -5,13 +5,33 @@ import { useRouter, useSearchParams } from "next/navigation";
 import type { ConnectionRole, CtraderAccountOption } from "@nectrix/api-client";
 import { linkCtraderAccountAction, submitCallbackAction } from "./actions";
 
-type Step = "exchanging" | "picking" | "error";
+type Step = "exchanging" | "picking" | "resuming" | "error";
 
 const ROLE_LABEL: Record<ConnectionRole, string> = {
   FOLLOWER_ONLY: "Follower — copies trades from a Master",
   MASTER_ONLY: "Master — other accounts copy trades from this one",
   BOTH: "Both — Individual mode, can act as either",
 };
+
+/**
+ * Bugfix — the payload {@code confirmSelection} needs to retry {@code linkCtraderAccountAction}
+ * after a 2FA-enrollment detour, without redoing the whole cTrader OAuth handshake. Deliberately
+ * holds no secret: {@code linkSessionId} is an opaque, single-use Redis key
+ * (OAuthLinkStateStore#createLinkSession) that BrokerAccountOAuthController's own
+ * {@code requireTwoFactor} check runs BEFORE ever consuming — so it's still valid, unconsumed, and
+ * safe to resubmit verbatim once 2FA is enabled, well within its 10-minute TTL.
+ */
+interface PendingCtraderLink {
+  linkSessionId: string;
+  ctidTraderAccountId: number;
+  isLive: boolean;
+  displayLabel: string;
+  connectionRole: ConnectionRole;
+  openedViaIbLinkId?: string;
+  brokerName: string;
+}
+
+const PENDING_LINK_KEY = "ctrader_pending_link";
 
 // useSearchParams() opts into client-side rendering during prerendering
 // unless wrapped in a Suspense boundary -- next build fails outright
@@ -27,7 +47,49 @@ function CtraderCallbackInner({ accountRole }: { accountRole: ConnectionRole }) 
   const [displayLabel, setDisplayLabel] = useState("");
   const [pending, startTransition] = useTransition();
 
+  function submitLink(input: {
+    linkSessionId: string;
+    ctidTraderAccountId: number;
+    isLive: boolean;
+    displayLabel: string;
+    connectionRole: ConnectionRole;
+    openedViaIbLinkId?: string;
+    brokerName: string;
+  }) {
+    startTransition(async () => {
+      const result = await linkCtraderAccountAction(input);
+      if ("error" in result) {
+        if (result.requiresTwoFactor) {
+          window.localStorage.setItem(PENDING_LINK_KEY, JSON.stringify(input));
+          router.push("/broker-accounts/2fa-required?resume=ctrader");
+          return;
+        }
+        setError(result.error);
+        setStep("error");
+        return;
+      }
+      router.push(`/broker-accounts/symbol-mappings/${result.id}`);
+    });
+  }
+
   useEffect(() => {
+    // Bugfix — a pending link resumed after the 2FA detour takes priority over the URL's own
+    // ?code=, since landing back here from /broker-accounts/2fa-required carries no OAuth code at
+    // all (it's a plain redirect, not cTrader's own callback) — this is the resume path, not a
+    // fresh authorization round trip.
+    const pendingRaw = window.localStorage.getItem(PENDING_LINK_KEY);
+    if (pendingRaw) {
+      window.localStorage.removeItem(PENDING_LINK_KEY);
+      const pending: PendingCtraderLink = JSON.parse(pendingRaw);
+      // Deferred into a promise continuation, not called synchronously in the effect body, same
+      // reasoning the "missing code/state" branch below already documents.
+      Promise.resolve().then(() => {
+        setStep("resuming");
+        submitLink(pending);
+      });
+      return;
+    }
+
     const code = searchParams.get("code");
     const state = window.localStorage.getItem("ctrader_oauth_state");
     window.localStorage.removeItem("ctrader_oauth_state");
@@ -60,28 +122,17 @@ function CtraderCallbackInner({ accountRole }: { accountRole: ConnectionRole }) 
     const account = accounts.find((a) => a.ctidTraderAccountId === selected);
     if (!account) return;
     setError(undefined);
-    startTransition(async () => {
-      const openedViaIbLinkId =
-        window.localStorage.getItem("ctrader_opened_via_ib_link_id") ?? undefined;
-      window.localStorage.removeItem("ctrader_opened_via_ib_link_id");
-      const result = await linkCtraderAccountAction({
-        linkSessionId,
-        ctidTraderAccountId: account.ctidTraderAccountId,
-        isLive: account.isLive,
-        displayLabel: displayLabel || account.brokerTitleShort,
-        connectionRole: accountRole,
-        openedViaIbLinkId,
-        brokerName: account.brokerTitleShort,
-      });
-      if ("error" in result) {
-        if (result.requiresTwoFactor) {
-          router.push("/broker-accounts/2fa-required");
-          return;
-        }
-        setError(result.error);
-        return;
-      }
-      router.push(`/broker-accounts/symbol-mappings/${result.id}`);
+    const openedViaIbLinkId =
+      window.localStorage.getItem("ctrader_opened_via_ib_link_id") ?? undefined;
+    window.localStorage.removeItem("ctrader_opened_via_ib_link_id");
+    submitLink({
+      linkSessionId,
+      ctidTraderAccountId: account.ctidTraderAccountId,
+      isLive: account.isLive,
+      displayLabel: displayLabel || account.brokerTitleShort,
+      connectionRole: accountRole,
+      openedViaIbLinkId,
+      brokerName: account.brokerTitleShort,
     });
   }
 
@@ -93,6 +144,12 @@ function CtraderCallbackInner({ accountRole }: { accountRole: ConnectionRole }) 
 
       {step === "exchanging" && (
         <p className="mt-4 text-[13.5px] text-[var(--text-2)]">Finishing authorization…</p>
+      )}
+
+      {step === "resuming" && (
+        <p className="mt-4 text-[13.5px] text-[var(--text-2)]">
+          Resuming where you left off — linking your account…
+        </p>
       )}
 
       {step === "error" && (

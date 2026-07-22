@@ -58,6 +58,22 @@ export function CopySettingsForm({ relationship }: { relationship: CopyRelations
     toInputValue(relationship.riskProfile.maxOpenPositions),
   );
   const [maxSlippagePips, setMaxSlippagePips] = useState(String(relationship.riskProfile.maxSlippagePips));
+  const [excludedSymbols, setExcludedSymbols] = useState(relationship.excludedSymbols);
+  const [newSymbol, setNewSymbol] = useState("");
+
+  function addExcludedSymbol() {
+    const symbol = newSymbol.trim().toUpperCase();
+    if (!symbol || excludedSymbols.includes(symbol)) {
+      setNewSymbol("");
+      return;
+    }
+    setExcludedSymbols((prev) => [...prev, symbol]);
+    setNewSymbol("");
+  }
+
+  function removeExcludedSymbol(symbol: string) {
+    setExcludedSymbols((prev) => prev.filter((s) => s !== symbol));
+  }
 
   function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -72,6 +88,7 @@ export function CopySettingsForm({ relationship }: { relationship: CopyRelations
         maxLotPerTrade: toNumberOrNull(maxLotPerTrade),
         maxOpenPositions: toNumberOrNull(maxOpenPositions),
         maxSlippagePips: toNumberOrNull(maxSlippagePips),
+        excludedSymbols,
       });
       if ("error" in result) {
         setError(result.error);
@@ -188,6 +205,56 @@ export function CopySettingsForm({ relationship }: { relationship: CopyRelations
             className="h-9 rounded-[8px] border border-[var(--border)] bg-transparent px-2.5 font-mono text-[12.5px] text-[var(--text)] outline-none focus:border-[var(--accent)]"
           />
         </label>
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <span className="text-[11.5px] font-medium text-[var(--text-2)]">
+          Excluded symbols — never copied from this Master
+        </span>
+        <div className="flex flex-wrap gap-1.5">
+          {excludedSymbols.length === 0 && (
+            <span className="text-[12px] text-[var(--text-3)]">
+              None — every symbol this Master trades is copied.
+            </span>
+          )}
+          {excludedSymbols.map((symbol) => (
+            <span
+              key={symbol}
+              className="flex items-center gap-1.5 rounded-full bg-[var(--surface-2)] py-1 pl-2.5 pr-1.5 text-[12px] font-mono font-semibold text-[var(--text)]"
+            >
+              {symbol}
+              <button
+                type="button"
+                onClick={() => removeExcludedSymbol(symbol)}
+                aria-label={`Remove ${symbol}`}
+                className="flex h-4 w-4 items-center justify-center rounded-full text-[var(--text-2)] hover:bg-[var(--border)] hover:text-[var(--text)]"
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+        <div className="flex gap-2">
+          <input
+            value={newSymbol}
+            onChange={(e) => setNewSymbol(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                addExcludedSymbol();
+              }
+            }}
+            placeholder="e.g. EURUSD"
+            className="h-9 w-32 rounded-[8px] border border-[var(--border)] bg-transparent px-2.5 font-mono text-[12.5px] text-[var(--text)] outline-none focus:border-[var(--accent)]"
+          />
+          <button
+            type="button"
+            onClick={addExcludedSymbol}
+            className="h-9 rounded-[8px] border border-[var(--border)] px-3 text-[12.5px] font-semibold text-[var(--text)] hover:bg-[var(--surface-2)]"
+          >
+            Add
+          </button>
+        </div>
       </div>
 
       {error && <p className="text-[12.5px] text-[var(--neg)]">{error}</p>}

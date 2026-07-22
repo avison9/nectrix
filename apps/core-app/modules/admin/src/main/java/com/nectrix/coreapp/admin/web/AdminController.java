@@ -236,13 +236,23 @@ public class AdminController {
    * BrokerAccountLookupApi#listForUser}) with each account's real {@code connectionStatus}/{@code
    * lastHealthCheckAt} — the whole reason this endpoint exists rather than just reusing {@link
    * #searchUsers}'s summary rows.
+   *
+   * <p>Bugfix follow-up — {@code mtTerminals} lets support/admin jump straight from a specific
+   * user's MT4/MT5 broker accounts to their live pod status, instead of the only previous path
+   * (manually eyeball-matching broker type + login against the unrelated, account-agnostic
+   * system-health page). Scoped to just this user's own MT4/MT5 accounts, reusing the exact same
+   * {@link TerminalHealthView} shape system-health's own MT terminals section returns, so the
+   * frontend can render both with one component. mt-terminal-host is only ever called when this
+   * user actually has an MT4/MT5 account — most users are CTRADER-only, and there's no reason to
+   * pay that outbound call on every single user-detail page view.
    */
   @GetMapping("/api/v1/admin/users/{id}")
   @PreAuthorize("hasAnyRole('ADMIN','SUPPORT')")
   public UserDetailResponse getUser(@PathVariable UUID id) {
     UserView user = userAdminApi.getUser(id);
     List<BrokerAccountView> brokerAccounts = brokerAccountLookupApi.listForUser(id);
-    return new UserDetailResponse(user, brokerAccounts);
+    MtTerminalsSection mtTerminals = buildMtTerminalsSectionForUser(brokerAccounts);
+    return new UserDetailResponse(user, brokerAccounts, mtTerminals);
   }
 
   /**
@@ -466,29 +476,82 @@ public class AdminController {
     if (podStatuses.isEmpty()) {
       return new MtTerminalsSection(false, List.of());
     }
-    Map<String, TerminalStatus> byAccountId = new HashMap<>();
-    for (TerminalStatus status : podStatuses.get()) {
-      byAccountId.put(status.brokerAccountId(), status);
-    }
+    Map<String, TerminalStatus> byAccountId = indexByAccountId(podStatuses.get());
     List<TerminalHealthView> views =
         accounts.stream()
             .map(
-                account -> {
-                  TerminalStatus pod = byAccountId.get(account.id().toString());
-                  return new TerminalHealthView(
-                      account.id(),
-                      account.brokerType(),
-                      account.brokerAccountLogin(),
-                      account.connectionStatus(),
-                      pod != null,
-                      pod == null ? null : pod.phase(),
-                      pod == null ? null : pod.ready(),
-                      pod == null ? null : pod.restartCount(),
-                      pod == null ? null : pod.waitingReason(),
-                      pod == null ? null : pod.lastTransitionTime());
-                })
+                account ->
+                    toTerminalHealthView(
+                        account.id(),
+                        account.brokerType(),
+                        account.brokerAccountLogin(),
+                        account.connectionStatus(),
+                        byAccountId))
             .toList();
     return new MtTerminalsSection(true, views);
+  }
+
+  /**
+   * Bugfix follow-up — the per-user counterpart to {@link #buildMtTerminalsSection()}, called from
+   * {@link #getUser}. {@code reachable=true} with an empty {@code terminals} list means this user
+   * genuinely has no MT4/MT5 accounts (mt-terminal-host was never even called) — distinct from
+   * {@code reachable=false}, which means this user DOES have one but mt-terminal-host itself
+   * couldn't be reached, same distinction {@link #buildMtTerminalsSection()} already makes.
+   */
+  private MtTerminalsSection buildMtTerminalsSectionForUser(
+      List<BrokerAccountView> brokerAccounts) {
+    List<BrokerAccountView> mtAccounts =
+        brokerAccounts.stream()
+            .filter(a -> "MT4".equals(a.brokerType()) || "MT5".equals(a.brokerType()))
+            .toList();
+    if (mtAccounts.isEmpty()) {
+      return new MtTerminalsSection(true, List.of());
+    }
+    Optional<List<TerminalStatus>> podStatuses = mtTerminalHostClient.listTerminalStatuses();
+    if (podStatuses.isEmpty()) {
+      return new MtTerminalsSection(false, List.of());
+    }
+    Map<String, TerminalStatus> byAccountId = indexByAccountId(podStatuses.get());
+    List<TerminalHealthView> views =
+        mtAccounts.stream()
+            .map(
+                account ->
+                    toTerminalHealthView(
+                        account.id(),
+                        account.brokerType(),
+                        account.brokerAccountLogin(),
+                        account.connectionStatus(),
+                        byAccountId))
+            .toList();
+    return new MtTerminalsSection(true, views);
+  }
+
+  private static Map<String, TerminalStatus> indexByAccountId(List<TerminalStatus> podStatuses) {
+    Map<String, TerminalStatus> byAccountId = new HashMap<>();
+    for (TerminalStatus status : podStatuses) {
+      byAccountId.put(status.brokerAccountId(), status);
+    }
+    return byAccountId;
+  }
+
+  private static TerminalHealthView toTerminalHealthView(
+      UUID accountId,
+      String brokerType,
+      String brokerAccountLogin,
+      String connectionStatus,
+      Map<String, TerminalStatus> byAccountId) {
+    TerminalStatus pod = byAccountId.get(accountId.toString());
+    return new TerminalHealthView(
+        accountId,
+        brokerType,
+        brokerAccountLogin,
+        connectionStatus,
+        pod != null,
+        pod == null ? null : pod.phase(),
+        pod == null ? null : pod.ready(),
+        pod == null ? null : pod.restartCount(),
+        pod == null ? null : pod.waitingReason(),
+        pod == null ? null : pod.lastTransitionTime());
   }
 
   private UUID currentUserId(Jwt jwt) {
@@ -508,7 +571,8 @@ public class AdminController {
   public record AuditLogPageResponse(
       List<AuditLogRepository.AuditLogEntry> entries, long total, int page, int pageSize) {}
 
-  public record UserDetailResponse(UserView user, List<BrokerAccountView> brokerAccounts) {}
+  public record UserDetailResponse(
+      UserView user, List<BrokerAccountView> brokerAccounts, MtTerminalsSection mtTerminals) {}
 
   public record FeeLedgerDetailResponse(
       FeeLedgerDetailView ledger, List<UnderlyingTradeView> trades) {}
