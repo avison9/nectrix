@@ -49,27 +49,13 @@ func (ea *fakeEAHTTP) sendHello(h helloMessage) helloAckHTTPMessage {
 	ea.t.Helper()
 	h.Type = msgTypeHello
 	resp := ea.post(ea.t, "/ea/hello", h)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var ack helloAckHTTPMessage
 	if err := json.NewDecoder(resp.Body).Decode(&ack); err != nil {
 		ea.t.Fatalf("decode hello ack: %v", err)
 	}
 	ea.sessionToken = ack.SessionToken
 	return ack
-}
-
-// poll makes one /ea/poll call and returns whatever raw messages the
-// gateway had queued — a real EA would call this repeatedly from its own
-// OnTimer loop; tests call it directly to control timing precisely.
-func (ea *fakeEAHTTP) poll(t *testing.T) []json.RawMessage {
-	t.Helper()
-	resp := ea.post(t, "/ea/poll", pollRequest{SessionToken: ea.sessionToken})
-	defer resp.Body.Close()
-	var res pollResponse
-	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
-		t.Fatalf("decode poll response: %v", err)
-	}
-	return res.Messages
 }
 
 func (ea *fakeEAHTTP) postEvent(t *testing.T, msg any) {
@@ -79,7 +65,7 @@ func (ea *fakeEAHTTP) postEvent(t *testing.T, msg any) {
 		t.Fatalf("marshal event message: %v", err)
 	}
 	resp := ea.post(t, "/ea/events", eventsRequest{SessionToken: ea.sessionToken, Message: data})
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("post event: unexpected status %d", resp.StatusCode)
 	}

@@ -76,12 +76,12 @@ export function UserActions({
 
   return (
     <div className="flex flex-col items-end gap-1">
-      <div className="flex gap-2">
+      <div className="flex flex-nowrap gap-2">
         <button
           type="button"
           disabled={pending}
           onClick={onSuspendReinstate}
-          className={`h-9 rounded-[9px] border border-[var(--border)] px-3 text-[12.5px] font-semibold transition-colors disabled:opacity-60 ${
+          className={`h-9 shrink-0 whitespace-nowrap rounded-[9px] border border-[var(--border)] px-3 text-[12.5px] font-semibold transition-colors disabled:opacity-60 ${
             isActive
               ? "text-[var(--neg)] hover:bg-[var(--neg)]/8"
               : "text-[var(--pos)] hover:bg-[var(--pos)]/8"
@@ -93,7 +93,7 @@ export function UserActions({
           type="button"
           disabled={pending}
           onClick={onDelete}
-          className="h-9 rounded-[9px] border border-[var(--border)] px-3 text-[12.5px] font-semibold text-[var(--neg)] transition-colors hover:bg-[var(--neg)]/8 disabled:opacity-60"
+          className="h-9 shrink-0 whitespace-nowrap rounded-[9px] border border-[var(--border)] px-3 text-[12.5px] font-semibold text-[var(--neg)] transition-colors hover:bg-[var(--neg)]/8 disabled:opacity-60"
         >
           Delete
         </button>

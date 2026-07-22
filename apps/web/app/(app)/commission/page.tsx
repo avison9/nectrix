@@ -183,7 +183,7 @@ export default async function MasterCommissionPage() {
       <h2 className="mt-8 text-[16px] font-semibold text-[var(--text)]">Broker fee reports</h2>
       <p className="mt-1 text-[12.5px] text-[var(--text-2)]">
         For Broker Partnership relationships — bundle pending fees, send the report to your
-        broker, then confirm once they've deducted and paid out.
+        broker, then confirm once they&rsquo;ve deducted and paid out.
       </p>
       <div className="mt-3">
         <GenerateFeeReportForm />

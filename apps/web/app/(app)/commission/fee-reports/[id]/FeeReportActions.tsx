@@ -36,7 +36,8 @@ export function FeeReportActions({ report }: { report: BrokerFeeReport }) {
       {report.status === "DRAFT" && (
         <div className="rounded-[12px] border border-amber-500/30 bg-amber-500/10 p-4">
           <p className="text-[13.5px] font-medium text-[var(--text)]">
-            Review the report document, then mark it sent once you've delivered it to your broker.
+            Review the report document, then mark it sent once you&rsquo;ve delivered it to your
+            broker.
           </p>
           <button
             type="button"
@@ -52,7 +53,7 @@ export function FeeReportActions({ report }: { report: BrokerFeeReport }) {
       {report.status === "SENT" && (
         <div className="rounded-[12px] border border-amber-500/30 bg-amber-500/10 p-4">
           <p className="text-[13.5px] font-medium text-[var(--text)]">
-            Once your broker confirms they've deducted these fees, confirm it here.
+            Once your broker confirms they&rsquo;ve deducted these fees, confirm it here.
           </p>
           <button
             type="button"
@@ -68,7 +69,7 @@ export function FeeReportActions({ report }: { report: BrokerFeeReport }) {
       {report.status === "BROKER_CONFIRMED_DEDUCTED" && (
         <div className="rounded-[12px] border border-amber-500/30 bg-amber-500/10 p-4">
           <p className="text-[13.5px] font-medium text-[var(--text)]">
-            Once you've received payout for these fees, confirm it here.
+            Once you&rsquo;ve received payout for these fees, confirm it here.
           </p>
           <button
             type="button"

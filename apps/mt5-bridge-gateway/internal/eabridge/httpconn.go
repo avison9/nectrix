@@ -75,15 +75,6 @@ func (c *httpPollConn) Close() error {
 	return nil
 }
 
-func (c *httpPollConn) isClosed() bool {
-	select {
-	case <-c.closed:
-		return true
-	default:
-		return false
-	}
-}
-
 // drainOutbox is the /ea/poll handler's own call — the "long" half of long-
 // polling: waits up to maxWait for at least one queued message before
 // returning, so an EA polling in a tight loop isn't hammering the gateway

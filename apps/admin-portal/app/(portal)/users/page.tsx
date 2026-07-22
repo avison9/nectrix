@@ -12,7 +12,17 @@ export default async function UsersPage() {
   const isAdmin = !!session?.roles.includes("ADMIN");
 
   return (
-    <div className="max-w-3xl">
+    // Bugfix — was max-w-3xl, a FIXED cap that clipped the Suspend/Reinstate + Delete actions
+    // column (the rounded-2xl table wrapper below uses overflow-hidden for its corner-rounding,
+    // which also silently clips anything past the cap, with no scrollbar to reach it). The
+    // correct fix isn't "no cap at all" (that stretches everything to the full page width
+    // regardless of content) — it's `inline-flex flex-col`: a shrink-to-fit container whose own
+    // width is driven by its widest child's natural content width (here, the table's own
+    // Email/Name/Status/2FA/Actions columns at THEIR natural, unclipped widths), with
+    // `align-items: stretch` (flex's default) then making every other child — including
+    // ProvisionUserForm's card above — match that same resolved width, so both frames stay in
+    // sync with each other and with the table's own longest row, never wider than necessary.
+    <div className="flex w-fit min-w-[640px] flex-col">
       <h1 className="text-[25px] font-semibold tracking-tight text-[var(--text)]">Users</h1>
       <p className="mt-1.5 text-[14px] text-[var(--text-2)]">
         Provision platform Admin/Support accounts — the only way one comes into existence, since
