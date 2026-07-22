@@ -526,3 +526,22 @@ export interface MyProspectNomination {
   createdAt: string;
   decidedAt: string | null;
 }
+
+// TICKET-122 — mirrors invitations.domain.TierChangeRequest /
+// invitations.api.TierChangeRequestAdminApi.TierChangeRequestView (both shapes are identical on
+// the wire; the admin view is just reachable by id rather than only "my own").
+export type TierChangeTargetRole = "MASTER" | "FOLLOWER";
+export type TierChangeRequestStatus = "PENDING" | "APPROVED" | "REJECTED";
+
+export interface TierChangeRequest {
+  id: string;
+  userId: string;
+  targetRole: TierChangeTargetRole;
+  status: TierChangeRequestStatus;
+  agreementVersion: string;
+  agreementAcceptedAt: string;
+  reviewedByUserId: string | null;
+  reviewReason: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
+}

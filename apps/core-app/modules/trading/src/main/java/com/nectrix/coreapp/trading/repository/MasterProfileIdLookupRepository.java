@@ -10,8 +10,8 @@ import org.springframework.stereotype.Repository;
  * ProspectNominationController}'s ownership scoping, via a direct read of {@code social}'s {@code
  * master_profiles} table rather than a new {@code trading -> social} module dependency just for
  * this one lookup — same "read another module's table directly via SQL, not its Java repository
- * class" precedent {@code invitations.repository.MasterProfileLookupRepository} already
- * established for the identical need in TICKET-118.
+ * class" precedent {@code invitations.repository.MasterProfileLookupRepository} already established
+ * for the identical need in TICKET-118.
  */
 @Repository
 public class MasterProfileIdLookupRepository {

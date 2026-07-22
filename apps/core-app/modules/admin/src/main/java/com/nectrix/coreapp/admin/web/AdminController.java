@@ -16,6 +16,8 @@ import com.nectrix.coreapp.billing.api.FeeLedgerAdminApi.FeeLedgerSummaryView;
 import com.nectrix.coreapp.billing.api.FeeLedgerAdminApi.UnderlyingTradeView;
 import com.nectrix.coreapp.invitations.api.BrokerAccountLookupApi;
 import com.nectrix.coreapp.invitations.api.BrokerAccountView;
+import com.nectrix.coreapp.invitations.api.TierChangeRequestAdminApi;
+import com.nectrix.coreapp.invitations.api.TierChangeRequestAdminApi.TierChangeRequestView;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
@@ -75,6 +77,7 @@ public class AdminController {
   private final UserProvisioningApi userProvisioningApi;
   private final UserAdminApi userAdminApi;
   private final FeeLedgerAdminApi feeLedgerAdminApi;
+  private final TierChangeRequestAdminApi tierChangeRequestAdminApi;
   private final AdminRepository adminRepository;
   private final KafkaConsumerLagService kafkaConsumerLagService;
   private final AuditLogRepository auditLogRepository;
@@ -89,6 +92,7 @@ public class AdminController {
       UserProvisioningApi userProvisioningApi,
       UserAdminApi userAdminApi,
       FeeLedgerAdminApi feeLedgerAdminApi,
+      TierChangeRequestAdminApi tierChangeRequestAdminApi,
       AdminRepository adminRepository,
       KafkaConsumerLagService kafkaConsumerLagService,
       AuditLogRepository auditLogRepository,
@@ -98,6 +102,7 @@ public class AdminController {
     this.userProvisioningApi = userProvisioningApi;
     this.userAdminApi = userAdminApi;
     this.feeLedgerAdminApi = feeLedgerAdminApi;
+    this.tierChangeRequestAdminApi = tierChangeRequestAdminApi;
     this.adminRepository = adminRepository;
     this.kafkaConsumerLagService = kafkaConsumerLagService;
     this.auditLogRepository = auditLogRepository;
@@ -340,6 +345,75 @@ public class AdminController {
   }
 
   /**
+   * TICKET-122 — the pending-review queue. ADMIN+SUPPORT+SUPER_ADMIN can view (same "SUPPORT can
+   * view/assist but not action" split every other admin-view endpoint here uses) — only {@link
+   * #approveTierChangeRequest}/{@link #rejectTierChangeRequest} are role-granting and restricted
+   * further.
+   */
+  @GetMapping("/api/v1/admin/tier-change-requests")
+  @PreAuthorize("hasAnyRole('ADMIN','SUPPORT','SUPER_ADMIN')")
+  public List<TierChangeRequestView> listTierChangeRequests(
+      @RequestParam(defaultValue = "PENDING") String status,
+      @RequestParam(defaultValue = "0") int page,
+      @RequestParam(defaultValue = "25") int pageSize) {
+    return tierChangeRequestAdminApi.listByStatus(status, page, pageSize);
+  }
+
+  @GetMapping("/api/v1/admin/tier-change-requests/{id}")
+  @PreAuthorize("hasAnyRole('ADMIN','SUPPORT','SUPER_ADMIN')")
+  public TierChangeRequestView getTierChangeRequest(@PathVariable UUID id) {
+    return tierChangeRequestAdminApi.getDetail(id);
+  }
+
+  /**
+   * TICKET-122 — grants {@code MASTER}/{@code FOLLOWER} (a real privilege elevation), so ADMIN and
+   * SUPER_ADMIN only, not SUPPORT — same "SUPPORT cannot action platform state/financial ledgers"
+   * distinction {@code /ledger-adjustments} and {@link #resolveFeeLedgerDispute} both already
+   * establish. This is also the first real authorization check ever written against {@code
+   * SUPER_ADMIN} (TICKET-114 seeded the role with no consumer wired up yet) — deliberately included
+   * here alongside ADMIN rather than SUPER_ADMIN-only, matching the ticket's own summary line
+   * ("reviewed and approved or rejected by an Admin or Super Admin").
+   */
+  @PostMapping("/api/v1/admin/tier-change-requests/{id}/approve")
+  @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
+  public TierChangeRequestView approveTierChangeRequest(
+      @PathVariable UUID id,
+      @RequestBody TierChangeDecisionRequest request,
+      @AuthenticationPrincipal Jwt jwt) {
+    UUID actingAdminId = currentUserId(jwt);
+    TierChangeRequestView view =
+        tierChangeRequestAdminApi.approve(id, actingAdminId, request.reason());
+    auditLogRepository.insert(
+        actingAdminId,
+        "ADMIN",
+        "TIER_CHANGE_REQUEST_APPROVED",
+        "TIER_CHANGE_REQUEST",
+        id.toString(),
+        objectMapper.writeValueAsString(Map.of("targetRole", view.targetRole())));
+    return view;
+  }
+
+  @PostMapping("/api/v1/admin/tier-change-requests/{id}/reject")
+  @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
+  public TierChangeRequestView rejectTierChangeRequest(
+      @PathVariable UUID id,
+      @RequestBody TierChangeDecisionRequest request,
+      @AuthenticationPrincipal Jwt jwt) {
+    UUID actingAdminId = currentUserId(jwt);
+    TierChangeRequestView view =
+        tierChangeRequestAdminApi.reject(id, actingAdminId, request.reason());
+    auditLogRepository.insert(
+        actingAdminId,
+        "ADMIN",
+        "TIER_CHANGE_REQUEST_REJECTED",
+        "TIER_CHANGE_REQUEST",
+        id.toString(),
+        objectMapper.writeValueAsString(
+            Map.of("reason", request.reason() == null ? "" : request.reason())));
+    return view;
+  }
+
+  /**
    * TICKET-117 — System Health. Built from Postgres + a real Kafka consumer/AdminClient, not
    * Prometheus queries — the {@code nectrix-dev} VM's own docker-compose.yml explicitly excludes
    * the observability stack, so there's no Prometheus anywhere outside local dev/CI to query
@@ -371,6 +445,8 @@ public class AdminController {
 
   public record ProvisionUserRequest(
       String email, String password, String displayName, String role) {}
+
+  public record TierChangeDecisionRequest(String reason) {}
 
   public record ProvisionUserResponse(UUID id) {}
 

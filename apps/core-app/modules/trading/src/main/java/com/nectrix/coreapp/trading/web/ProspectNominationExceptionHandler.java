@@ -13,7 +13,8 @@ public class ProspectNominationExceptionHandler {
 
   @ExceptionHandler(NoMasterToNominateToException.class)
   public ResponseEntity<ErrorBody> handleNoMaster() {
-    return ResponseEntity.status(HttpStatus.CONFLICT).body(new ErrorBody("no_master_to_nominate_to"));
+    return ResponseEntity.status(HttpStatus.CONFLICT)
+        .body(new ErrorBody("no_master_to_nominate_to"));
   }
 
   @ExceptionHandler(ProspectNominationNotFoundException.class)
@@ -23,7 +24,8 @@ public class ProspectNominationExceptionHandler {
 
   @ExceptionHandler(MasterProfileRequiredException.class)
   public ResponseEntity<ErrorBody> handleMasterProfileRequired() {
-    return ResponseEntity.status(HttpStatus.CONFLICT).body(new ErrorBody("master_profile_required"));
+    return ResponseEntity.status(HttpStatus.CONFLICT)
+        .body(new ErrorBody("master_profile_required"));
   }
 
   public record ErrorBody(String error) {}

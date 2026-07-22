@@ -92,6 +92,23 @@ export default async function ProfilePage() {
             {session.twoFactorEnabled ? "Manage" : "Enable"}
           </Link>
         </div>
+
+        {!session.roles.includes("MASTER") && !session.roles.includes("FOLLOWER") && (
+          <div className="flex items-center justify-between border-t border-[var(--border)] py-3.5">
+            <div>
+              <div className="text-sm font-medium text-[var(--text)]">Account tier</div>
+              <div className="mt-0.5 text-xs text-[var(--text-3)]">
+                Request to become a Master or Follower
+              </div>
+            </div>
+            <Link
+              href="/account/tier-change"
+              className="flex h-9 items-center rounded-[10px] border border-[var(--border)] px-4 text-[13px] font-semibold text-[var(--accent)] transition-colors hover:bg-[var(--surface-2)]"
+            >
+              Request
+            </Link>
+          </div>
+        )}
       </div>
 
       <form action={logoutAction}>

@@ -202,6 +202,24 @@ public class SecurityConfig {
                     .authenticated()
                     .requestMatchers(HttpMethod.POST, "/api/v1/admin/fee-ledger/*/resolve")
                     .authenticated()
+                    // TICKET-122 — tier-change-request self-service (submit + own status) and the
+                    // admin list/approve/reject queue. RBAC split (approve/reject is ADMIN+
+                    // SUPER_ADMIN-only, listing is ADMIN+SUPPORT+SUPER_ADMIN) is method-security on
+                    // TierChangeRequestController/AdminController, same pattern as fee-ledger
+                    // above.
+                    .requestMatchers(HttpMethod.POST, "/api/v1/account/tier-change-requests")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.GET, "/api/v1/account/tier-change-requests/me")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.GET, "/api/v1/admin/tier-change-requests")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.GET, "/api/v1/admin/tier-change-requests/*")
+                    .authenticated()
+                    .requestMatchers(
+                        HttpMethod.POST, "/api/v1/admin/tier-change-requests/*/approve")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.POST, "/api/v1/admin/tier-change-requests/*/reject")
+                    .authenticated()
                     // TICKET-117 — System Health.
                     .requestMatchers(HttpMethod.GET, "/api/v1/admin/system-health")
                     .authenticated()

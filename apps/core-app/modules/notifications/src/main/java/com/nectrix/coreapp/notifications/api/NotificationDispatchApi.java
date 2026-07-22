@@ -7,8 +7,8 @@ import java.util.UUID;
  * notification to a Master when a Follower nominates a prospect, without importing {@code
  * notifications.service}/{@code notifications.repository} directly (enforced by
  * ModuleBoundaryArchTest). Thin facade over {@code NotificationDispatchService#dispatch}'s own
- * 4-arg overload — preference resolution, in-app/push/email fan-out, and the WS live-push all
- * still happen exactly as they do for every other real dispatch caller (the 4 Kafka consumers).
+ * 4-arg overload — preference resolution, in-app/push/email fan-out, and the WS live-push all still
+ * happen exactly as they do for every other real dispatch caller (the 4 Kafka consumers).
  */
 public interface NotificationDispatchApi {
 

@@ -46,6 +46,9 @@ import type {
   PublicMasterProfile,
   SymbolMappingEntry,
   SystemHealthSnapshot,
+  TierChangeRequest,
+  TierChangeRequestStatus,
+  TierChangeTargetRole,
   UserDetail,
   UserStatus,
   UserSummary,
@@ -92,6 +95,9 @@ export type {
   PublicMasterProfile,
   SymbolMappingEntry,
   SystemHealthSnapshot,
+  TierChangeRequest,
+  TierChangeRequestStatus,
+  TierChangeTargetRole,
   UserDetail,
   UserStatus,
   UserSummary,
@@ -1347,6 +1353,97 @@ export async function confirmBrokerFeeReportPaid(
   id: string,
 ): Promise<BrokerFeeReport> {
   return feeReportAction(baseUrl, accessToken, id, "confirm-paid");
+}
+
+// ==================== TICKET-122 — Account Tier-Change Requests ====================
+
+/** Throws ApiError(409, "already_master_or_follower" | "pending_request_exists") or ApiError(400, "agreement_not_accepted"). */
+export async function submitTierChangeRequest(
+  baseUrl: string,
+  accessToken: string,
+  input: { targetMode: TierChangeTargetRole; agreementAccepted: boolean },
+): Promise<TierChangeRequest> {
+  return coreAppFetch<TierChangeRequest>(baseUrl, "/api/v1/account/tier-change-requests", {
+    method: "POST",
+    accessToken,
+    body: JSON.stringify({
+      target_mode: input.targetMode,
+      agreement_accepted: input.agreementAccepted,
+    }),
+  });
+}
+
+/**
+ * The caller's own most recent request, whatever its status — null if they've never submitted one
+ * (the controller returns 204 No Content for that case; coreAppFetch's own empty-body handling
+ * already turns that into a plain `null`, no special-casing needed here).
+ */
+export async function getMyTierChangeRequest(
+  baseUrl: string,
+  accessToken: string,
+): Promise<TierChangeRequest | null> {
+  return coreAppFetch<TierChangeRequest | null>(baseUrl, "/api/v1/account/tier-change-requests/me", {
+    method: "GET",
+    accessToken,
+  });
+}
+
+/** Admin Portal — the pending-review queue by default; pass status for APPROVED/REJECTED history. */
+export async function listTierChangeRequests(
+  baseUrl: string,
+  accessToken: string,
+  status: TierChangeRequestStatus = "PENDING",
+): Promise<TierChangeRequest[]> {
+  return coreAppFetch<TierChangeRequest[]>(
+    baseUrl,
+    `/api/v1/admin/tier-change-requests?status=${status}`,
+    { method: "GET", accessToken },
+  );
+}
+
+export async function getTierChangeRequest(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<TierChangeRequest> {
+  return coreAppFetch<TierChangeRequest>(baseUrl, `/api/v1/admin/tier-change-requests/${id}`, {
+    method: "GET",
+    accessToken,
+  });
+}
+
+async function tierChangeRequestDecision(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+  decision: "approve" | "reject",
+  reason: string | undefined,
+): Promise<TierChangeRequest> {
+  return coreAppFetch<TierChangeRequest>(
+    baseUrl,
+    `/api/v1/admin/tier-change-requests/${id}/${decision}`,
+    { method: "POST", accessToken, body: JSON.stringify({ reason: reason ?? null }) },
+  );
+}
+
+/** ADMIN/SUPER_ADMIN only — grants the requested role and notifies the user. */
+export async function approveTierChangeRequest(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+  reason?: string,
+): Promise<TierChangeRequest> {
+  return tierChangeRequestDecision(baseUrl, accessToken, id, "approve", reason);
+}
+
+/** ADMIN/SUPER_ADMIN only — leaves the user's roles unchanged and notifies them (with reason, if given). */
+export async function rejectTierChangeRequest(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+  reason?: string,
+): Promise<TierChangeRequest> {
+  return tierChangeRequestDecision(baseUrl, accessToken, id, "reject", reason);
 }
 
 // ==================== TICKET-118 — Invitation System (Master invites a Follower) ====================
