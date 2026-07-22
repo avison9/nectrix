@@ -178,8 +178,8 @@ class Ticket117IntegrationTest {
   /**
    * Bugfix follow-up — the default (no status filter) browse view must never surface a DELETED
    * account (nothing actionable an admin could do with one), but the Users page's own explicit
-   * status filter must still be able to find one on purpose (e.g. to confirm a deletion really
-   * took effect) — see UserRepository#search's own Javadoc for the full reasoning.
+   * status filter must still be able to find one on purpose (e.g. to confirm a deletion really took
+   * effect) — see UserRepository#search's own Javadoc for the full reasoning.
    */
   @Test
   void deletedUser_excludedFromDefaultBrowse_butReturnedByExplicitStatusFilter() {

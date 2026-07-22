@@ -218,8 +218,8 @@ public class AdminController {
    *
    * <p>Bugfix follow-up — {@code status} is the Users page's own status filter (beside the
    * name/email search box): {@code ACTIVE}/{@code SUSPENDED}/{@code DELETED}, or blank/absent for
-   * the default view (every status except DELETED — see {@code UserRepository#search}'s own
-   * Javadoc for why DELETED is never shown unless explicitly filtered for).
+   * the default view (every status except DELETED — see {@code UserRepository#search}'s own Javadoc
+   * for why DELETED is never shown unless explicitly filtered for).
    */
   @GetMapping("/api/v1/admin/users")
   @PreAuthorize("hasAnyRole('ADMIN','SUPPORT')")
