@@ -449,12 +449,37 @@ export interface ConsumerGroupLag {
   lag: number;
 }
 
+// TICKET-123 — mirrors AdminController.TerminalHealthView. podProvisioned=false means no live
+// pod exists for this account at all (never provisioned, or torn down) — every pod* field is
+// null in that case, not a fabricated "unhealthy" value.
+export interface TerminalHealthView {
+  brokerAccountId: string;
+  brokerType: string;
+  brokerAccountLogin: string;
+  connectionStatus: string;
+  podProvisioned: boolean;
+  podPhase: string | null;
+  podReady: boolean | null;
+  podRestartCount: number | null;
+  podWaitingReason: string | null;
+  podLastTransitionTime: string | null;
+}
+
+// Mirrors AdminController.MtTerminalsSection. reachable=false means mt-terminal-host itself
+// couldn't be reached (distinct from "reachable, zero terminals" — terminals is empty in both
+// cases, so always check reachable first, never infer service health from list emptiness).
+export interface MtTerminalsSection {
+  reachable: boolean;
+  terminals: TerminalHealthView[];
+}
+
 // Mirrors AdminController.SystemHealthResponse.
 export interface SystemHealthSnapshot {
   brokerConnections: BrokerConnectionCount[];
   copyEngine: CopyEngineHealth;
   reconciliationDriftLastHour: number;
   kafkaConsumerLag: ConsumerGroupLag[];
+  mtTerminals: MtTerminalsSection;
 }
 
 // TICKET-118 — Invitation System (Master invites a Follower). Mirrors

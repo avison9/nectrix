@@ -14,6 +14,7 @@ package k8sprovision
 import (
 	"context"
 	"fmt"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -38,6 +39,11 @@ const (
 	// from any other actor that might touch these objects (e.g. `kubectl apply` by hand during
 	// debugging), so Force:true only ever overwrites fields THIS provisioner itself last set.
 	fieldManager = "mt-terminal-host"
+
+	// terminalContainerName matches applyDeployment's own container.WithName("terminal") — the
+	// one container every terminal Pod has, read by ListTerminalPodStatuses (TICKET-123) for its
+	// restart count / waiting reason.
+	terminalContainerName = "terminal"
 )
 
 // Provisioner manages Deployment+Secret lifecycle for Nectrix-hosted terminals in one Kubernetes
@@ -164,4 +170,78 @@ func (p *Provisioner) ListProvisionedAccountIDs(ctx context.Context) ([]string, 
 		}
 	}
 	return ids, nil
+}
+
+// TerminalPodStatus is one terminal Pod's real, live health — TICKET-123, backing
+// GET /internal/terminals/status. Deliberately carries the container-level WaitingReason (e.g.
+// "CrashLoopBackOff") rather than just the coarser Pod-level Phase, since a crash-looping
+// container's Pod itself still reports Phase=Running (Kubernetes keeps restarting it) — Phase
+// alone can't distinguish "healthy and running" from "restarting forever," but WaitingReason can.
+type TerminalPodStatus struct {
+	BrokerAccountID    string
+	PodName            string
+	Phase              string // corev1.PodPhase as a string: Pending/Running/Succeeded/Failed/Unknown
+	Ready              bool
+	RestartCount       int32
+	WaitingReason      string // e.g. "CrashLoopBackOff", "ContainerCreating" — "" if not currently waiting
+	LastTransitionTime time.Time
+}
+
+// ListTerminalPodStatuses reads the real, current Pod-level health for every terminal this
+// provisioner manages — unlike ListProvisionedAccountIDs (which only proves a Deployment object
+// exists), this is what actually answers "is the account's terminal up, crash-looping, or stuck
+// Pending" for a real Admin/Support user (see this package's own doc comment for the Deployment/
+// Pod distinction). One Pod per Deployment (replicas=1, applyDeployment) — if Kubernetes ever
+// reports more than one live Pod for the same broker-account-id label (e.g. mid-rollout), every
+// one of them is returned rather than silently picking one, since that's itself real, meaningful
+// state a caller shouldn't have hidden from it.
+func (p *Provisioner) ListTerminalPodStatuses(ctx context.Context) ([]TerminalPodStatus, error) {
+	list, err := p.clientset.CoreV1().Pods(p.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: labelManagedBy + "=" + managedByValue,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("k8sprovision: list pods: %w", err)
+	}
+
+	statuses := make([]TerminalPodStatus, 0, len(list.Items))
+	for _, pod := range list.Items {
+		accountID, ok := pod.Labels[labelBrokerAccountID]
+		if !ok {
+			continue
+		}
+		statuses = append(statuses, podStatusFor(accountID, pod))
+	}
+	return statuses, nil
+}
+
+func podStatusFor(accountID string, pod corev1.Pod) TerminalPodStatus {
+	status := TerminalPodStatus{
+		BrokerAccountID:    accountID,
+		PodName:            pod.Name,
+		Phase:              string(pod.Status.Phase),
+		LastTransitionTime: pod.CreationTimestamp.Time,
+	}
+
+	for _, cond := range pod.Status.Conditions {
+		if cond.Type == corev1.PodReady {
+			status.Ready = cond.Status == corev1.ConditionTrue
+			if !cond.LastTransitionTime.IsZero() {
+				status.LastTransitionTime = cond.LastTransitionTime.Time
+			}
+			break
+		}
+	}
+
+	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.Name != terminalContainerName {
+			continue
+		}
+		status.RestartCount = cs.RestartCount
+		if cs.State.Waiting != nil {
+			status.WaitingReason = cs.State.Waiting.Reason
+		}
+		break
+	}
+
+	return status
 }

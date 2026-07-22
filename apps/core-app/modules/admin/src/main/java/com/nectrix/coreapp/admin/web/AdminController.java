@@ -1,7 +1,10 @@
 package com.nectrix.coreapp.admin.web;
 
+import com.nectrix.coreapp.admin.client.MtTerminalHostClient;
+import com.nectrix.coreapp.admin.client.MtTerminalHostClient.TerminalStatus;
 import com.nectrix.coreapp.admin.repository.AdminRepository;
 import com.nectrix.coreapp.admin.repository.AdminRepository.BrokerConnectionCount;
+import com.nectrix.coreapp.admin.repository.AdminRepository.MtBrokerAccountRef;
 import com.nectrix.coreapp.admin.service.KafkaConsumerLagService;
 import com.nectrix.coreapp.admin.service.KafkaConsumerLagService.ConsumerGroupLag;
 import com.nectrix.coreapp.audit.repository.AuditLogRepository;
@@ -21,8 +24,10 @@ import com.nectrix.coreapp.invitations.api.TierChangeRequestAdminApi.TierChangeR
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
@@ -79,6 +84,7 @@ public class AdminController {
   private final FeeLedgerAdminApi feeLedgerAdminApi;
   private final TierChangeRequestAdminApi tierChangeRequestAdminApi;
   private final AdminRepository adminRepository;
+  private final MtTerminalHostClient mtTerminalHostClient;
   private final KafkaConsumerLagService kafkaConsumerLagService;
   private final AuditLogRepository auditLogRepository;
   private final ObjectMapper objectMapper;
@@ -94,6 +100,7 @@ public class AdminController {
       FeeLedgerAdminApi feeLedgerAdminApi,
       TierChangeRequestAdminApi tierChangeRequestAdminApi,
       AdminRepository adminRepository,
+      MtTerminalHostClient mtTerminalHostClient,
       KafkaConsumerLagService kafkaConsumerLagService,
       AuditLogRepository auditLogRepository,
       ObjectMapper objectMapper) {
@@ -104,6 +111,7 @@ public class AdminController {
     this.feeLedgerAdminApi = feeLedgerAdminApi;
     this.tierChangeRequestAdminApi = tierChangeRequestAdminApi;
     this.adminRepository = adminRepository;
+    this.mtTerminalHostClient = mtTerminalHostClient;
     this.kafkaConsumerLagService = kafkaConsumerLagService;
     this.auditLogRepository = auditLogRepository;
     this.objectMapper = objectMapper;
@@ -433,7 +441,48 @@ public class AdminController {
     List<ConsumerGroupLag> consumerLag = kafkaConsumerLagService.currentLag();
     CopyEngineHealth copyEngine =
         new CopyEngineHealth((int) COPY_ENGINE_WINDOW.toMinutes(), tradesInWindow, failedInWindow);
-    return new SystemHealthResponse(brokerConnections, copyEngine, driftLastHour, consumerLag);
+    MtTerminalsSection mtTerminals = buildMtTerminalsSection();
+    return new SystemHealthResponse(
+        brokerConnections, copyEngine, driftLastHour, consumerLag, mtTerminals);
+  }
+
+  /**
+   * TICKET-123 — joins every linked MT4/MT5 {@code broker_accounts} row against mt-terminal-host's
+   * live pod statuses, so "no pod at all" (never provisioned, or torn down) is distinguishable from
+   * "pod exists but unhealthy" — both are real, different failure modes an Admin/Support user needs
+   * to tell apart (this ticket's own scope note). {@code reachable=false} (mt-terminal-host itself
+   * couldn't be reached) is a THIRD, distinct outcome from either of those — never collapsed into a
+   * fabricated "zero terminals" empty list.
+   */
+  private MtTerminalsSection buildMtTerminalsSection() {
+    List<MtBrokerAccountRef> accounts = adminRepository.listMtBrokerAccounts();
+    Optional<List<TerminalStatus>> podStatuses = mtTerminalHostClient.listTerminalStatuses();
+    if (podStatuses.isEmpty()) {
+      return new MtTerminalsSection(false, List.of());
+    }
+    Map<String, TerminalStatus> byAccountId = new HashMap<>();
+    for (TerminalStatus status : podStatuses.get()) {
+      byAccountId.put(status.brokerAccountId(), status);
+    }
+    List<TerminalHealthView> views =
+        accounts.stream()
+            .map(
+                account -> {
+                  TerminalStatus pod = byAccountId.get(account.id().toString());
+                  return new TerminalHealthView(
+                      account.id(),
+                      account.brokerType(),
+                      account.brokerAccountLogin(),
+                      account.connectionStatus(),
+                      pod != null,
+                      pod == null ? null : pod.phase(),
+                      pod == null ? null : pod.ready(),
+                      pod == null ? null : pod.restartCount(),
+                      pod == null ? null : pod.waitingReason(),
+                      pod == null ? null : pod.lastTransitionTime());
+                })
+            .toList();
+    return new MtTerminalsSection(true, views);
   }
 
   private UUID currentUserId(Jwt jwt) {
@@ -464,9 +513,35 @@ public class AdminController {
 
   public record CopyEngineHealth(int windowMinutes, long tradesInWindow, long failedInWindow) {}
 
+  /**
+   * TICKET-123 — one MT4/MT5 {@code broker_accounts} row joined against its live terminal pod (if
+   * any). {@code podProvisioned=false} means no live pod exists for this account at all (never
+   * provisioned, or torn down) — every {@code pod*} field is null in that case, not a fabricated
+   * "unhealthy" value.
+   */
+  public record TerminalHealthView(
+      UUID brokerAccountId,
+      String brokerType,
+      String brokerAccountLogin,
+      String connectionStatus,
+      boolean podProvisioned,
+      String podPhase,
+      Boolean podReady,
+      Integer podRestartCount,
+      String podWaitingReason,
+      String podLastTransitionTime) {}
+
+  /**
+   * {@code reachable=false} means mt-terminal-host itself couldn't be reached (a real, distinct
+   * failure mode from "reachable, zero terminals" — {@code terminals} is empty in both cases, so
+   * callers must check {@code reachable} first, never infer service health from list emptiness).
+   */
+  public record MtTerminalsSection(boolean reachable, List<TerminalHealthView> terminals) {}
+
   public record SystemHealthResponse(
       List<BrokerConnectionCount> brokerConnections,
       CopyEngineHealth copyEngine,
       long reconciliationDriftLastHour,
-      List<ConsumerGroupLag> kafkaConsumerLag) {}
+      List<ConsumerGroupLag> kafkaConsumerLag,
+      MtTerminalsSection mtTerminals) {}
 }

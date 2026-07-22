@@ -172,3 +172,11 @@ nectrix:
     # Empty in every real deployment (prod/CI never set LOCAL_EMAIL_CATCHER_URL).
     local-email-catcher:
       url: ${LOCAL_EMAIL_CATCHER_URL:}
+  # TICKET-123 — mt-terminal-host's new internal terminal-pod-status endpoint. service-token is the
+  # same INTERNAL_SERVICE_TOKEN value every other /internal/** caller in this codebase already
+  # resolves (see nectrix.internal.service-token above) — mt-terminal-host validates it the same
+  # way apps/broker-adapters' own internalapi package does.
+  admin:
+    mt-terminal-host:
+      internal-base-url: ${MT_TERMINAL_HOST_INTERNAL_BASE_URL:http://localhost:8093}
+      service-token: ${INTERNAL_SERVICE_TOKEN}
