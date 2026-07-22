@@ -42,6 +42,23 @@ jobs:
       ARCHIVAL_ENDPOINT_OVERRIDE: http://localhost:9000
       ARCHIVAL_ACCESS_KEY: nectrix
       ARCHIVAL_SECRET_KEY: ci-throwaway-password
+      # Bugfix — TICKET-113/TICKET-120's own MinIO bucket (signed management-agreement
+      # documents + broker fee reports, FeeReportDocumentStorageClient/
+      # AgreementDocumentStorageClient), missing here entirely: application.yml's
+      # nectrix.documents.* falls back to a blank endpoint-override/credentials with no
+      # DOCUMENTS_* vars set, so the app tried to reach real AWS S3 (no real credentials
+      # available in CI) instead of this job's own local MinIO -- the real cause of every
+      # BrokerFeeReportIntegrationTest/CopyRelationshipIntegrationTest document-related
+      # failure. init-bucket.sh (below) already creates this bucket alongside the archival
+      # one; only the env vars pointing the app at it were ever missing. public-endpoint-
+      # override is set the same as endpoint-override here (unlike real deployments) because
+      # the presigned-URL fetch in getAgreement_afterSigning_returnsAWorkingPresignedUrlWithRealContent
+      # runs from this same runner, not a separate browser context.
+      DOCUMENTS_BUCKET: nectrix-documents
+      DOCUMENTS_ENDPOINT_OVERRIDE: http://localhost:9000
+      DOCUMENTS_PUBLIC_ENDPOINT_OVERRIDE: http://localhost:9000
+      DOCUMENTS_ACCESS_KEY: nectrix
+      DOCUMENTS_SECRET_KEY: ci-throwaway-password
     steps:
       - uses: actions/checkout@v7.0.0
       - name: Start ephemeral infra (Postgres, Redis, Kafka, LocalStack, MinIO)
