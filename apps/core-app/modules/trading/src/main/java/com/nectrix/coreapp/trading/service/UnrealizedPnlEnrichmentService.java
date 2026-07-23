@@ -49,7 +49,9 @@ public class UnrealizedPnlEnrichmentService {
     this.copyEngineInternalClient = copyEngineInternalClient;
   }
 
-  /** Keyed by {@code CopiedTrade.id()} — absent from the map means "no unrealized P&L available." */
+  /**
+   * Keyed by {@code CopiedTrade.id()} — absent from the map means "no unrealized P&L available."
+   */
   public Map<UUID, BigDecimal> enrich(List<CopiedTrade> trades) {
     List<CopiedTrade> open =
         trades.stream()
@@ -65,7 +67,8 @@ public class UnrealizedPnlEnrichmentService {
       return Map.of();
     }
 
-    List<UUID> relationshipIds = open.stream().map(CopiedTrade::copyRelationshipId).distinct().toList();
+    List<UUID> relationshipIds =
+        open.stream().map(CopiedTrade::copyRelationshipId).distinct().toList();
     Map<UUID, FollowerAccountRef> accountByRelationship =
         copyRelationshipRepository.findFollowerAccountRefs(relationshipIds).stream()
             .collect(Collectors.toMap(FollowerAccountRef::copyRelationshipId, r -> r));
@@ -135,7 +138,9 @@ public class UnrealizedPnlEnrichmentService {
               Collectors.toMap(
                   r -> UUID.fromString(r.id()), r -> BigDecimal.valueOf(r.unrealizedPnl())));
     } catch (Exception e) {
-      log.warn("unrealized P&L: copy-engine batch call failed, showing no unrealized P&L this page load", e);
+      log.warn(
+          "unrealized P&L: copy-engine batch call failed, showing no unrealized P&L this page load",
+          e);
       return Map.of(); // best-effort -- never fail the whole Trade History page over this
     }
   }

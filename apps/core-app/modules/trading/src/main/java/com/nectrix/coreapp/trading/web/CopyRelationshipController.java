@@ -334,9 +334,9 @@ public class CopyRelationshipController {
 
   /**
    * TICKET-124 — the wire shape for a Trade History row: every {@link CopiedTrade} field except
-   * {@code currentOpenVolumeLots}/{@code followerBrokerPositionId} (internal-only, needed by
-   * {@link UnrealizedPnlEnrichmentService} but not meant for the client), plus the newly-computed
-   * {@code unrealizedPnl} (null when unavailable — never a fabricated 0).
+   * {@code currentOpenVolumeLots}/{@code followerBrokerPositionId} (internal-only, needed by {@link
+   * UnrealizedPnlEnrichmentService} but not meant for the client), plus the newly-computed {@code
+   * unrealizedPnl} (null when unavailable — never a fabricated 0).
    */
   public record CopiedTradeView(
       UUID id,

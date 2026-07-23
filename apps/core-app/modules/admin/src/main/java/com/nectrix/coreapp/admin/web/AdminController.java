@@ -263,11 +263,10 @@ public class AdminController {
 
   /**
    * #421 — a SUPER_ADMIN/ADMIN can create a real {@code copy_relationships} row directly, without
-   * the Master sending an invite or the Follower requesting one. ADMIN+SUPER_ADMIN — same
-   * "grants a real capability" class of action {@link #approveTierChangeRequest} already
-   * establishes for SUPER_ADMIN. The Master is identified by email (resolved to a user id here,
-   * before ever reaching {@code trading}) rather than requiring a separate master-search UI/
-   * endpoint.
+   * the Master sending an invite or the Follower requesting one. ADMIN+SUPER_ADMIN — same "grants a
+   * real capability" class of action {@link #approveTierChangeRequest} already establishes for
+   * SUPER_ADMIN. The Master is identified by email (resolved to a user id here, before ever
+   * reaching {@code trading}) rather than requiring a separate master-search UI/ endpoint.
    */
   @PostMapping("/api/v1/admin/users/{followerId}/copy-relationships")
   @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")

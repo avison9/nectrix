@@ -6,11 +6,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
 /**
- * TICKET-124 — calls apps/copy-engine's internal-only {@code POST
- * /internal/pnl/unrealized-batch} (see that service's {@code internal/httpapi} package) to
- * compute unrealized P&L for open positions, reusing the exact same {@code computeRealizedPnL}
- * formula/DB reads {@code copy-engine} already uses at close time — never a second, independently
- * maintained computation of the same figure.
+ * TICKET-124 — calls apps/copy-engine's internal-only {@code POST /internal/pnl/unrealized-batch}
+ * (see that service's {@code internal/httpapi} package) to compute unrealized P&L for open
+ * positions, reusing the exact same {@code computeRealizedPnL} formula/DB reads {@code copy-engine}
+ * already uses at close time — never a second, independently maintained computation of the same
+ * figure.
  */
 @Service
 public class CopyEngineInternalClient {

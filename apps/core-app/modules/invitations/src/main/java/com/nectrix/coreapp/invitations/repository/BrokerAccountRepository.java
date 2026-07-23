@@ -257,7 +257,8 @@ public class BrokerAccountRepository {
           )
         """,
         (rs, rowNum) ->
-            new SnapshotCandidate(UUID.fromString(rs.getString("id")), rs.getString("broker_type")));
+            new SnapshotCandidate(
+                UUID.fromString(rs.getString("id")), rs.getString("broker_type")));
   }
 
   /**

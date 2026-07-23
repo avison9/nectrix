@@ -37,8 +37,7 @@ public class AdminCopyRelationshipApiImpl implements AdminCopyRelationshipApi {
     } catch (BrokerAccountNotOwnedException | SameBrokerAccountException e) {
       throw new IllegalArgumentException(e.getClass().getSimpleName());
     } catch (DuplicateCopyRelationshipException e) {
-      throw new IllegalStateException(
-          "A copy relationship already links these broker accounts");
+      throw new IllegalStateException("A copy relationship already links these broker accounts");
     }
     MasterProfileSummaryView master =
         masterProfileLookupApi.getMasterProfile(relationship.masterProfileId());

@@ -15,10 +15,10 @@ import org.springframework.stereotype.Service;
 
 /**
  * Admin manual follower-master linking (#421) — a SUPER_ADMIN/ADMIN can create a real {@code
- * copy_relationships} row directly, without the Master sending an invite or the Follower
- * requesting one. {@code originating_admin_action=true} satisfies {@code chk_exactly_one_origin}'s
- * 4th option (036-admin-manual-copy-link.sql), same widening precedent {@code
- * IndividualCopySetupService}'s own {@code originating_individual_setup} established.
+ * copy_relationships} row directly, without the Master sending an invite or the Follower requesting
+ * one. {@code originating_admin_action=true} satisfies {@code chk_exactly_one_origin}'s 4th option
+ * (036-admin-manual-copy-link.sql), same widening precedent {@code IndividualCopySetupService}'s
+ * own {@code originating_individual_setup} established.
  *
  * <p>Status derivation deliberately mirrors {@link InvitationCopySetupService}'s own logic, not a
  * blanket {@code ACTIVE}: a {@code BROKER_PARTNERSHIP} master's relationship normally can't reach

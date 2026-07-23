@@ -16,19 +16,19 @@ import org.springframework.stereotype.Service;
 /**
  * Bugfix — periodically writes a real {@code account_snapshots} row for every CONNECTED broker
  * account behind a Master profile or an ACTIVE/PAUSED copy relationship, reusing the exact same
- * live {@link BrokerAdaptersInternalClient#getAccountSnapshot} call the dashboard's own {@code
- * GET /api/v1/broker-accounts/{id}/snapshot} route already makes. Previously, {@code
- * account_snapshots} was only ever written as a side effect of apps/copy-engine dispatching a
- * copied trade — meaning the equity curve {@code LeaderboardComputationRepository
- * #findDailyEquityCurve} feeds into analytics could be hours-to-days stale, or missing entirely for
- * an account with no recent trade activity, which is why the analytics page's "current equity"
- * could disagree with the dashboard's own live figure. This closes that gap at the data-source
- * level; no change needed to the read side once real, regular samples exist.
+ * live {@link BrokerAdaptersInternalClient#getAccountSnapshot} call the dashboard's own {@code GET
+ * /api/v1/broker-accounts/{id}/snapshot} route already makes. Previously, {@code account_snapshots}
+ * was only ever written as a side effect of apps/copy-engine dispatching a copied trade — meaning
+ * the equity curve {@code LeaderboardComputationRepository #findDailyEquityCurve} feeds into
+ * analytics could be hours-to-days stale, or missing entirely for an account with no recent trade
+ * activity, which is why the analytics page's "current equity" could disagree with the dashboard's
+ * own live figure. This closes that gap at the data-source level; no change needed to the read side
+ * once real, regular samples exist.
  *
- * <p>Every account is processed independently — one account's snapshot failure must never abort
- * the whole batch. {@code @ConditionalOnProperty} (default false, see {@link
- * InvitationsProperties.AccountSnapshot}'s own Javadoc): this bean — and therefore its {@code
- * @Scheduled} method — doesn't even exist unless explicitly enabled.
+ * <p>Every account is processed independently — one account's snapshot failure must never abort the
+ * whole batch. {@code @ConditionalOnProperty} (default false, see {@link
+ * InvitationsProperties.AccountSnapshot}'s own Javadoc): this bean — and therefore its
+ * {@code @Scheduled} method — doesn't even exist unless explicitly enabled.
  */
 @Service
 @ConditionalOnProperty(

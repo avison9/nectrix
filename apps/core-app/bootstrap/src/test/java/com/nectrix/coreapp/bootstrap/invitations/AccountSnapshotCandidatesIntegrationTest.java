@@ -66,7 +66,11 @@ class AccountSnapshotCandidatesIntegrationTest {
   }
 
   private void insertCopyRelationship(
-      UUID masterProfileId, UUID masterBrokerAccountId, UUID followerUserId, UUID followerBrokerAccountId, String status) {
+      UUID masterProfileId,
+      UUID masterBrokerAccountId,
+      UUID followerUserId,
+      UUID followerBrokerAccountId,
+      String status) {
     UUID mmProfileId = UUID.randomUUID();
     jdbcTemplate.update(
         "INSERT INTO money_management_profiles (id, method, multiplier) VALUES (?, 'MULTIPLIER', 1.0)",
@@ -110,7 +114,8 @@ class AccountSnapshotCandidatesIntegrationTest {
 
     UUID followerUserId = createUser("snapshot-follower-" + UUID.randomUUID() + "@example.com");
     UUID followerAccount = insertBrokerAccount(followerUserId, "CONNECTED");
-    insertCopyRelationship(masterProfileId, masterAccount, followerUserId, followerAccount, "ACTIVE");
+    insertCopyRelationship(
+        masterProfileId, masterAccount, followerUserId, followerAccount, "ACTIVE");
 
     List<SnapshotCandidate> candidates = brokerAccountRepository.findSnapshotCandidates();
 
@@ -126,7 +131,8 @@ class AccountSnapshotCandidatesIntegrationTest {
 
     UUID followerUserId = createUser("snapshot-follower-" + UUID.randomUUID() + "@example.com");
     UUID followerAccount = insertBrokerAccount(followerUserId, "CONNECTED");
-    insertCopyRelationship(masterProfileId, masterAccount, followerUserId, followerAccount, "STOPPED");
+    insertCopyRelationship(
+        masterProfileId, masterAccount, followerUserId, followerAccount, "STOPPED");
 
     List<SnapshotCandidate> candidates = brokerAccountRepository.findSnapshotCandidates();
 

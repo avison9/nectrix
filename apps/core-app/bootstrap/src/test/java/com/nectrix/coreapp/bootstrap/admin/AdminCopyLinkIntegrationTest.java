@@ -51,7 +51,8 @@ class AdminCopyLinkIntegrationTest {
       builder.header("Content-Type", "application/json");
       builder.method(
           method, HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(body)));
-      HttpResponse<String> response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+      HttpResponse<String> response =
+          httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
       Map<String, Object> parsedBody =
           response.body() == null || response.body().isBlank() || !response.body().startsWith("{")
               ? Map.of()
@@ -74,7 +75,8 @@ class AdminCopyLinkIntegrationTest {
   }
 
   private String accessTokenFor(String email) {
-    HttpResult result = request("POST", "/api/v1/auth/login", Map.of("email", email, "password", PASSWORD), null);
+    HttpResult result =
+        request("POST", "/api/v1/auth/login", Map.of("email", email, "password", PASSWORD), null);
     assertThat(result.status()).isEqualTo(200);
     return (String) result.body().get("access_token");
   }
@@ -121,8 +123,8 @@ class AdminCopyLinkIntegrationTest {
   private String createAdminToken() {
     UUID adminId = createUser("admin-link-admin-" + UUID.randomUUID() + "@example.com");
     grantRole(adminId, "ADMIN");
-    return accessTokenFor(jdbcTemplate.queryForObject(
-        "SELECT email FROM users WHERE id = ?", String.class, adminId));
+    return accessTokenFor(
+        jdbcTemplate.queryForObject("SELECT email FROM users WHERE id = ?", String.class, adminId));
   }
 
   @Test
@@ -138,7 +140,11 @@ class AdminCopyLinkIntegrationTest {
         request(
             "POST",
             "/api/v1/admin/users/" + followerId + "/copy-relationships",
-            Map.of("master_email", master.email(), "follower_broker_account_id", followerBrokerAccountId.toString()),
+            Map.of(
+                "master_email",
+                master.email(),
+                "follower_broker_account_id",
+                followerBrokerAccountId.toString()),
             adminToken);
 
     assertThat(result.status()).isEqualTo(200);
@@ -150,8 +156,10 @@ class AdminCopyLinkIntegrationTest {
                 + "FROM copy_relationships WHERE id = ?",
             copyRelationshipId);
     assertThat(row.get("originating_admin_action")).isEqualTo(true);
-    assertThat(row.get("master_broker_account_id").toString()).isEqualTo(master.primaryBrokerAccountId().toString());
-    assertThat(row.get("follower_broker_account_id").toString()).isEqualTo(followerBrokerAccountId.toString());
+    assertThat(row.get("master_broker_account_id").toString())
+        .isEqualTo(master.primaryBrokerAccountId().toString());
+    assertThat(row.get("follower_broker_account_id").toString())
+        .isEqualTo(followerBrokerAccountId.toString());
   }
 
   @Test
@@ -166,7 +174,11 @@ class AdminCopyLinkIntegrationTest {
         request(
             "POST",
             "/api/v1/admin/users/" + followerId + "/copy-relationships",
-            Map.of("master_email", master.email(), "follower_broker_account_id", followerBrokerAccountId.toString()),
+            Map.of(
+                "master_email",
+                master.email(),
+                "follower_broker_account_id",
+                followerBrokerAccountId.toString()),
             adminToken);
 
     assertThat(result.status()).isEqualTo(200);
@@ -184,8 +196,11 @@ class AdminCopyLinkIntegrationTest {
         request(
             "POST",
             "/api/v1/admin/users/" + followerId + "/copy-relationships",
-            Map.of("master_email", "no-such-user-" + UUID.randomUUID() + "@example.com",
-                "follower_broker_account_id", followerBrokerAccountId.toString()),
+            Map.of(
+                "master_email",
+                "no-such-user-" + UUID.randomUUID() + "@example.com",
+                "follower_broker_account_id",
+                followerBrokerAccountId.toString()),
             adminToken);
 
     assertThat(result.status()).isEqualTo(404);
@@ -204,7 +219,11 @@ class AdminCopyLinkIntegrationTest {
         request(
             "POST",
             "/api/v1/admin/users/" + followerId + "/copy-relationships",
-            Map.of("master_email", master.email(), "follower_broker_account_id", notOwnedAccountId.toString()),
+            Map.of(
+                "master_email",
+                master.email(),
+                "follower_broker_account_id",
+                notOwnedAccountId.toString()),
             adminToken);
 
     assertThat(result.status()).isEqualTo(400);
@@ -219,13 +238,19 @@ class AdminCopyLinkIntegrationTest {
     String adminToken = createAdminToken();
 
     Map<String, Object> body =
-        Map.of("master_email", master.email(), "follower_broker_account_id", followerBrokerAccountId.toString());
+        Map.of(
+            "master_email",
+            master.email(),
+            "follower_broker_account_id",
+            followerBrokerAccountId.toString());
     HttpResult first =
-        request("POST", "/api/v1/admin/users/" + followerId + "/copy-relationships", body, adminToken);
+        request(
+            "POST", "/api/v1/admin/users/" + followerId + "/copy-relationships", body, adminToken);
     assertThat(first.status()).isEqualTo(200);
 
     HttpResult second =
-        request("POST", "/api/v1/admin/users/" + followerId + "/copy-relationships", body, adminToken);
+        request(
+            "POST", "/api/v1/admin/users/" + followerId + "/copy-relationships", body, adminToken);
     assertThat(second.status()).isEqualTo(409);
   }
 
@@ -235,14 +260,20 @@ class AdminCopyLinkIntegrationTest {
     UUID followerId = createUser("admin-link-follower-" + UUID.randomUUID() + "@example.com");
     grantRole(followerId, "FOLLOWER");
     UUID followerBrokerAccountId = insertBrokerAccount(followerId);
-    String followerToken = accessTokenFor(jdbcTemplate.queryForObject(
-        "SELECT email FROM users WHERE id = ?", String.class, followerId));
+    String followerToken =
+        accessTokenFor(
+            jdbcTemplate.queryForObject(
+                "SELECT email FROM users WHERE id = ?", String.class, followerId));
 
     HttpResult result =
         request(
             "POST",
             "/api/v1/admin/users/" + followerId + "/copy-relationships",
-            Map.of("master_email", master.email(), "follower_broker_account_id", followerBrokerAccountId.toString()),
+            Map.of(
+                "master_email",
+                master.email(),
+                "follower_broker_account_id",
+                followerBrokerAccountId.toString()),
             followerToken);
 
     assertThat(result.status()).isEqualTo(403);
