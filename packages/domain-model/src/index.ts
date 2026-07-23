@@ -49,6 +49,10 @@ export interface NormalizedPosition {
   currentSlPrice: number | null;
   currentTpPrice: number | null;
   openedAt: string;
+  // The price this position would realize at if closed right now — null means no live tick is
+  // cached yet for this symbol (never a fabricated value), always null for MT4/MT5 today (no live
+  // spot-tick plumbing).
+  currentPrice: number | null;
 }
 
 // The event a master's BrokerAdapter emits; input to the Copy Engine
@@ -202,6 +206,14 @@ export interface MasterProfile {
   createdAt: string;
 }
 
+// Bugfix — mirrors bootstrap.archival's PrimaryBrokerAccountChange (social.api), the
+// PATCH /master-profiles/{id}/primary-broker-account response.
+export interface PrimaryBrokerAccountChange {
+  masterProfileId: string;
+  oldBrokerAccountId: string;
+  newBrokerAccountId: string;
+}
+
 // Mirrors CopyRelationshipController.CopyRelationshipView's nested shapes
 // (apps/core-app/modules/trading) — the state machine itself lives in
 // CopyRelationshipService's Javadoc, transcribed for apps/web's own reference:
@@ -270,12 +282,18 @@ export interface CopiedTrade {
   // TICKET-116 — not a copied_trades column itself, joined in from trade_signals (see
   // CopiedTradeRepository's own Javadoc).
   canonicalSymbol: string;
+  // Bugfix — the Trade History page's TYPE column (BUY/SELL), same trade_signals join.
+  direction: TradeDirection;
   computedVolumeLots: number;
   requestedPrice: number | null;
   filledPrice: number | null;
   slippagePips: number | null;
   rejectReason: string | null;
   realizedPnl: number | null;
+  // Only meaningful for an OPEN/PARTIALLY_CLOSED row — null means either the trade is CLOSED
+  // (use realizedPnl instead) or a live price genuinely wasn't available this page load, never a
+  // fabricated 0.
+  unrealizedPnl: number | null;
   openedAt: string | null;
   closedAt: string | null;
   createdAt: string;
@@ -581,4 +599,12 @@ export interface TierChangeRequest {
   reviewReason: string | null;
   reviewedAt: string | null;
   createdAt: string;
+}
+
+// #421 — admin manual follower-master linking. Mirrors
+// AdminController.LinkFollowerToMasterResponse.
+export interface LinkFollowerToMasterResult {
+  copyRelationshipId: string;
+  status: string;
+  masterDisplayName: string;
 }

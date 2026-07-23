@@ -6,6 +6,7 @@
 package httpapi
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/avison9/nectrix/copy-engine/internal/observability"
+	"github.com/avison9/nectrix/copy-engine/internal/pipeline"
 	"github.com/avison9/nectrix/copy-engine/internal/stubadapter"
 	domain "github.com/avison9/nectrix/go-domain"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -39,7 +41,7 @@ type healthResponse struct {
 // metrics — this is what makes AC1's "metrics visible in Grafana" and
 // AC4's deliberately-triggered alert (which fires on a 5xx rate on this
 // same metric) real rather than aspirational.
-func NewMux(serviceName string, adapter domain.BrokerAdapter, masterHandle domain.ConnectionHandle) http.Handler {
+func NewMux(serviceName string, adapter domain.BrokerAdapter, masterHandle domain.ConnectionHandle, pl *pipeline.Pipeline, internalServiceToken string) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -91,7 +93,36 @@ func NewMux(serviceName string, adapter domain.BrokerAdapter, masterHandle domai
 		w.WriteHeader(http.StatusOK)
 	})
 
+	// TICKET-124 — internal, service-to-service only (core-app calls this to enrich Trade
+	// History/Live Activity with unrealized P&L for open positions). Gated by the same shared
+	// secret broker-adapters' own internal routes already use, applied only to THIS route -- not
+	// the whole mux -- since /healthz and /metrics are already unauthenticated and almost
+	// certainly hit by a k8s liveness probe / Prometheus scraper with no token header.
+	mux.Handle("POST /internal/pnl/unrealized-batch", requireSharedSecret(internalServiceToken, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() { _ = r.Body.Close() }()
+		var items []pipeline.UnrealizedPnLItem
+		if err := json.NewDecoder(r.Body).Decode(&items); err != nil {
+			http.Error(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(pl.ComputeUnrealizedPnLBatch(r.Context(), items))
+	})))
+
 	return otelhttp.NewHandler(withMetrics(mux), serviceName)
+}
+
+// requireSharedSecret mirrors broker-adapters' own internalapi.requireSharedSecret --
+// subtle.ConstantTimeCompare avoids a timing side channel on the token comparison.
+func requireSharedSecret(sharedSecret string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		presented := r.Header.Get("X-Internal-Service-Token")
+		if sharedSecret == "" || subtle.ConstantTimeCompare([]byte(sharedSecret), []byte(presented)) != 1 {
+			http.Error(w, "missing or invalid internal service token", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // withMetrics records copy_engine_http_requests_total/_duration_seconds for

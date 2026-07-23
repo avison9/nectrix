@@ -10,9 +10,11 @@ import com.nectrix.coreapp.trading.repository.MoneyManagementProfileRepository;
 import com.nectrix.coreapp.trading.repository.RiskProfileRepository;
 import com.nectrix.coreapp.trading.service.CopyRelationshipNotFoundException;
 import com.nectrix.coreapp.trading.service.CopyRelationshipService;
+import com.nectrix.coreapp.trading.service.UnrealizedPnlEnrichmentService;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -37,18 +39,21 @@ public class CopyRelationshipController {
   private final RiskProfileRepository riskProfileRepository;
   private final CopiedTradeRepository copiedTradeRepository;
   private final CopyRelationshipRepository copyRelationshipRepository;
+  private final UnrealizedPnlEnrichmentService unrealizedPnlEnrichmentService;
 
   public CopyRelationshipController(
       CopyRelationshipService service,
       MoneyManagementProfileRepository moneyManagementProfileRepository,
       RiskProfileRepository riskProfileRepository,
       CopiedTradeRepository copiedTradeRepository,
-      CopyRelationshipRepository copyRelationshipRepository) {
+      CopyRelationshipRepository copyRelationshipRepository,
+      UnrealizedPnlEnrichmentService unrealizedPnlEnrichmentService) {
     this.service = service;
     this.moneyManagementProfileRepository = moneyManagementProfileRepository;
     this.riskProfileRepository = riskProfileRepository;
     this.copiedTradeRepository = copiedTradeRepository;
     this.copyRelationshipRepository = copyRelationshipRepository;
+    this.unrealizedPnlEnrichmentService = unrealizedPnlEnrichmentService;
   }
 
   @GetMapping("/api/v1/copy-relationships")
@@ -177,7 +182,7 @@ public class CopyRelationshipController {
     service.getCopyRelationship(id);
     List<CopiedTrade> trades = copiedTradeRepository.findPage(id, page, pageSize);
     long total = copiedTradeRepository.count(id);
-    return new TradesPage(trades, total, page, pageSize);
+    return new TradesPage(toTradeViews(trades), total, page, pageSize);
   }
 
   /**
@@ -207,7 +212,38 @@ public class CopyRelationshipController {
             userId, role, symbol, from, to, status, relationshipId, page, pageSize);
     long total =
         copiedTradeRepository.countForUser(userId, role, symbol, from, to, status, relationshipId);
-    return new TradesPage(trades, total, page, pageSize);
+    return new TradesPage(toTradeViews(trades), total, page, pageSize);
+  }
+
+  /**
+   * TICKET-124 — one enrichment call per page load (never per row), composing each {@link
+   * CopiedTrade} plus its unrealized P&L (if any) into the flat wire view, same "compose via
+   * toView, don't widen the shared domain record for callers that don't need this" pattern {@link
+   * #toView} already established for {@code CopyRelationship}.
+   */
+  private List<CopiedTradeView> toTradeViews(List<CopiedTrade> trades) {
+    Map<UUID, BigDecimal> unrealized = unrealizedPnlEnrichmentService.enrich(trades);
+    return trades.stream().map(t -> toTradeView(t, unrealized.get(t.id()))).toList();
+  }
+
+  private CopiedTradeView toTradeView(CopiedTrade t, BigDecimal unrealizedPnl) {
+    return new CopiedTradeView(
+        t.id(),
+        t.copyRelationshipId(),
+        t.tradeSignalId(),
+        t.status(),
+        t.canonicalSymbol(),
+        t.direction(),
+        t.computedVolumeLots(),
+        t.requestedPrice(),
+        t.filledPrice(),
+        t.slippagePips(),
+        t.rejectReason(),
+        t.realizedPnl(),
+        unrealizedPnl,
+        t.openedAt(),
+        t.closedAt(),
+        t.createdAt());
   }
 
   private CopyRelationshipView toView(CopyRelationship cr) {
@@ -296,5 +332,29 @@ public class CopyRelationshipController {
       Instant createdAt,
       List<String> excludedSymbols) {}
 
-  public record TradesPage(List<CopiedTrade> trades, long total, int page, int pageSize) {}
+  /**
+   * TICKET-124 — the wire shape for a Trade History row: every {@link CopiedTrade} field except
+   * {@code currentOpenVolumeLots}/{@code followerBrokerPositionId} (internal-only, needed by
+   * {@link UnrealizedPnlEnrichmentService} but not meant for the client), plus the newly-computed
+   * {@code unrealizedPnl} (null when unavailable — never a fabricated 0).
+   */
+  public record CopiedTradeView(
+      UUID id,
+      UUID copyRelationshipId,
+      UUID tradeSignalId,
+      String status,
+      String canonicalSymbol,
+      String direction,
+      BigDecimal computedVolumeLots,
+      BigDecimal requestedPrice,
+      BigDecimal filledPrice,
+      BigDecimal slippagePips,
+      String rejectReason,
+      BigDecimal realizedPnl,
+      BigDecimal unrealizedPnl,
+      Instant openedAt,
+      Instant closedAt,
+      Instant createdAt) {}
+
+  public record TradesPage(List<CopiedTradeView> trades, long total, int page, int pageSize) {}
 }

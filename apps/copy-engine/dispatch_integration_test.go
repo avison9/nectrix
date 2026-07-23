@@ -387,14 +387,18 @@ type fakeCloseCall struct {
 // PlaceOrder call it receives, keyed by brokerAccountID, so AC3/AC4 can
 // assert against real recorded HTTP calls, not an in-process stub.
 type fakeBrokerService struct {
-	mu                    sync.Mutex
-	snapshots             map[string]domain.AccountSnapshot
-	filledPriceByAcct     map[string]float64
-	placeOrderCalls       map[string][]domain.NormalizedOrderRequest
-	modifyPositionCalls   map[string][]fakeModifyCall
-	closePositionCalls    map[string][]fakeCloseCall
-	openPositions         map[string][]domain.NormalizedPosition
-	getOpenPositionsCalls map[string]int
+	mu                sync.Mutex
+	snapshots         map[string]domain.AccountSnapshot
+	filledPriceByAcct map[string]float64
+	// closeFilledPriceByAcct (realized-P&L tests) -- handleClosePosition's real wire response
+	// never carried a FilledPrice in this fake at all until now (nothing needed it before);
+	// unset means the response has none, same as every existing test's behavior.
+	closeFilledPriceByAcct map[string]float64
+	placeOrderCalls        map[string][]domain.NormalizedOrderRequest
+	modifyPositionCalls    map[string][]fakeModifyCall
+	closePositionCalls     map[string][]fakeCloseCall
+	openPositions          map[string][]domain.NormalizedPosition
+	getOpenPositionsCalls  map[string]int
 	// autoPositions/openPositionsOverridden (TICKET-109): GetOpenPositions
 	// defaults to reflecting whatever PlaceOrder/ModifyPosition/ClosePosition
 	// calls this fake has actually received for an account -- a real
@@ -408,14 +412,15 @@ type fakeBrokerService struct {
 	// setOpenPositions overrides this per account when a test needs to
 	// simulate real drift (a position the fake's own call history doesn't
 	// know about, or a position that vanished from the broker's side).
-	autoPositions            map[string]map[string]domain.NormalizedPosition
-	openPositionsOverridden  map[string]bool
+	autoPositions           map[string]map[string]domain.NormalizedPosition
+	openPositionsOverridden map[string]bool
 }
 
 func newFakeBrokerService() *fakeBrokerService {
 	return &fakeBrokerService{
 		snapshots:               make(map[string]domain.AccountSnapshot),
 		filledPriceByAcct:       make(map[string]float64),
+		closeFilledPriceByAcct:  make(map[string]float64),
 		placeOrderCalls:         make(map[string][]domain.NormalizedOrderRequest),
 		modifyPositionCalls:     make(map[string][]fakeModifyCall),
 		closePositionCalls:      make(map[string][]fakeCloseCall),
@@ -436,6 +441,12 @@ func (f *fakeBrokerService) setFilledPrice(brokerAccountID string, price float64
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.filledPriceByAcct[brokerAccountID] = price
+}
+
+func (f *fakeBrokerService) setCloseFilledPrice(brokerAccountID string, price float64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.closeFilledPriceByAcct[brokerAccountID] = price
 }
 
 func (f *fakeBrokerService) placeOrderCallCount(brokerAccountID string) int {
@@ -632,9 +643,13 @@ func (f *fakeBrokerService) handleClosePosition(w http.ResponseWriter, r *http.R
 		pos.VolumeLots -= *wire.VolumeLots
 		f.autoPositions[id][positionID] = pos
 	}
+	closeFilledPrice, hasCloseOverride := f.closeFilledPriceByAcct[id]
 	f.mu.Unlock()
 
 	result := fakePlaceOrderWireResult{Success: true, BrokerPositionID: positionID}
+	if hasCloseOverride {
+		result.FilledPrice = &closeFilledPrice
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(result)
 }
@@ -676,7 +691,7 @@ func buildDispatchTestServer(t *testing.T, ctx context.Context, pool *pgxpool.Po
 	}
 	t.Cleanup(func() { sub.Close() })
 
-	mux := httpapi.NewMux("copy-engine-dispatch-test", adapter, masterHandle)
+	mux := httpapi.NewMux("copy-engine-dispatch-test", adapter, masterHandle, pl, dispatchTestSharedSecret)
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 	return server

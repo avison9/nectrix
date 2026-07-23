@@ -77,6 +77,14 @@ nectrix:
     stale-after-seconds: ${ARCHIVAL_STALE_AFTER_SECONDS:7776000}
     # Daily sweep cadence, expressed in seconds — a cheap no-op most days.
     sweep-interval-seconds: ${ARCHIVAL_SWEEP_INTERVAL_SECONDS:86400}
+  # TICKET-124 — modules:trading's own UnrealizedPnlEnrichmentService calls apps/copy-engine's
+  # internal POST /internal/pnl/unrealized-batch (same "cluster-internal, shared-secret-gated"
+  # shape as nectrix.invitations.broker-adapters/mt-bridge above). :8090 matches copy-engine's own
+  # addr const in main.go.
+  trading:
+    copy-engine:
+      internal-base-url: ${COPY_ENGINE_INTERNAL_BASE_URL:http://localhost:8090}
+      service-token: ${INTERNAL_SERVICE_TOKEN}
   # TICKET-005 (Auth & Identity Service)
   auth:
     jwt:
@@ -131,6 +139,11 @@ nectrix:
       # Hourly poll, refresh once under 24h remains.
       interval-seconds: 3600
       refresh-before-expiry-seconds: 86400
+    account-snapshot:
+      # Bugfix — see InvitationsProperties.AccountSnapshot's own Javadoc for why this defaults to
+      # false, same reasoning as token-refresh.enabled above.
+      enabled: ${ACCOUNT_SNAPSHOT_SCHEDULER_ENABLED:false}
+      interval-seconds: 3600
     # TICKET-102 (MT5/MT4 EA-bridge) — the user's own terminal dials this address directly, so it
     # must be reachable from outside the cluster, unlike broker-adapters.internal-base-url above.
     mt-bridge:

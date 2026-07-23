@@ -179,7 +179,12 @@ public class BrokerAdaptersInternalClient {
       String asOf,
       String leverage) {}
 
-  /** Mirrors go-domain's NormalizedPosition JSON shape exactly. */
+  /**
+   * Mirrors go-domain's NormalizedPosition JSON shape exactly. {@code currentPrice} (TICKET-124)
+   * is nullable: null means the adapter has no live tick cached for this symbol yet (a real,
+   * honest "unknown," never a fabricated 0) -- always null for MT4/MT5 today, which have no live
+   * spot-tick plumbing.
+   */
   public record NormalizedPosition(
       String brokerPositionId,
       NormalizedSymbol symbol,
@@ -188,7 +193,8 @@ public class BrokerAdaptersInternalClient {
       double openPrice,
       Double currentSlPrice,
       Double currentTpPrice,
-      String openedAt) {}
+      String openedAt,
+      Double currentPrice) {}
 
   public record NormalizedSymbol(String canonicalCode, String assetClass) {}
 }

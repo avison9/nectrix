@@ -165,7 +165,7 @@ func main() {
 	}
 	defer func() { _ = sub.Close() }()
 
-	mux := httpapi.NewMux(serviceName, adapter, masterHandle)
+	mux := httpapi.NewMux(serviceName, adapter, masterHandle, pl, internalServiceToken)
 	server := &http.Server{Addr: addr, Handler: mux}
 
 	go func() {
