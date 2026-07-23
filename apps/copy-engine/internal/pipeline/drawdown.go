@@ -17,6 +17,7 @@ import (
 	"github.com/avison9/nectrix/copy-engine/internal/observability"
 	"github.com/avison9/nectrix/copy-engine/internal/remoteadapter"
 	eventsv1 "github.com/avison9/nectrix/event-contracts/go/gen/nectrix/events/v1"
+	domain "github.com/avison9/nectrix/go-domain"
 	"github.com/google/uuid"
 	"github.com/segmentio/kafka-go"
 	"google.golang.org/protobuf/proto"
@@ -217,11 +218,21 @@ func (p *Pipeline) forceCloseAllOpenPositions(ctx context.Context, rel relations
 	type openPosition struct {
 		id                       uuid.UUID
 		followerBrokerPositionID string
+		currentOpenVolumeLots    float64
+		filledPrice              *float64
+		canonicalSymbol          string
+		direction                string
 	}
 
+	// Bugfix — canonical_symbol/direction (via trade_signals) and filled_price/current_open_volume_lots
+	// are the same inputs handleClose's own realized-P&L computation needs (see computeRealizedPnL's
+	// own Javadoc) — this force-close path used to leave realized_pnl NULL forever, same gap.
 	rows, err := p.pool.Query(ctx, `
-		SELECT id, follower_broker_position_id FROM copied_trades
-		WHERE copy_relationship_id = $1 AND status IN ('FILLED','PARTIALLY_CLOSED')`, rel.id)
+		SELECT ct.id, ct.follower_broker_position_id, ct.current_open_volume_lots, ct.filled_price,
+		       ts.canonical_symbol, ts.direction
+		FROM copied_trades ct
+		JOIN trade_signals ts ON ts.id = ct.trade_signal_id
+		WHERE ct.copy_relationship_id = $1 AND ct.status IN ('FILLED','PARTIALLY_CLOSED')`, rel.id)
 	if err != nil {
 		slog.Default().Error("pipeline: query open copied_trades for force-close failed", "copyRelationshipId", rel.id, "error", err)
 		return
@@ -229,7 +240,8 @@ func (p *Pipeline) forceCloseAllOpenPositions(ctx context.Context, rel relations
 	var positions []openPosition
 	for rows.Next() {
 		var pos openPosition
-		if err := rows.Scan(&pos.id, &pos.followerBrokerPositionID); err != nil {
+		if err := rows.Scan(&pos.id, &pos.followerBrokerPositionID, &pos.currentOpenVolumeLots, &pos.filledPrice,
+			&pos.canonicalSymbol, &pos.direction); err != nil {
 			slog.Default().Error("pipeline: scan open copied_trades row for force-close failed", "copyRelationshipId", rel.id, "error", err)
 			rows.Close()
 			return
@@ -252,7 +264,14 @@ func (p *Pipeline) forceCloseAllOpenPositions(ctx context.Context, rel relations
 			slog.Default().Warn("pipeline: force-close ClosePosition rejected by broker", "copyRelationshipId", rel.id, "copiedTradeId", pos.id, "rejectReason", result.RejectReason)
 			continue
 		}
-		if _, err := p.pool.Exec(ctx, `UPDATE copied_trades SET status='CLOSED', current_open_volume_lots=0, closed_at=now() WHERE id=$1`, pos.id); err != nil {
+		var realizedPnl *float64
+		if pos.filledPrice != nil && result.FilledPrice != nil {
+			realizedPnl = p.computeRealizedPnL(ctx, rel.followerBrokerAccountID,
+				domain.NormalizedSymbol{CanonicalCode: pos.canonicalSymbol}, domain.TradeDirection(pos.direction),
+				pos.currentOpenVolumeLots, *pos.filledPrice, *result.FilledPrice)
+		}
+		if _, err := p.pool.Exec(ctx, `UPDATE copied_trades SET status='CLOSED', current_open_volume_lots=0, closed_at=now(), realized_pnl=$1 WHERE id=$2`,
+			realizedPnl, pos.id); err != nil {
 			slog.Default().Error("pipeline: update copied_trades after force-close failed", "copyRelationshipId", rel.id, "copiedTradeId", pos.id, "error", err)
 		}
 	}

@@ -89,6 +89,21 @@ public class MasterProfileService {
             });
   }
 
+  /**
+   * Bugfix — {@code existing} must already have passed {@link #getMasterProfile}'s ownership check,
+   * same fetch-then-check-then-mutate discipline {@link #updateSettings} established. Reuses {@link
+   * #lookupOwnedBrokerAccount} — same rule {@link #create} already enforces: a Master cannot
+   * nominate someone else's broker account as their own primary trading account. Cascading this
+   * change to any existing {@code copy_relationships} rows still pointing at the OLD primary
+   * account is the caller's responsibility (this module can't reach {@code trading} — see {@code
+   * bootstrap.archival.MasterPrimaryBrokerAccountOrchestrator}, the one place that can).
+   */
+  public MasterProfile changePrimaryBrokerAccount(MasterProfile existing, UUID newBrokerAccountId) {
+    lookupOwnedBrokerAccount(existing.userId(), newBrokerAccountId);
+    repository.updatePrimaryBrokerAccount(existing.id(), newBrokerAccountId);
+    return repository.findById(existing.id()).orElseThrow(MasterProfileNotFoundException::new);
+  }
+
   private BrokerAccountView lookupOwnedBrokerAccount(UUID userId, UUID brokerAccountId) {
     BrokerAccountView account;
     try {

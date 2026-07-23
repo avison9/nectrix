@@ -50,8 +50,56 @@ type connection struct {
 	spotMu     sync.RWMutex
 	latestSpot map[int64]spotPrice
 
+	// fillWaitersMu/fillWaiters (bugfix) -- cTrader sends order-acceptance and
+	// fill-confirmation as two SEPARATE ProtoOAExecutionEvent messages
+	// (ProtoOAExecutionType ORDER_ACCEPTED vs ORDER_FILLED/ORDER_PARTIAL_FILL);
+	// ClosePosition's own synchronous Request() only ever sees the first one.
+	// Keyed by positionId (known before ClosePosition even sends its request,
+	// unlike a brand-new open) -- handleEvent delivers here non-blockingly,
+	// in ADDITION to its normal onEvent dispatch, whenever a later FILLED
+	// event for this position arrives on this same connection's event stream.
+	fillWaitersMu sync.Mutex
+	fillWaiters   map[int64]chan *openapi.ProtoOADeal
+
 	cancel context.CancelFunc
 	done   chan struct{}
+}
+
+// registerFillWaiter returns a channel that receives at most one ProtoOADeal
+// -- the next ORDER_FILLED/ORDER_PARTIAL_FILL execution event's own deal for
+// positionID, once handleEvent sees it -- plus a cleanup func the caller must
+// defer to unregister (avoids leaking a stale entry if the fill never
+// arrives, or arrives after the caller already gave up waiting).
+func (c *connection) registerFillWaiter(positionID int64) (<-chan *openapi.ProtoOADeal, func()) {
+	ch := make(chan *openapi.ProtoOADeal, 1)
+	c.fillWaitersMu.Lock()
+	if c.fillWaiters == nil {
+		c.fillWaiters = make(map[int64]chan *openapi.ProtoOADeal)
+	}
+	c.fillWaiters[positionID] = ch
+	c.fillWaitersMu.Unlock()
+	return ch, func() {
+		c.fillWaitersMu.Lock()
+		delete(c.fillWaiters, positionID)
+		c.fillWaitersMu.Unlock()
+	}
+}
+
+// deliverFill is handleEvent's own notification side -- non-blocking (a
+// size-1 buffered channel with a default case) so a fill event this
+// connection's own drain loop just observed can never stall waiting for a
+// caller that already timed out and stopped listening.
+func (c *connection) deliverFill(positionID int64, deal *openapi.ProtoOADeal) {
+	c.fillWaitersMu.Lock()
+	ch, ok := c.fillWaiters[positionID]
+	c.fillWaitersMu.Unlock()
+	if !ok {
+		return
+	}
+	select {
+	case ch <- deal:
+	default:
+	}
 }
 
 type spotPrice struct {

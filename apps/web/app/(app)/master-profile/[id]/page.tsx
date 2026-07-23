@@ -1,8 +1,9 @@
-import { getMasterProfile } from "@nectrix/api-client";
+import { getMasterProfile, listBrokerAccounts } from "@nectrix/api-client";
 import { coreAppBaseUrl } from "@/lib/core-app";
 import { requireSession } from "@/lib/auth";
 import { fetchOrNotFound } from "@/lib/fetchOrNotFound";
 import { EditMasterProfileForm } from "./EditMasterProfileForm";
+import { ChangePrimaryBrokerAccountForm } from "./ChangePrimaryBrokerAccountForm";
 
 export default async function MasterProfileDetailPage({
   params,
@@ -12,6 +13,14 @@ export default async function MasterProfileDetailPage({
   const { accessToken } = await requireSession();
   const { id } = await params;
   const profile = await fetchOrNotFound(getMasterProfile(coreAppBaseUrl(), accessToken, id));
+  const brokerAccounts = await listBrokerAccounts(coreAppBaseUrl(), accessToken);
+  // Bugfix — only an account this same user could actually switch to: CONNECTED, and capable of
+  // acting as a Master (matches MasterPrimaryBrokerAccountOrchestrator's own eligibility check).
+  const eligibleAccounts = brokerAccounts.filter(
+    (a) =>
+      a.connectionStatus === "CONNECTED" &&
+      (a.connectionRole === "MASTER_ONLY" || a.connectionRole === "BOTH"),
+  );
 
   return (
     <div className="mx-auto max-w-[480px]">
@@ -23,6 +32,12 @@ export default async function MasterProfileDetailPage({
       </p>
 
       <EditMasterProfileForm profile={profile} />
+
+      <ChangePrimaryBrokerAccountForm
+        masterProfileId={profile.id}
+        currentBrokerAccountId={profile.primaryBrokerAccountId}
+        eligibleAccounts={eligibleAccounts}
+      />
     </div>
   );
 }

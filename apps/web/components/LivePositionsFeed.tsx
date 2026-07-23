@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { CopiedTrade } from "@nectrix/api-client";
+import { refetchOpenPositionsAction } from "./live-positions-actions";
 
 export interface FeedSubscription {
   /** {@code positions.{brokerAccountId}} for a Master's own account, {@code copy-relationships.{id}} for a Follower's relationship. */
@@ -9,104 +11,50 @@ export interface FeedSubscription {
   label: string;
 }
 
-interface FeedItem {
-  key: string;
-  label: string;
-  symbol: string | null;
-  eventType: string;
-  detail: string;
-  time: number;
-}
-
-/** Mirrors bootstrap's TradeSignalPositionConsumer PositionUpdateMessage JSON shape. */
-interface PositionsWireMessage {
-  channel: "positions";
-  brokerAccountId: string;
-  eventType: string;
-  position?: { symbol?: string; direction?: string; volumeLots?: number };
-}
+const POLL_MS = 12000;
 
 /**
- * Mirrors bootstrap's copy-relationships channel wire shapes — either CopiedTradePositionConsumer's
- * trade_update or CopyRelationshipService.reloadAndPublish's status_changed (see this session's own
- * TICKET-116 project memory for both producers) — same channel, multiplexed by `type`.
- */
-interface CopyRelationshipWireMessage {
-  channel: "copy-relationships";
-  type: "trade_update" | "status_changed";
-  copyRelationshipId: string;
-  eventType?: string;
-  symbol?: string | null;
-  volumeLots?: number | null;
-  status?: string;
-}
-
-function toFeedItem(
-  payload: unknown,
-  subscriptions: FeedSubscription[],
-): FeedItem | null {
-  if (typeof payload !== "object" || payload === null || !("channel" in payload)) {
-    return null;
-  }
-  const now = Date.now();
-  if (payload.channel === "positions") {
-    const msg = payload as PositionsWireMessage;
-    const sub = subscriptions.find((s) => s.channel === "positions" && s.id === msg.brokerAccountId);
-    if (!sub) return null;
-    return {
-      key: `${msg.brokerAccountId}-${now}`,
-      label: sub.label,
-      symbol: msg.position?.symbol ?? null,
-      eventType: msg.eventType,
-      detail: msg.position
-        ? `${msg.position.direction ?? ""} ${msg.position.volumeLots ?? ""} lots`.trim()
-        : "",
-      time: now,
-    };
-  }
-  if (payload.channel === "copy-relationships") {
-    const msg = payload as CopyRelationshipWireMessage;
-    const sub = subscriptions.find(
-      (s) => s.channel === "copy-relationships" && s.id === msg.copyRelationshipId,
-    );
-    if (!sub) return null;
-    if (msg.type === "status_changed") {
-      return {
-        key: `${msg.copyRelationshipId}-${now}`,
-        label: sub.label,
-        symbol: null,
-        eventType: `Status → ${msg.status}`,
-        detail: "",
-        time: now,
-      };
-    }
-    return {
-      key: `${msg.copyRelationshipId}-${now}`,
-      label: sub.label,
-      symbol: msg.symbol ?? null,
-      eventType: msg.eventType ?? "update",
-      detail: msg.volumeLots != null ? `${msg.volumeLots} lots` : "",
-      time: now,
-    };
-  }
-  return null;
-}
-
-/**
- * TICKET-116 — docs/14-api-specification.md §14.11's positions/copy-relationships channels: a
- * live, no-polling feed of position/status activity. Same real-WebSocket-with-fallback shape as
- * ConnectionStatusBadge (TICKET-110) — falls back to "no live updates yet" if the socket never
- * connects, never a page reload requirement.
+ * TICKET-124 — replaces the previous WebSocket event log with an actual live position book:
+ * fetched on mount (via `initialPositions`, server-rendered so there's no blank-then-populate
+ * flash), kept current by the SAME interval-poll mechanism trade-history/LiveRefresh.tsx uses,
+ * plus an immediate refetch whenever the WebSocket signals a trade lifecycle event happened (the
+ * socket carries lifecycle events only, never price ticks, so it alone can't keep unrealized P&L
+ * "live" between events — polling is what actually does that). Reuses
+ * UnrealizedPnlEnrichmentService's own output (via refetchOpenPositionsAction) rather than a
+ * second, independent computation.
  */
 export function LivePositionsFeed({
   accessToken,
   subscriptions,
+  role,
+  initialPositions,
 }: {
   accessToken: string;
   subscriptions: FeedSubscription[];
+  role: "follower" | "master";
+  initialPositions: CopiedTrade[];
 }) {
-  const [items, setItems] = useState<FeedItem[]>([]);
+  const [positions, setPositions] = useState<CopiedTrade[]>(initialPositions);
   const [live, setLive] = useState(false);
+  const refetching = useRef(false);
+
+  async function refetch() {
+    if (refetching.current) return;
+    refetching.current = true;
+    try {
+      setPositions(await refetchOpenPositionsAction(role));
+    } catch {
+      // best-effort -- keep showing the last-known list rather than clearing it on a blip
+    } finally {
+      refetching.current = false;
+    }
+  }
+
+  useEffect(() => {
+    const interval = setInterval(refetch, POLL_MS);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [role]);
 
   useEffect(() => {
     const wsBaseUrl = process.env.NEXT_PUBLIC_CORE_APP_WS_URL;
@@ -128,18 +76,9 @@ export function LivePositionsFeed({
       }
     });
 
-    socket.addEventListener("message", (event) => {
-      try {
-        const payload: unknown = JSON.parse(event.data as string);
-        const item = toFeedItem(payload, subscriptions);
-        if (item) {
-          setItems((prev) => [item, ...prev].slice(0, 20));
-        }
-      } catch {
-        // malformed frame, ignore
-      }
-    });
-
+    // Any message on either channel means a real state transition happened -- refetch rather
+    // than trying to hand-patch local state from a partial wire payload.
+    socket.addEventListener("message", () => refetch());
     socket.addEventListener("close", () => setLive(false));
     socket.addEventListener("error", () => setLive(false));
 
@@ -162,33 +101,44 @@ export function LivePositionsFeed({
           {live ? "Live" : "Offline"}
         </span>
       </div>
-      {items.length === 0 ? (
+      {positions.length === 0 ? (
         <p className="px-5 py-8 text-center text-[13px] text-[var(--text-2)]">
-          No activity yet — updates will appear here in real time.
+          No open positions right now.
         </p>
       ) : (
         <ul className="flex flex-col">
-          {items.map((item) => (
+          {positions.map((p) => (
             <li
-              key={item.key}
+              key={p.id}
               className="flex items-center justify-between gap-3 border-b border-[var(--border)] px-5 py-2.5 last:border-b-0"
             >
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
-                  {item.symbol && (
-                    <span className="font-mono text-[13px] font-semibold text-[var(--text)]">
-                      {item.symbol}
-                    </span>
-                  )}
-                  <span className="truncate text-[12px] text-[var(--text-2)]">{item.eventType}</span>
+                  <span className="font-mono text-[13px] font-semibold text-[var(--text)]">
+                    {p.canonicalSymbol}
+                  </span>
+                  <span
+                    className={`text-[11.5px] font-semibold ${
+                      p.direction === "BUY" ? "text-[var(--pos)]" : "text-[var(--neg)]"
+                    }`}
+                  >
+                    {p.direction}
+                  </span>
                 </div>
                 <div className="text-[11.5px] text-[var(--text-3)]">
-                  {item.label}
-                  {item.detail ? ` · ${item.detail}` : ""}
+                  {p.computedVolumeLots} lots
                 </div>
               </div>
-              <span className="shrink-0 text-[11px] text-[var(--text-3)]">
-                {new Date(item.time).toLocaleTimeString()}
+              <span
+                className={`shrink-0 font-mono text-[13px] font-semibold ${
+                  p.unrealizedPnl === null
+                    ? "text-[var(--text-3)]"
+                    : p.unrealizedPnl >= 0
+                      ? "text-[var(--pos)]"
+                      : "text-[var(--neg)]"
+                }`}
+              >
+                {p.unrealizedPnl === null ? "—" : p.unrealizedPnl.toFixed(2)}
               </span>
             </li>
           ))}

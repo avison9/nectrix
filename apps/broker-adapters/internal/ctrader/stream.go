@@ -76,6 +76,19 @@ func (a *CTraderAdapter) handleEvent(ctx context.Context, conn *connection, msg 
 		return
 	}
 
+	// Bugfix -- deliver to any registered ClosePosition fill-waiter FIRST,
+	// additively (never instead of the normal onEvent dispatch below): a
+	// FILLED/PARTIAL_FILL event with a real Deal might be exactly the close
+	// confirmation orders.go's own synchronous Request() already missed
+	// (cTrader sends acceptance and fill as separate messages -- see
+	// connection.fillWaiters' own doc-comment).
+	switch event.GetExecutionType() {
+	case openapi.ProtoOAExecutionType_ORDER_FILLED, openapi.ProtoOAExecutionType_ORDER_PARTIAL_FILL:
+		if pos, deal := event.GetPosition(), event.GetDeal(); pos != nil && deal != nil {
+			conn.deliverFill(pos.GetPositionId(), deal)
+		}
+	}
+
 	normalized, ok := a.mapExecutionEvent(ctx, conn, event)
 	if !ok {
 		return // an execution type this platform doesn't act on (rejection, swap, deposit, ...)
@@ -180,15 +193,33 @@ func (a *CTraderAdapter) mapPosition(ctx context.Context, conn *connection, posi
 	if err != nil {
 		return domain.NormalizedPosition{}, 0, err
 	}
+	direction := tradeDirection(trade.GetTradeSide())
+
+	// TICKET-124 — a passive read only, deliberately not a lazy-subscribe-on-miss like
+	// unrealizedPnL's: mapPosition is also called from the hot execution-event path
+	// (handleEvent, for every live trade event), where a synchronous subscribe-and-block call
+	// would add unpredictable latency to real-time event ingestion for a field nothing on that
+	// path consumes. GetOpenPositions (the caller this field actually exists for) does its own
+	// best-effort subscribe pass below instead, so a miss here still converges on the next call.
+	conn.spotMu.RLock()
+	spot, haveSpot := conn.latestSpot[trade.GetSymbolId()]
+	conn.spotMu.RUnlock()
+	var currentPrice *float64
+	if haveSpot {
+		p := closingPriceFor(direction, spot)
+		currentPrice = &p
+	}
+
 	return domain.NormalizedPosition{
 		BrokerPositionID: fmt.Sprintf("%d", position.GetPositionId()),
 		Symbol:           symbol,
-		Direction:        tradeDirection(trade.GetTradeSide()),
+		Direction:        direction,
 		VolumeLots:       volumeToLots(trade.GetVolume(), lotSize),
 		OpenPrice:        position.GetPrice(),
 		CurrentSLPrice:   position.StopLoss,
 		CurrentTPPrice:   position.TakeProfit,
 		OpenedAt:         msToRFC3339(trade.GetOpenTimestamp()),
+		CurrentPrice:     currentPrice,
 	}, lotSize, nil
 }
 

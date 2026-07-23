@@ -260,7 +260,7 @@ func buildTestServer(t *testing.T, ctx context.Context, pool *pgxpool.Pool, dedu
 	}
 	t.Cleanup(func() { sub.Close() })
 
-	mux := httpapi.NewMux("copy-engine-test", adapter, masterHandle)
+	mux := httpapi.NewMux("copy-engine-test", adapter, masterHandle, pl, "test-internal-service-token")
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 	return server

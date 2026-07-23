@@ -368,3 +368,334 @@ func TestPlaceOrder_RealOrderSubmissionAndMapping(t *testing.T) {
 		t.Fatalf("sent ClientOrderId = %q, want the real idempotency key", capturedOrder.GetClientOrderId())
 	}
 }
+
+// TestPlaceOrder_FallsBackToReconcile_WhenAcceptResponseHasNoDeal proves the
+// bugfix for cTrader's real two-message order flow: the synchronous response
+// to NewOrderReq is often just ORDER_ACCEPTED (no Deal at all) — the real
+// fill price only ever showed up, previously unwaited-for, in a later
+// ORDER_FILLED event. PlaceOrder must fall back to a ProtoOAReconcileReq
+// follow-up and read the newly-opened position's own durably-stored Price.
+func TestPlaceOrder_FallsBackToReconcile_WhenAcceptResponseHasNoDeal(t *testing.T) {
+	client, server := newFakeCTraderServer(t)
+	wireStandardHandshake(server)
+
+	server.on(uint32(openapi.ProtoOAPayloadType_PROTO_OA_NEW_ORDER_REQ), func(clientMsgID string, payload []byte) *openapi.ProtoMessage {
+		ackPayload, err := proto.Marshal(&openapi.ProtoOAExecutionEvent{
+			CtidTraderAccountId: proto.Int64(42),
+			ExecutionType:       openapi.ProtoOAExecutionType_ORDER_ACCEPTED.Enum(),
+			Position: &openapi.ProtoOAPosition{
+				PositionId:     proto.Int64(888),
+				PositionStatus: openapi.ProtoOAPositionStatus_POSITION_STATUS_OPEN.Enum(),
+				TradeData: &openapi.ProtoOATradeData{
+					SymbolId:  proto.Int64(eurusdSymbolID),
+					Volume:    proto.Int64(eurusdLotSize),
+					TradeSide: openapi.ProtoOATradeSide_BUY.Enum(),
+				},
+				Swap: proto.Int64(0),
+			},
+			// Deliberately no Deal — the real ACCEPTED-only response.
+		})
+		if err != nil {
+			t.Fatalf("marshal accepted-only execution event: %v", err)
+		}
+		return &openapi.ProtoMessage{PayloadType: proto.Uint32(uint32(openapi.ProtoOAPayloadType_PROTO_OA_EXECUTION_EVENT)), Payload: ackPayload}
+	})
+
+	a := newTestAdapter(t, func(ctx context.Context, host string, logger *slog.Logger) (*ctraderapi.Client, error) {
+		return client, nil
+	})
+	handle := connectTestAccount(t, a)
+
+	// Override the empty handshake-time Reconcile response — PlaceOrder's own
+	// follow-up needs a real position matching the one it just opened.
+	server.on(uint32(openapi.ProtoOAPayloadType_PROTO_OA_RECONCILE_REQ), respond(uint32(openapi.ProtoOAPayloadType_PROTO_OA_RECONCILE_RES), &openapi.ProtoOAReconcileRes{
+		CtidTraderAccountId: proto.Int64(42),
+		Position: []*openapi.ProtoOAPosition{{
+			PositionId:     proto.Int64(888),
+			PositionStatus: openapi.ProtoOAPositionStatus_POSITION_STATUS_OPEN.Enum(),
+			Price:          proto.Float64(1.0855),
+			TradeData: &openapi.ProtoOATradeData{
+				SymbolId:  proto.Int64(eurusdSymbolID),
+				Volume:    proto.Int64(eurusdLotSize),
+				TradeSide: openapi.ProtoOATradeSide_BUY.Enum(),
+			},
+			Swap: proto.Int64(0),
+		}},
+	}))
+
+	result, err := a.PlaceOrder(context.Background(), handle, domain.NormalizedOrderRequest{
+		IdempotencyKey: "idem-key-2",
+		Symbol:         domain.NormalizedSymbol{CanonicalCode: "EURUSD", AssetClass: domain.AssetClassFX},
+		Direction:      domain.TradeDirectionBuy,
+		VolumeLots:     1.0,
+		ClientOrderTag: "idem-key-2",
+	})
+	if err != nil {
+		t.Fatalf("PlaceOrder() failed: %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("result.Success = false, RejectReason = %q", result.RejectReason)
+	}
+	if result.BrokerPositionID != "888" {
+		t.Fatalf("BrokerPositionID = %q, want 888", result.BrokerPositionID)
+	}
+	if result.FilledPrice == nil || *result.FilledPrice != 1.0855 {
+		t.Fatalf("FilledPrice = %v, want 1.0855 (from the Reconcile follow-up, not the accept response)", result.FilledPrice)
+	}
+}
+
+// TestPlaceOrder_RetriesReconcileFollowUp_WhenPositionNotYetIndexed is a regression test for a
+// real, live-caught bug: cTrader's own Reconcile view can genuinely lag a brand-new position by a
+// few hundred milliseconds, so the very first follow-up call can come back with no matching
+// position at all -- previously left FilledPrice permanently nil for a trade that really did fill.
+// Proves PlaceOrder retries the follow-up and recovers once the position is indexed.
+func TestPlaceOrder_RetriesReconcileFollowUp_WhenPositionNotYetIndexed(t *testing.T) {
+	originalDelay := reconcileFillRetryDelay
+	reconcileFillRetryDelay = time.Millisecond
+	t.Cleanup(func() { reconcileFillRetryDelay = originalDelay })
+
+	client, server := newFakeCTraderServer(t)
+	wireStandardHandshake(server)
+
+	server.on(uint32(openapi.ProtoOAPayloadType_PROTO_OA_NEW_ORDER_REQ), func(clientMsgID string, payload []byte) *openapi.ProtoMessage {
+		ackPayload, err := proto.Marshal(&openapi.ProtoOAExecutionEvent{
+			CtidTraderAccountId: proto.Int64(42),
+			ExecutionType:       openapi.ProtoOAExecutionType_ORDER_ACCEPTED.Enum(),
+			Position: &openapi.ProtoOAPosition{
+				PositionId:     proto.Int64(999),
+				PositionStatus: openapi.ProtoOAPositionStatus_POSITION_STATUS_OPEN.Enum(),
+				TradeData: &openapi.ProtoOATradeData{
+					SymbolId:  proto.Int64(eurusdSymbolID),
+					Volume:    proto.Int64(eurusdLotSize),
+					TradeSide: openapi.ProtoOATradeSide_BUY.Enum(),
+				},
+				Swap: proto.Int64(0),
+			},
+		})
+		if err != nil {
+			t.Fatalf("marshal accepted-only execution event: %v", err)
+		}
+		return &openapi.ProtoMessage{PayloadType: proto.Uint32(uint32(openapi.ProtoOAPayloadType_PROTO_OA_EXECUTION_EVENT)), Payload: ackPayload}
+	})
+
+	reconcileCalls := 0
+	server.on(uint32(openapi.ProtoOAPayloadType_PROTO_OA_RECONCILE_REQ), func(clientMsgID string, payload []byte) *openapi.ProtoMessage {
+		reconcileCalls++
+		resp := &openapi.ProtoOAReconcileRes{CtidTraderAccountId: proto.Int64(42)}
+		// First call: the position isn't in cTrader's own Reconcile view yet (real lag) --
+		// empty result. Second call onward: it's there.
+		if reconcileCalls >= 2 {
+			resp.Position = []*openapi.ProtoOAPosition{{
+				PositionId:     proto.Int64(999),
+				PositionStatus: openapi.ProtoOAPositionStatus_POSITION_STATUS_OPEN.Enum(),
+				Price:          proto.Float64(1.0860),
+				TradeData: &openapi.ProtoOATradeData{
+					SymbolId:  proto.Int64(eurusdSymbolID),
+					Volume:    proto.Int64(eurusdLotSize),
+					TradeSide: openapi.ProtoOATradeSide_BUY.Enum(),
+				},
+				Swap: proto.Int64(0),
+			}}
+		}
+		data, _ := proto.Marshal(resp)
+		return &openapi.ProtoMessage{PayloadType: proto.Uint32(uint32(openapi.ProtoOAPayloadType_PROTO_OA_RECONCILE_RES)), Payload: data}
+	})
+
+	a := newTestAdapter(t, func(ctx context.Context, host string, logger *slog.Logger) (*ctraderapi.Client, error) {
+		return client, nil
+	})
+	handle := connectTestAccount(t, a)
+
+	result, err := a.PlaceOrder(context.Background(), handle, domain.NormalizedOrderRequest{
+		IdempotencyKey: "idem-key-retry",
+		Symbol:         domain.NormalizedSymbol{CanonicalCode: "EURUSD", AssetClass: domain.AssetClassFX},
+		Direction:      domain.TradeDirectionBuy,
+		VolumeLots:     1.0,
+		ClientOrderTag: "idem-key-retry",
+	})
+	if err != nil {
+		t.Fatalf("PlaceOrder() failed: %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("result.Success = false, RejectReason = %q", result.RejectReason)
+	}
+	if result.FilledPrice == nil || *result.FilledPrice != 1.0860 {
+		t.Fatalf("FilledPrice = %v, want 1.0860 (recovered on retry, not the first empty Reconcile response)", result.FilledPrice)
+	}
+	if reconcileCalls < 2 {
+		t.Fatalf("reconcileCalls = %d, want at least 2 (must have actually retried, not just succeeded on the first try)", reconcileCalls)
+	}
+}
+
+// TestClosePosition_WaitsForAsyncFillEvent_WhenCloseResponseHasNoDeal proves
+// the other half of the same bugfix: ClosePositionReq's own synchronous
+// response can likewise be ORDER_ACCEPTED-only, with the real close price
+// arriving moments later as a separate, unsolicited ORDER_FILLED event.
+// Unlike PlaceOrder, a closed position is no longer listed by Reconcile, so
+// ClosePosition must instead wait on the fill-waiter registered before the
+// close request was even sent.
+func TestClosePosition_WaitsForAsyncFillEvent_WhenCloseResponseHasNoDeal(t *testing.T) {
+	client, server := newFakeCTraderServer(t)
+	wireStandardHandshake(server)
+
+	a := newTestAdapter(t, func(ctx context.Context, host string, logger *slog.Logger) (*ctraderapi.Client, error) {
+		return client, nil
+	})
+	handle := connectTestAccount(t, a)
+
+	// Override the empty handshake-time Reconcile response — ClosePosition's
+	// own position lookup (to resolve symbol/lot size) needs a real open
+	// position to find.
+	server.on(uint32(openapi.ProtoOAPayloadType_PROTO_OA_RECONCILE_REQ), respond(uint32(openapi.ProtoOAPayloadType_PROTO_OA_RECONCILE_RES), &openapi.ProtoOAReconcileRes{
+		CtidTraderAccountId: proto.Int64(42),
+		Position: []*openapi.ProtoOAPosition{{
+			PositionId:     proto.Int64(555),
+			PositionStatus: openapi.ProtoOAPositionStatus_POSITION_STATUS_OPEN.Enum(),
+			Price:          proto.Float64(1.0800),
+			TradeData: &openapi.ProtoOATradeData{
+				SymbolId:  proto.Int64(eurusdSymbolID),
+				Volume:    proto.Int64(eurusdLotSize),
+				TradeSide: openapi.ProtoOATradeSide_BUY.Enum(),
+			},
+			Swap: proto.Int64(0),
+		}},
+	}))
+
+	server.on(uint32(openapi.ProtoOAPayloadType_PROTO_OA_CLOSE_POSITION_REQ), func(clientMsgID string, payload []byte) *openapi.ProtoMessage {
+		ackPayload, err := proto.Marshal(&openapi.ProtoOAExecutionEvent{
+			CtidTraderAccountId: proto.Int64(42),
+			ExecutionType:       openapi.ProtoOAExecutionType_ORDER_ACCEPTED.Enum(),
+			Position: &openapi.ProtoOAPosition{
+				PositionId:     proto.Int64(555),
+				PositionStatus: openapi.ProtoOAPositionStatus_POSITION_STATUS_OPEN.Enum(),
+				TradeData: &openapi.ProtoOATradeData{
+					SymbolId:  proto.Int64(eurusdSymbolID),
+					Volume:    proto.Int64(eurusdLotSize),
+					TradeSide: openapi.ProtoOATradeSide_BUY.Enum(),
+				},
+				Swap: proto.Int64(0),
+			},
+			// Deliberately no Deal — the real FILLED event, with the real
+			// close price, is pushed separately below instead.
+		})
+		if err != nil {
+			t.Fatalf("marshal accepted-only close event: %v", err)
+		}
+
+		// Simulate cTrader's real, separate FILLED event — sent from this
+		// same handler goroutine (serve()'s single reader/writer), strictly
+		// before the ACCEPTED response below is written, but this is only
+		// ever safe because ClosePosition already registered its fill
+		// waiter before sending the close request in the first place, so
+		// wire ordering between the two doesn't matter.
+		server.push(uint32(openapi.ProtoOAPayloadType_PROTO_OA_EXECUTION_EVENT), &openapi.ProtoOAExecutionEvent{
+			CtidTraderAccountId: proto.Int64(42),
+			ExecutionType:       openapi.ProtoOAExecutionType_ORDER_FILLED.Enum(),
+			Position: &openapi.ProtoOAPosition{
+				PositionId:     proto.Int64(555),
+				PositionStatus: openapi.ProtoOAPositionStatus_POSITION_STATUS_CLOSED.Enum(),
+				TradeData: &openapi.ProtoOATradeData{
+					SymbolId:  proto.Int64(eurusdSymbolID),
+					Volume:    proto.Int64(eurusdLotSize),
+					TradeSide: openapi.ProtoOATradeSide_BUY.Enum(),
+				},
+				Swap: proto.Int64(0),
+			},
+			Deal: &openapi.ProtoOADeal{
+				DealId:             proto.Int64(3000),
+				OrderId:            proto.Int64(4000),
+				PositionId:         proto.Int64(555),
+				Volume:             proto.Int64(eurusdLotSize),
+				FilledVolume:       proto.Int64(eurusdLotSize),
+				SymbolId:           proto.Int64(eurusdSymbolID),
+				CreateTimestamp:    proto.Int64(time.Now().UnixMilli()),
+				ExecutionTimestamp: proto.Int64(time.Now().UnixMilli()),
+				ExecutionPrice:     proto.Float64(1.0810),
+				TradeSide:          openapi.ProtoOATradeSide_SELL.Enum(),
+				DealStatus:         openapi.ProtoOADealStatus_FILLED.Enum(),
+			},
+		})
+
+		return &openapi.ProtoMessage{PayloadType: proto.Uint32(uint32(openapi.ProtoOAPayloadType_PROTO_OA_EXECUTION_EVENT)), Payload: ackPayload}
+	})
+
+	result, err := a.ClosePosition(context.Background(), handle, "555", nil)
+	if err != nil {
+		t.Fatalf("ClosePosition() failed: %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("result.Success = false, RejectReason = %q", result.RejectReason)
+	}
+	if result.FilledPrice == nil || *result.FilledPrice != 1.0810 {
+		t.Fatalf("FilledPrice = %v, want 1.0810 (from the later, separately-pushed FILLED event)", result.FilledPrice)
+	}
+}
+
+// TestClosePosition_TimesOutGracefully_WhenNoFillEventEverArrives proves the
+// bounded-wait path: if no FILLED event ever arrives, ClosePosition must
+// still report the close as successful (it was accepted) with FilledPrice
+// left nil (never fabricated) — not hang past fillWaitTimeout.
+func TestClosePosition_TimesOutGracefully_WhenNoFillEventEverArrives(t *testing.T) {
+	originalTimeout := fillWaitTimeout
+	fillWaitTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { fillWaitTimeout = originalTimeout })
+
+	client, server := newFakeCTraderServer(t)
+	wireStandardHandshake(server)
+
+	a := newTestAdapter(t, func(ctx context.Context, host string, logger *slog.Logger) (*ctraderapi.Client, error) {
+		return client, nil
+	})
+	handle := connectTestAccount(t, a)
+
+	server.on(uint32(openapi.ProtoOAPayloadType_PROTO_OA_RECONCILE_REQ), respond(uint32(openapi.ProtoOAPayloadType_PROTO_OA_RECONCILE_RES), &openapi.ProtoOAReconcileRes{
+		CtidTraderAccountId: proto.Int64(42),
+		Position: []*openapi.ProtoOAPosition{{
+			PositionId:     proto.Int64(666),
+			PositionStatus: openapi.ProtoOAPositionStatus_POSITION_STATUS_OPEN.Enum(),
+			Price:          proto.Float64(1.2000),
+			TradeData: &openapi.ProtoOATradeData{
+				SymbolId:  proto.Int64(eurusdSymbolID),
+				Volume:    proto.Int64(eurusdLotSize),
+				TradeSide: openapi.ProtoOATradeSide_BUY.Enum(),
+			},
+			Swap: proto.Int64(0),
+		}},
+	}))
+
+	// ACCEPTED-only response, and no FILLED event is ever pushed.
+	server.on(uint32(openapi.ProtoOAPayloadType_PROTO_OA_CLOSE_POSITION_REQ), respond(uint32(openapi.ProtoOAPayloadType_PROTO_OA_EXECUTION_EVENT), &openapi.ProtoOAExecutionEvent{
+		CtidTraderAccountId: proto.Int64(42),
+		ExecutionType:       openapi.ProtoOAExecutionType_ORDER_ACCEPTED.Enum(),
+		Position: &openapi.ProtoOAPosition{
+			PositionId:     proto.Int64(666),
+			PositionStatus: openapi.ProtoOAPositionStatus_POSITION_STATUS_OPEN.Enum(),
+			TradeData: &openapi.ProtoOATradeData{
+				SymbolId:  proto.Int64(eurusdSymbolID),
+				Volume:    proto.Int64(eurusdLotSize),
+				TradeSide: openapi.ProtoOATradeSide_BUY.Enum(),
+			},
+			Swap: proto.Int64(0),
+		},
+	}))
+
+	start := time.Now()
+	result, err := a.ClosePosition(context.Background(), handle, "666", nil)
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("ClosePosition() failed: %v", err)
+	}
+	if !result.Success {
+		t.Fatal("result.Success = false, want true (the close itself succeeded; only the fill price is unknown)")
+	}
+	if result.FilledPrice != nil {
+		t.Fatalf("FilledPrice = %v, want nil (never fabricated when no fill event ever arrives)", *result.FilledPrice)
+	}
+	if elapsed < fillWaitTimeout {
+		t.Fatalf("ClosePosition() returned after %v, before fillWaitTimeout (%v) elapsed — should wait the full bound", elapsed, fillWaitTimeout)
+	}
+	if elapsed > 2*fillWaitTimeout {
+		t.Fatalf("ClosePosition() took %v, want close to fillWaitTimeout (%v) — may be hanging longer than the bound", elapsed, fillWaitTimeout)
+	}
+}

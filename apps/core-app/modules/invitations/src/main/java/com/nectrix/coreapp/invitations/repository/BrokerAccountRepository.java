@@ -229,6 +229,38 @@ public class BrokerAccountRepository {
         args);
   }
 
+  /** Row shape for {@link #findSnapshotCandidates}. */
+  public record SnapshotCandidate(UUID id, String brokerType) {}
+
+  /**
+   * Bugfix — every broker account {@code AccountSnapshotSchedulerJob} should periodically snapshot
+   * into {@code account_snapshots}, so analytics' own equity curve stops being sparse/stale (it was
+   * previously only ever written as a side effect of copy-engine dispatching a trade). Three cases,
+   * not just "has a copy_relationships row": a Master's own {@code primary_broker_account_id}
+   * (needed even before they have a single Follower yet), plus either side of an ACTIVE/PAUSED
+   * {@code copy_relationships} row. Scoped to {@code connection_status = 'CONNECTED'} — a
+   * non-connected account has no live handle on the broker-adapters side, so attempting it would
+   * just fail every cycle for no benefit.
+   */
+  public List<SnapshotCandidate> findSnapshotCandidates() {
+    return jdbcTemplate.query(
+        """
+        SELECT DISTINCT ba.id, ba.broker_type
+        FROM broker_accounts ba
+        WHERE ba.connection_status = 'CONNECTED'
+          AND ba.id IN (
+            SELECT primary_broker_account_id FROM master_profiles
+            UNION
+            SELECT master_broker_account_id FROM copy_relationships WHERE status IN ('ACTIVE','PAUSED')
+            UNION
+            SELECT follower_broker_account_id FROM copy_relationships WHERE status IN ('ACTIVE','PAUSED')
+          )
+        """,
+        (rs, rowNum) ->
+            new SnapshotCandidate(
+                UUID.fromString(rs.getString("id")), rs.getString("broker_type")));
+  }
+
   /**
    * Row shape for the internal credentials endpoint (task #119) — the ciphertext, not the secret.
    */

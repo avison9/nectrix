@@ -137,7 +137,7 @@ func (l *Loop) Run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			l.disconnectAll(context.Background())
+			l.disconnectAllForShutdown()
 			return
 		case <-ticker.C:
 			l.reconcileOnce(ctx)
@@ -249,11 +249,27 @@ func (l *Loop) reportStatus(ctx context.Context, id, status, detail string) {
 	}
 }
 
-func (l *Loop) disconnectAll(ctx context.Context) {
+// disconnectAllForShutdown tears down every live local connection when this
+// process itself is exiting (ctx cancellation, e.g. SIGTERM) -- deliberately
+// does NOT report DISCONNECTED to core-app, unlike disconnectLocked's "no
+// longer desired" case below. Bugfix -- reporting DISCONNECTED here used to
+// cause a real self-inflicted deadlock: ListBrokerAccounts only ever returns
+// CONNECTED/PENDING accounts, so a fresh process restart's own reconcileOnce
+// would never rediscover an account this same shutdown had just marked
+// DISCONNECTED, permanently requiring a manual reconnect. Core-app's own view
+// of which accounts SHOULD be connected hasn't changed just because this
+// process is restarting, so its stored status is left alone; the brief
+// window where the DB still says CONNECTED but nothing is actually connected
+// closes itself via Run's own immediate reconcileOnce call on the next
+// startup.
+func (l *Loop) disconnectAllForShutdown() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	for id, conn := range l.connected {
-		l.disconnectLocked(ctx, id, conn)
+		_ = conn.sub.Close()
+		_ = l.adapter.Disconnect(context.Background(), conn.handle)
+		delete(l.connected, id)
+		l.logger.Info("reconcile: disconnected broker account (process shutting down)", "brokerAccountId", id)
 	}
 }
 

@@ -3,6 +3,8 @@ import { listAllCopiedTrades } from "@nectrix/api-client";
 import type { CopiedTradeStatus } from "@nectrix/api-client";
 import { coreAppBaseUrl } from "@/lib/core-app";
 import { requireSession } from "@/lib/auth";
+import { RefreshButton } from "./RefreshButton";
+import { LiveRefresh } from "./LiveRefresh";
 
 const STATUSES: CopiedTradeStatus[] = [
   "PENDING",
@@ -62,16 +64,24 @@ export default async function TradeHistoryPage({
     pageSize: PAGE_SIZE,
   });
   const lastPage = Math.max(0, Math.ceil(tradesPage.total / tradesPage.pageSize) - 1);
+  const hasOpenTrades = tradesPage.trades.some(
+    (t) => t.status === "FILLED" || t.status === "PARTIALLY_CLOSED",
+  );
 
   return (
     <div>
-      <div className="mb-6">
-        <h1 className="text-[25px] font-semibold tracking-tight text-[var(--text)]">
-          Trade history
-        </h1>
-        <p className="mt-1.5 text-[14px] text-[var(--text-2)]">
-          Every copied trade across {role === "master" ? "your followers" : "the masters you copy"}.
-        </p>
+      <LiveRefresh hasOpenTrades={hasOpenTrades} />
+      <div className="mb-6 flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-[25px] font-semibold tracking-tight text-[var(--text)]">
+            Trade history
+          </h1>
+          <p className="mt-1.5 text-[14px] text-[var(--text-2)]">
+            Every copied trade across{" "}
+            {role === "master" ? "your followers" : "the masters you copy"}.
+          </p>
+        </div>
+        <RefreshButton />
       </div>
 
       <form
@@ -152,6 +162,9 @@ export default async function TradeHistoryPage({
                   <th className="whitespace-nowrap px-5 py-2.5 text-left text-[11.5px] font-semibold uppercase tracking-wide text-[var(--text-3)]">
                     Status
                   </th>
+                  <th className="whitespace-nowrap px-5 py-2.5 text-left text-[11.5px] font-semibold uppercase tracking-wide text-[var(--text-3)]">
+                    Type
+                  </th>
                   <th className="whitespace-nowrap px-5 py-2.5 text-right text-[11.5px] font-semibold uppercase tracking-wide text-[var(--text-3)]">
                     Volume
                   </th>
@@ -164,31 +177,52 @@ export default async function TradeHistoryPage({
                 </tr>
               </thead>
               <tbody>
-                {tradesPage.trades.map((trade) => (
-                  <tr key={trade.id} className="border-t border-[var(--border)]">
-                    <td className="px-5 py-3 font-mono text-[13px] font-semibold text-[var(--text)]">
-                      {trade.canonicalSymbol}
-                    </td>
-                    <td className="px-5 py-3 text-[12.5px] text-[var(--text-2)]">{trade.status}</td>
-                    <td className="px-5 py-3 text-right font-mono text-[12.5px] text-[var(--text)]">
-                      {trade.computedVolumeLots}
-                    </td>
-                    <td
-                      className={`px-5 py-3 text-right font-mono text-[13px] font-semibold ${
-                        trade.realizedPnl === null
-                          ? "text-[var(--text-3)]"
-                          : trade.realizedPnl >= 0
-                            ? "text-[var(--pos)]"
-                            : "text-[var(--neg)]"
-                      }`}
-                    >
-                      {trade.realizedPnl === null ? "—" : trade.realizedPnl.toFixed(2)}
-                    </td>
-                    <td className="px-5 py-3 text-right text-[12px] text-[var(--text-3)]">
-                      {trade.openedAt ? new Date(trade.openedAt).toLocaleString() : "—"}
-                    </td>
-                  </tr>
-                ))}
+                {tradesPage.trades.map((trade) => {
+                  // TICKET-124 — closing a position transitions the SAME cell from unrealized to
+                  // the existing real realizedPnl value on the next fetch, with no separate
+                  // "unrealized" UI state to blank out mid-transition.
+                  const isClosed = trade.status === "CLOSED";
+                  const pnl = isClosed ? trade.realizedPnl : trade.unrealizedPnl;
+                  return (
+                    <tr key={trade.id} className="border-t border-[var(--border)]">
+                      <td className="px-5 py-3 font-mono text-[13px] font-semibold text-[var(--text)]">
+                        {trade.canonicalSymbol}
+                      </td>
+                      <td className="px-5 py-3 text-[12.5px] text-[var(--text-2)]">
+                        {trade.status}
+                      </td>
+                      <td
+                        className={`px-5 py-3 text-[12.5px] font-semibold ${
+                          trade.direction === "BUY" ? "text-[var(--pos)]" : "text-[var(--neg)]"
+                        }`}
+                      >
+                        {trade.direction}
+                      </td>
+                      <td className="px-5 py-3 text-right font-mono text-[12.5px] text-[var(--text)]">
+                        {trade.computedVolumeLots}
+                      </td>
+                      <td
+                        className={`px-5 py-3 text-right font-mono text-[13px] font-semibold ${
+                          pnl === null
+                            ? "text-[var(--text-3)]"
+                            : pnl >= 0
+                              ? "text-[var(--pos)]"
+                              : "text-[var(--neg)]"
+                        }`}
+                      >
+                        {pnl === null ? "—" : pnl.toFixed(2)}
+                        {!isClosed && pnl !== null && (
+                          <span className="ml-1 text-[10px] font-normal text-[var(--text-3)]">
+                            unrealized
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-5 py-3 text-right text-[12px] text-[var(--text-3)]">
+                        {trade.openedAt ? new Date(trade.openedAt).toLocaleString() : "—"}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

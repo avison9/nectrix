@@ -18,13 +18,15 @@ import org.springframework.stereotype.Repository;
 public class CopiedTradeRepository {
 
   /**
-   * {@code canonical_symbol} isn't a {@code copied_trades} column — every query here joins {@code
-   * trade_signals} to pull it in (see {@link CopiedTrade}'s own Javadoc).
+   * {@code canonical_symbol}/{@code direction} aren't {@code copied_trades} columns — every query
+   * here joins {@code trade_signals} to pull them in (see {@link CopiedTrade}'s own Javadoc).
+   * {@code direction} is the Trade History page's TYPE column (BUY/SELL) — bugfix follow-up.
    */
   private static final String SELECT_COLUMNS =
       """
       ct.id, ct.copy_relationship_id, ct.trade_signal_id, ct.status, ts.canonical_symbol,
-      ct.computed_volume_lots, ct.requested_price, ct.filled_price, ct.slippage_pips,
+      ts.direction, ct.computed_volume_lots, ct.current_open_volume_lots,
+      ct.follower_broker_position_id, ct.requested_price, ct.filled_price, ct.slippage_pips,
       ct.reject_reason, ct.realized_pnl, ct.opened_at, ct.closed_at, ct.created_at
       """;
 
@@ -38,7 +40,10 @@ public class CopiedTradeRepository {
             UUID.fromString(rs.getString("trade_signal_id")),
             rs.getString("status"),
             rs.getString("canonical_symbol"),
+            rs.getString("direction"),
             rs.getBigDecimal("computed_volume_lots"),
+            rs.getBigDecimal("current_open_volume_lots"),
+            rs.getString("follower_broker_position_id"),
             rs.getBigDecimal("requested_price"),
             rs.getBigDecimal("filled_price"),
             rs.getBigDecimal("slippage_pips"),

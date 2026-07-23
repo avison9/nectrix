@@ -222,6 +222,63 @@ func TestReconcileOnce_ReportsConnectionStatus(t *testing.T) {
 	})
 }
 
+// TestRun_ShutdownDoesNotReportDisconnected is a regression test for a real self-inflicted
+// deadlock: ListBrokerAccounts only ever returns CONNECTED/PENDING accounts, so if a process
+// shutdown reported DISCONNECTED (like the "no longer desired" case does), a fresh process
+// restart's own reconcileOnce would never rediscover the account again, permanently requiring a
+// manual DB fixup. Proves ctx cancellation tears down the local connection without touching
+// core-app's reported status at all.
+func TestRun_ShutdownDoesNotReportDisconnected(t *testing.T) {
+	lister := &fakeLister{accounts: []reconcile.BrokerAccountRef{{ID: "acc-good"}}}
+	adapter := newFakeAdapter()
+	reporter := newFakeStatusReporter()
+	loop := reconcile.New(lister, newFakeCredentialFetcher(), reporter, nil, nil, adapter, noopOnEvent, 20*time.Millisecond, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go loop.Run(ctx)
+	waitFor(t, func() bool { return adapter.isConnected("acc-good") })
+	waitFor(t, func() bool { return len(reporter.statusesFor("acc-good")) > 0 })
+
+	cancel()
+	waitFor(t, func() bool { return adapter.connectedCount() == 0 })
+
+	// Give any (incorrect) status report a moment to land before asserting its absence.
+	time.Sleep(50 * time.Millisecond)
+	for _, status := range reporter.statusesFor("acc-good") {
+		if status == "DISCONNECTED" {
+			t.Fatalf("statusesFor(acc-good) = %v, shutdown must never report DISCONNECTED", reporter.statusesFor("acc-good"))
+		}
+	}
+}
+
+// TestRun_ReconnectsAfterShutdown_WithoutExternalStatusChange proves the actual intent behind the
+// fix above: a fresh Loop (simulating a process restart) rediscovers and reconnects the exact same
+// still-CONNECTED-per-core-app account with zero external intervention -- no test/prod operator
+// ever has to flip connection_status back to PENDING by hand.
+func TestRun_ReconnectsAfterShutdown_WithoutExternalStatusChange(t *testing.T) {
+	lister := &fakeLister{accounts: []reconcile.BrokerAccountRef{{ID: "acc-good"}}}
+	reporter := newFakeStatusReporter()
+
+	firstAdapter := newFakeAdapter()
+	firstLoop := reconcile.New(lister, newFakeCredentialFetcher(), reporter, nil, nil, firstAdapter, noopOnEvent, 20*time.Millisecond, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go firstLoop.Run(ctx)
+	waitFor(t, func() bool { return firstAdapter.isConnected("acc-good") })
+	cancel()
+	waitFor(t, func() bool { return firstAdapter.connectedCount() == 0 })
+
+	// A brand-new process would start with a brand-new Loop -- lister still reports the same
+	// account (core-app's own view never changed), proving reconnection needs no external nudge.
+	secondAdapter := newFakeAdapter()
+	secondLoop := reconcile.New(lister, newFakeCredentialFetcher(), reporter, nil, nil, secondAdapter, noopOnEvent, 20*time.Millisecond, nil)
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
+	go secondLoop.Run(ctx2)
+	waitFor(t, func() bool { return secondAdapter.isConnected("acc-good") })
+}
+
 func TestReconcileOnce_PassesTheLoopsOwnOnEventToStreamTradeEvents(t *testing.T) {
 	var calls int
 	onEvent := func(ctx context.Context, event domain.NormalizedTradeEvent) error {

@@ -114,10 +114,10 @@ func (a *CTraderAdapter) unrealizedPnL(ctx context.Context, conn *connection, po
 
 	volumeUnits := float64(trade.GetVolume()) / 100
 	direction := 1.0
-	currentPrice := spot.bid // closing a BUY realizes at bid
-	if trade.GetTradeSide() == openapi.ProtoOATradeSide_SELL {
+	tradeDir := tradeDirection(trade.GetTradeSide())
+	currentPrice := closingPriceFor(tradeDir, spot)
+	if tradeDir == domain.TradeDirectionSell {
 		direction = -1.0
-		currentPrice = spot.ask // closing a SELL realizes at ask
 	}
 	return (currentPrice - position.GetPrice()) * volumeUnits * direction, nil
 }
@@ -139,6 +139,7 @@ func (a *CTraderAdapter) GetOpenPositions(ctx context.Context, handle domain.Con
 	}
 
 	positions := make([]domain.NormalizedPosition, 0, len(resp.GetPosition()))
+	var missingSpotSymbolIDs []int64
 	for _, p := range resp.GetPosition() {
 		normalized, _, err := a.mapPosition(ctx, conn, p)
 		if err != nil {
@@ -146,6 +147,21 @@ func (a *CTraderAdapter) GetOpenPositions(ctx context.Context, handle domain.Con
 			continue
 		}
 		positions = append(positions, normalized)
+		if normalized.CurrentPrice == nil {
+			missingSpotSymbolIDs = append(missingSpotSymbolIDs, p.GetTradeData().GetSymbolId())
+		}
 	}
+
+	// TICKET-124 — best-effort: any position whose symbol had no cached tick yet (mapPosition's
+	// own passive read missed) gets subscribed here so the price converges by the NEXT call,
+	// same lazy-subscribe-on-miss pattern unrealizedPnL already established. This call's own
+	// result for that position still has a nil CurrentPrice (an honest "first tick hasn't
+	// arrived yet" race, not fabricated) — never blocks or fails the whole response over it.
+	if len(missingSpotSymbolIDs) > 0 {
+		if err := a.subscribeSpots(ctx, conn, missingSpotSymbolIDs); err != nil {
+			a.logger.Warn("ctrader: could not subscribe spots for open positions with no cached price yet", "error", err)
+		}
+	}
+
 	return positions, nil
 }

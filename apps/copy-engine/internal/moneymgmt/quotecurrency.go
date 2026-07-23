@@ -2,8 +2,10 @@ package moneymgmt
 
 import domain "github.com/avison9/nectrix/go-domain"
 
-// quoteCurrencyOf approximates the quote currency of a symbol for the pip
+// QuoteCurrencyOf approximates the quote currency of a symbol for the pip
 // value conversion docs/09 §9.2.4 needs (fx_rate(quote_ccy, follower_ccy)).
+// Exported (was quoteCurrencyOf) — realized P&L computation (pipeline
+// package) needs the exact same approximation, not a second copy of it.
 //
 // packages/go-domain.SymbolSpec has no explicit quote-currency field (a real
 // gap -- see this ticket's plan "Open risks" #1; not addressed by widening
@@ -13,7 +15,7 @@ import domain "github.com/avison9/nectrix/go-domain"
 // back to the symbol spec's margin currency as the best available proxy --
 // a real approximation, not a true quote-currency lookup, worth a proper
 // SymbolSpec.QuoteCurrency field in a later ticket.
-func quoteCurrencyOf(symbol domain.NormalizedSymbol, spec domain.SymbolSpec) string {
+func QuoteCurrencyOf(symbol domain.NormalizedSymbol, spec domain.SymbolSpec) string {
 	if symbol.AssetClass == domain.AssetClassFX && len(symbol.CanonicalCode) == 6 {
 		return symbol.CanonicalCode[3:]
 	}

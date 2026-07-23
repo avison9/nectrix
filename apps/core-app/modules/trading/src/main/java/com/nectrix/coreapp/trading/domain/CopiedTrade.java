@@ -16,7 +16,16 @@ public record CopiedTrade(
     UUID tradeSignalId,
     String status,
     String canonicalSymbol,
+    // Bugfix — the Trade History page's TYPE column (BUY/SELL), pulled in via the same
+    // trade_signals join canonicalSymbol already uses.
+    String direction,
     BigDecimal computedVolumeLots,
+    // TICKET-124 — the live remaining volume of an OPEN/PARTIALLY_CLOSED position (as opposed to
+    // computedVolumeLots, the immutable original size) and the follower's own real broker
+    // position id, both needed by UnrealizedPnlEnrichmentService to match this row against a real
+    // open position from BrokerAdaptersInternalClient.getOpenPositions.
+    BigDecimal currentOpenVolumeLots,
+    String followerBrokerPositionId,
     BigDecimal requestedPrice,
     BigDecimal filledPrice,
     BigDecimal slippagePips,

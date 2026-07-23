@@ -56,6 +56,18 @@ func protoTradeSide(direction domain.TradeDirection) openapi.ProtoOATradeSide {
 	return openapi.ProtoOATradeSide_BUY
 }
 
+// closingPriceFor (TICKET-124) is "what would this position realize at right now" — bid for
+// BUY, ask for SELL (a BUY position closes by selling at the bid; a SELL position closes by
+// buying at the ask). Shared by unrealizedPnL (account-equity P&L, snapshot.go) and mapPosition
+// (per-position CurrentPrice) so the two can never use a different convention for the same
+// concept.
+func closingPriceFor(direction domain.TradeDirection, spot spotPrice) float64 {
+	if direction == domain.TradeDirectionSell {
+		return spot.ask
+	}
+	return spot.bid
+}
+
 // pipSize follows the standard "pip position" convention used across
 // MT4/MT5-style and cTrader symbol specs alike: the pip is the digit at
 // position PipPosition counting from the decimal point (e.g. Digits=5,

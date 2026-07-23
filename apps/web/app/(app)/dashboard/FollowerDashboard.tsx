@@ -1,6 +1,7 @@
 import {
   getBrokerAccountPositions,
   getBrokerAccountSnapshot,
+  listAllCopiedTrades,
   listCopyRelationships,
 } from "@nectrix/api-client";
 import { coreAppBaseUrl } from "@/lib/core-app";
@@ -23,7 +24,7 @@ export async function FollowerDashboard({ email, accessToken }: { email: string;
   const uniqueBrokerAccountIds = [
     ...new Set(activeRelationships.map((r) => r.followerBrokerAccountId)),
   ];
-  const [snapshots, positions] = await Promise.all([
+  const [snapshots, positions, openTradesPage] = await Promise.all([
     Promise.all(
       uniqueBrokerAccountIds.map((id) =>
         getBrokerAccountSnapshot(baseUrl, accessToken, id).catch(() => null),
@@ -34,7 +35,12 @@ export async function FollowerDashboard({ email, accessToken }: { email: string;
         getBrokerAccountPositions(baseUrl, accessToken, id).catch(() => []),
       ),
     ),
+    listAllCopiedTrades(baseUrl, accessToken, { role: "follower", pageSize: 50 }),
   ]);
+  // TICKET-124 — Live Activity's own position book, same enriched data Trade History uses.
+  const openPositions = openTradesPage.trades.filter(
+    (t) => t.status === "FILLED" || t.status === "PARTIALLY_CLOSED",
+  );
 
   const totalEquity = snapshots.reduce((sum, s) => sum + (s?.equity ?? 0), 0);
   const openPositionsCount = positions.reduce((sum, p) => sum + p.length, 0);
@@ -114,7 +120,12 @@ export async function FollowerDashboard({ email, accessToken }: { email: string;
           )}
         </div>
 
-        <LivePositionsFeed accessToken={accessToken} subscriptions={subscriptions} />
+        <LivePositionsFeed
+          accessToken={accessToken}
+          subscriptions={subscriptions}
+          role="follower"
+          initialPositions={openPositions}
+        />
       </div>
     </div>
   );

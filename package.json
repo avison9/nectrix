@@ -13,13 +13,22 @@
     "dev": "turbo run dev",
     "lint": "turbo run lint"
   },
+  "overrides": {
+    "sharp": "0.35.3",
+    "next": {
+      "sharp": "0.35.3"
+    }
+  },
   "devDependencies": {
-    "turbo": "2.10.3",
-    "eslint": "9.39.4",
     "@eslint/js": "9.39.4",
+    "eslint": "9.39.4",
     "eslint-plugin-boundaries": "7.0.0",
     "globals": "17.7.0",
-    "typescript-eslint": "8.62.1",
-    "typescript": "6.0.3"
+    "turbo": "2.10.3",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.62.1"
+  },
+  "dependencies": {
+    "sharp": "0.35.3"
   }
 }

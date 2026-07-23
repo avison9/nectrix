@@ -4,6 +4,8 @@ import com.nectrix.coreapp.billing.api.PerformanceFeeLedgerArchivalApi;
 import com.nectrix.coreapp.billing.api.PerformanceFeeLedgerArchiveExport;
 import com.nectrix.coreapp.invitations.api.BrokerAccountArchivalApi;
 import com.nectrix.coreapp.invitations.api.BrokerAccountArchivalApi.BrokerAccountExportView;
+import com.nectrix.coreapp.social.api.MasterProfileLookupApi;
+import com.nectrix.coreapp.social.api.MasterProfileSummaryView;
 import com.nectrix.coreapp.trading.api.CopyRelationshipArchivalApi;
 import com.nectrix.coreapp.trading.api.CopyRelationshipArchiveExport;
 import com.nectrix.coreapp.trading.api.CopyRelationshipArchiveExport.CopyRelationshipRecord;
@@ -17,6 +19,7 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.zip.GZIPOutputStream;
 import org.springframework.stereotype.Service;
@@ -41,6 +44,8 @@ public class BrokerAccountArchivalOrchestrator {
   private final BrokerAccountArchivalApi brokerAccountArchivalApi;
   private final CopyRelationshipArchivalApi copyRelationshipArchivalApi;
   private final PerformanceFeeLedgerArchivalApi performanceFeeLedgerArchivalApi;
+  private final MasterProfileLookupApi masterProfileLookupApi;
+  private final MasterPrimaryBrokerAccountOrchestrator masterPrimaryBrokerAccountOrchestrator;
   private final ArchivalBlobStorageClient blobStorageClient;
   private final ArchivalLogRepository archivalLogRepository;
   private final ObjectMapper objectMapper;
@@ -49,12 +54,16 @@ public class BrokerAccountArchivalOrchestrator {
       BrokerAccountArchivalApi brokerAccountArchivalApi,
       CopyRelationshipArchivalApi copyRelationshipArchivalApi,
       PerformanceFeeLedgerArchivalApi performanceFeeLedgerArchivalApi,
+      MasterProfileLookupApi masterProfileLookupApi,
+      MasterPrimaryBrokerAccountOrchestrator masterPrimaryBrokerAccountOrchestrator,
       ArchivalBlobStorageClient blobStorageClient,
       ArchivalLogRepository archivalLogRepository,
       ObjectMapper objectMapper) {
     this.brokerAccountArchivalApi = brokerAccountArchivalApi;
     this.copyRelationshipArchivalApi = copyRelationshipArchivalApi;
     this.performanceFeeLedgerArchivalApi = performanceFeeLedgerArchivalApi;
+    this.masterProfileLookupApi = masterProfileLookupApi;
+    this.masterPrimaryBrokerAccountOrchestrator = masterPrimaryBrokerAccountOrchestrator;
     this.blobStorageClient = blobStorageClient;
     this.archivalLogRepository = archivalLogRepository;
     this.objectMapper = objectMapper;
@@ -72,6 +81,20 @@ public class BrokerAccountArchivalOrchestrator {
     if (!"DISCONNECTED".equals(brokerAccount.connectionStatus())) {
       throw new IllegalStateException(
           "Broker account " + brokerAccountId + " is not DISCONNECTED, refusing to archive");
+    }
+    // Bugfix — same "checked up front, not left to the very end" reasoning as the DISCONNECTED
+    // guard above: master_profiles.primary_broker_account_id is a NOT NULL FK with no cascade, so
+    // hardDelete's own final DELETE would otherwise fail on it AFTER copy_relationships/
+    // copied_trades/trade_signals/performance_fee_ledger are already gone, leaving this account
+    // stuck in a half-torn-down state. Auto-reassign to another eligible account of this same
+    // Master's if one exists; refuse up front, before anything is touched, if not.
+    Optional<MasterProfileSummaryView> primaryOwner =
+        masterProfileLookupApi.findByPrimaryBrokerAccountId(brokerAccountId);
+    if (primaryOwner.isPresent()
+        && masterPrimaryBrokerAccountOrchestrator
+            .autoReassignForArchival(primaryOwner.get(), brokerAccountId)
+            .isEmpty()) {
+      throw new MasterPrimaryBrokerAccountRequiredException(brokerAccountId);
     }
     CopyRelationshipArchiveExport copyExport =
         copyRelationshipArchivalApi.findForExport(brokerAccountId);

@@ -226,7 +226,7 @@ func computeRiskPercent(ctx context.Context, in Input, fx FXRateProvider) (decim
 	riskAmount := decimal.NewFromFloat(in.FollowerAccount.Equity).
 		Mul(decimal.NewFromFloat(*in.Profile.RiskPercent).Div(decimal.NewFromInt(100)))
 
-	quoteCcy := quoteCurrencyOf(in.MasterPosition.Symbol, in.SymbolSpec)
+	quoteCcy := QuoteCurrencyOf(in.MasterPosition.Symbol, in.SymbolSpec)
 	rate := decimal.NewFromInt(1)
 	if quoteCcy != in.FollowerAccount.Currency {
 		r, err := fx.Rate(ctx, quoteCcy, in.FollowerAccount.Currency)

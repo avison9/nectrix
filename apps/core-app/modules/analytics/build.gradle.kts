@@ -28,4 +28,9 @@ dependencies {
     // modules:trading/modules:social already use for their own ownership-gated endpoints.
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("org.springframework.security:spring-security-core")
+    // Feature — org.springframework.security.oauth2.jwt.Jwt principal type for
+    // FollowerAnalyticsController's @AuthenticationPrincipal Jwt binding, same "just the
+    // annotations/types, not the full starter" precedent modules:trading's own build.gradle.kts
+    // comment already establishes for this exact dependency.
+    implementation("org.springframework.security:spring-security-oauth2-jose")
 }

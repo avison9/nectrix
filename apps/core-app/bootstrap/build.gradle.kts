@@ -14,6 +14,13 @@ plugins {
 // (confirmed by hitting that exact error) — same reason every module here
 // separately imports the Spring Boot BOM rather than relying on inheriting
 // it from bootstrap.
+// Security fix — Spring Boot 4.1.0's own BOM still pins netty.version to 4.2.15.Final, which has
+// several HIGH-severity CVEs (CVE-2026-59901, -55831, -55833, -56745) fixed in 4.2.16.Final. No
+// newer Spring Boot 4.1.x patch release exists yet to pick this up automatically, so override the
+// BOM-managed property directly, same mechanism Spring Boot's own docs document for this exact
+// situation (overriding a managed version ahead of a Spring Boot release doing it for you).
+extra["netty.version"] = "4.2.16.Final"
+
 dependencyManagement {
     imports {
         mavenBom("software.amazon.awssdk:bom:2.31.68")
@@ -64,7 +71,7 @@ dependencies {
     // superuser.
     // 42.7.7 has a real, fixed HIGH-severity CVE (CVE-2026-42198, client-side
     // DoS) — caught by CI's Trivy gate, fixed by bumping to 42.7.11+.
-    runtimeOnly("org.postgresql:postgresql:42.7.11")
+    runtimeOnly("org.postgresql:postgresql:42.7.12")
     implementation("com.nectrix:event-contracts")
     // TICKET-101 follow-up — ArchivalBlobStorageClient's real AWS S3 SDK v2 client (MinIO
     // locally/in CI via endpointOverride, real AWS S3 in production), same "each module/app

@@ -93,6 +93,12 @@ type NormalizedPosition struct {
 	CurrentSLPrice   *float64         `json:"currentSlPrice"` // nullable
 	CurrentTPPrice   *float64         `json:"currentTpPrice"` // nullable
 	OpenedAt         string           `json:"openedAt"`
+	// CurrentPrice (TICKET-124) is the price this position would realize at if closed right
+	// now -- bid for BUY, ask for SELL, matching ctrader/accounts.go's own unrealizedPnL
+	// convention exactly. Nullable: nil means "no live tick cached yet for this symbol,"
+	// never a fabricated 0 -- callers must render this as unknown, not flat. Adapters with no
+	// live spot-tick plumbing yet (MT4/MT5) leave this nil for every position.
+	CurrentPrice *float64 `json:"currentPrice"`
 }
 
 // NormalizedTradeEvent is the event a master's BrokerAdapter emits; input to the Copy Engine.

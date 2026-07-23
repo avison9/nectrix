@@ -21,12 +21,15 @@ import com.nectrix.coreapp.invitations.api.BrokerAccountLookupApi;
 import com.nectrix.coreapp.invitations.api.BrokerAccountView;
 import com.nectrix.coreapp.invitations.api.TierChangeRequestAdminApi;
 import com.nectrix.coreapp.invitations.api.TierChangeRequestAdminApi.TierChangeRequestView;
+import com.nectrix.coreapp.trading.api.AdminCopyRelationshipApi;
+import com.nectrix.coreapp.trading.api.AdminCopyRelationshipApi.LinkedCopyRelationshipView;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -88,6 +91,7 @@ public class AdminController {
   private final KafkaConsumerLagService kafkaConsumerLagService;
   private final AuditLogRepository auditLogRepository;
   private final ObjectMapper objectMapper;
+  private final AdminCopyRelationshipApi adminCopyRelationshipApi;
 
   /** System Health's Copy Engine throughput/error-rate window — see {@link #getSystemHealth}. */
   private static final Duration COPY_ENGINE_WINDOW = Duration.ofMinutes(15);
@@ -103,7 +107,8 @@ public class AdminController {
       MtTerminalHostClient mtTerminalHostClient,
       KafkaConsumerLagService kafkaConsumerLagService,
       AuditLogRepository auditLogRepository,
-      ObjectMapper objectMapper) {
+      ObjectMapper objectMapper,
+      AdminCopyRelationshipApi adminCopyRelationshipApi) {
     this.impersonationApi = impersonationApi;
     this.brokerAccountLookupApi = brokerAccountLookupApi;
     this.userProvisioningApi = userProvisioningApi;
@@ -115,6 +120,7 @@ public class AdminController {
     this.kafkaConsumerLagService = kafkaConsumerLagService;
     this.auditLogRepository = auditLogRepository;
     this.objectMapper = objectMapper;
+    this.adminCopyRelationshipApi = adminCopyRelationshipApi;
   }
 
   @PostMapping("/api/v1/admin/impersonate/{userId}")
@@ -253,6 +259,42 @@ public class AdminController {
     List<BrokerAccountView> brokerAccounts = brokerAccountLookupApi.listForUser(id);
     MtTerminalsSection mtTerminals = buildMtTerminalsSectionForUser(brokerAccounts);
     return new UserDetailResponse(user, brokerAccounts, mtTerminals);
+  }
+
+  /**
+   * #421 — a SUPER_ADMIN/ADMIN can create a real {@code copy_relationships} row directly, without
+   * the Master sending an invite or the Follower requesting one. ADMIN+SUPER_ADMIN — same "grants a
+   * real capability" class of action {@link #approveTierChangeRequest} already establishes for
+   * SUPER_ADMIN. The Master is identified by email (resolved to a user id here, before ever
+   * reaching {@code trading}) rather than requiring a separate master-search UI/ endpoint.
+   */
+  @PostMapping("/api/v1/admin/users/{followerId}/copy-relationships")
+  @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
+  public LinkFollowerToMasterResponse linkFollowerToMaster(
+      @PathVariable UUID followerId,
+      @RequestBody LinkFollowerToMasterRequest request,
+      @AuthenticationPrincipal Jwt jwt) {
+    UUID actingAdminId = currentUserId(jwt);
+    UserView masterUser =
+        userAdminApi
+            .findByEmail(request.masterEmail())
+            .orElseThrow(
+                () -> new NoSuchElementException("No such user: " + request.masterEmail()));
+    LinkedCopyRelationshipView view =
+        adminCopyRelationshipApi.linkFollowerToMaster(
+            followerId, masterUser.id(), request.followerBrokerAccountId());
+    auditLogRepository.insert(
+        actingAdminId,
+        "ADMIN",
+        "COPY_RELATIONSHIP_ADMIN_LINKED",
+        "COPY_RELATIONSHIP",
+        view.id().toString(),
+        objectMapper.writeValueAsString(
+            Map.of(
+                "followerUserId", followerId.toString(),
+                "masterUserId", masterUser.id().toString(),
+                "status", view.status())));
+    return new LinkFollowerToMasterResponse(view.id(), view.status(), view.masterDisplayName());
   }
 
   /**
@@ -573,6 +615,11 @@ public class AdminController {
 
   public record UserDetailResponse(
       UserView user, List<BrokerAccountView> brokerAccounts, MtTerminalsSection mtTerminals) {}
+
+  public record LinkFollowerToMasterRequest(String masterEmail, UUID followerBrokerAccountId) {}
+
+  public record LinkFollowerToMasterResponse(
+      UUID copyRelationshipId, String status, String masterDisplayName) {}
 
   public record FeeLedgerDetailResponse(
       FeeLedgerDetailView ledger, List<UnderlyingTradeView> trades) {}

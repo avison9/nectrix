@@ -37,11 +37,13 @@ import type {
   LeaderboardEntry,
   LeaderboardPeriod,
   LeaderboardSort,
+  LinkFollowerToMasterResult,
   MasterProfile,
   MyProspectNomination,
   NormalizedPosition,
   NormalizedTradeEvent,
   PendingInvitation,
+  PrimaryBrokerAccountChange,
   ProspectNomination,
   PublicMasterProfile,
   SymbolMappingEntry,
@@ -88,9 +90,11 @@ export type {
   LeaderboardEntry,
   LeaderboardPeriod,
   LeaderboardSort,
+  LinkFollowerToMasterResult,
   MasterProfile,
   MyProspectNomination,
   PendingInvitation,
+  PrimaryBrokerAccountChange,
   ProspectNomination,
   PublicMasterProfile,
   SymbolMappingEntry,
@@ -697,6 +701,29 @@ export async function patchMasterProfile(
   });
 }
 
+/**
+ * Bugfix — lets a Master change which of their own broker accounts is their primary one, cascading
+ * to any existing non-terminal copy_relationships rows still pointing at the old one (see
+ * bootstrap.archival.MasterPrimaryBrokerAccountOrchestrator's own Javadoc). This is what was
+ * missing that caused a Master's trades to stop being copied after linking a new broker account.
+ */
+export async function changeMasterPrimaryBrokerAccount(
+  baseUrl: string,
+  accessToken: string,
+  masterProfileId: string,
+  brokerAccountId: string,
+): Promise<PrimaryBrokerAccountChange> {
+  return coreAppFetch<PrimaryBrokerAccountChange>(
+    baseUrl,
+    `/api/v1/master-profiles/${masterProfileId}/primary-broker-account`,
+    {
+      method: "PATCH",
+      accessToken,
+      body: JSON.stringify({ broker_account_id: brokerAccountId }),
+    },
+  );
+}
+
 export async function listCopyRelationships(
   baseUrl: string,
   accessToken: string,
@@ -944,6 +971,24 @@ export async function getMasterAnalytics(
   );
 }
 
+// ==================== Feature — Follower Analytics ====================
+// Same response shape as MasterAnalytics (equityCurve/monthlyReturns/pnlByInstrument) — see
+// FollowerAnalyticsService's own Javadoc for why it's an aggregation across every broker account
+// this Follower has ever copied onto, not a single-account lookup.
+export type FollowerAnalytics = MasterAnalytics;
+
+export async function getFollowerAnalytics(
+  baseUrl: string,
+  accessToken: string,
+  period: AnalyticsPeriod = "30D",
+): Promise<FollowerAnalytics> {
+  return coreAppFetch<FollowerAnalytics>(
+    baseUrl,
+    `/api/v1/followers/me/analytics?period=${period}`,
+    { method: "GET", accessToken },
+  );
+}
+
 // ==================== TICKET-112 — Public Discovery (Leaderboard) ====================
 // Both functions below deliberately take no accessToken — docs/14-api-specification.md §14.4:
 // "Discovery endpoints remain public/unauthenticated" (same no-token precedent as
@@ -1174,6 +1219,32 @@ export async function deleteUser(
     method: "DELETE",
     accessToken,
   });
+}
+
+/**
+ * #421 — ADMIN/SUPER_ADMIN-only server-side call: links an existing Follower directly to an
+ * existing Master (identified by email), bypassing the invite-send/invite-accept and
+ * follow-request flows. See AdminController#linkFollowerToMaster's own Javadoc for the
+ * PENDING_AGREEMENT-vs-ACTIVE status derivation.
+ */
+export async function linkFollowerToMaster(
+  baseUrl: string,
+  accessToken: string,
+  followerId: string,
+  input: { masterEmail: string; followerBrokerAccountId: string },
+): Promise<LinkFollowerToMasterResult> {
+  return coreAppFetch<LinkFollowerToMasterResult>(
+    baseUrl,
+    `/api/v1/admin/users/${followerId}/copy-relationships`,
+    {
+      method: "POST",
+      accessToken,
+      body: JSON.stringify({
+        master_email: input.masterEmail,
+        follower_broker_account_id: input.followerBrokerAccountId,
+      }),
+    },
+  );
 }
 
 /** `status` defaults to DISPUTED server-side — see the ticket's own scope note. */
