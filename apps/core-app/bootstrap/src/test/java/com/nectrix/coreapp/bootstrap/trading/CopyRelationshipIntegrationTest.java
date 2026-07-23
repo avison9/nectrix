@@ -50,7 +50,9 @@ class CopyRelationshipIntegrationTest {
    */
   @DynamicPropertySource
   static void documentsPublicEndpoint(DynamicPropertyRegistry registry) {
-    registry.add("nectrix.documents.public-endpoint-override", () -> System.getenv("DOCUMENTS_ENDPOINT_OVERRIDE"));
+    registry.add(
+        "nectrix.documents.public-endpoint-override",
+        () -> System.getenv("DOCUMENTS_ENDPOINT_OVERRIDE"));
   }
 
   @LocalServerPort private int port;
