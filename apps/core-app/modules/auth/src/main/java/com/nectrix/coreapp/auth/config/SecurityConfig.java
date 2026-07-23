@@ -269,6 +269,11 @@ public class SecurityConfig {
                     // MasterAnalyticsService's own @PostAuthorize, not this matcher.
                     .requestMatchers(HttpMethod.GET, "/api/v1/master-profiles/*/analytics")
                     .authenticated()
+                    // Feature — FollowerAnalyticsController, self-scoped by the caller's own JWT
+                    // subject, no ownership matcher needed (there's no "someone else's" id in the
+                    // path at all, unlike master-profiles/*/analytics above).
+                    .requestMatchers(HttpMethod.GET, "/api/v1/followers/me/analytics")
+                    .authenticated()
                     .requestMatchers(HttpMethod.GET, "/api/v1/copy-relationships")
                     .authenticated()
                     .requestMatchers(HttpMethod.GET, "/api/v1/copy-relationships/*")

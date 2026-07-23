@@ -76,6 +76,20 @@ func (r relationship) excludesSymbol(canonicalSymbol string) bool {
 // neither side of TICKET-109's reconciliation design touches, since it's a
 // partial-fan-out failure, not a broker-vs-ledger diff. A future ticket's
 // job (continue-on-error + aggregate), not this one's.
+// Bugfix -- one relationship's dispatch failure (e.g. a completely unrelated
+// Follower's broker connection being down) must never prevent this Master's
+// OTHER relationships from receiving this same signal. Originally this
+// returned on the FIRST relationship's error, aborting the loop entirely --
+// confirmed live (DIAGTEMP logging during this investigation) to be exactly
+// why a real Follower never received copies of a Master's trades whenever an
+// unrelated, disconnected Follower happened to be matched first (relationship
+// row order from matchRelationships' query has no ORDER BY, so which
+// relationship goes "first" is arbitrary). Every relationship is now always
+// attempted; a combined error is still returned if any failed, so the
+// Kafka-consumer's own retry/DLQ safety net still applies to the relationship
+// that actually failed -- doDispatchOrder's own idempotent CLAIM step
+// (ON CONFLICT DO NOTHING) makes re-attempting an already-succeeded
+// relationship on retry a safe no-op, not a duplicate copy.
 func (p *Pipeline) processSignalForAllRelationships(ctx context.Context, masterAccountID uuid.UUID, signalID uuid.UUID, event domain.NormalizedTradeEvent) error {
 	ctx, span := observability.Tracer().Start(ctx, "pipeline.relationship_match")
 	relationships, err := p.matchRelationships(ctx, masterAccountID)
@@ -85,12 +99,15 @@ func (p *Pipeline) processSignalForAllRelationships(ctx context.Context, masterA
 		return err
 	}
 
+	var errs []error
 	for _, r := range relationships {
 		if err := p.dispatchOrder(ctx, r, signalID, event); err != nil {
-			return fmt.Errorf("dispatch order for relationship %s: %w", r.id, err)
+			slog.Default().Error("pipeline: dispatch order failed for relationship, continuing with the rest",
+				"copyRelationshipId", r.id, "error", err)
+			errs = append(errs, fmt.Errorf("dispatch order for relationship %s: %w", r.id, err))
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // matchRelationships is the Relationship Matcher (Appendix A.2) -- "stub"
@@ -405,6 +422,56 @@ func (p *Pipeline) loadBrokerType(ctx context.Context, brokerAccountID uuid.UUID
 		return "", fmt.Errorf("query broker_accounts: %w", err)
 	}
 	return domain.BrokerType(brokerType), nil
+}
+
+// loadBrokerAccountCurrency reads a broker_accounts row's own denomination
+// directly -- same "no live broker call, just the DB row already synced at
+// link time" precedent loadBrokerType already establishes. Realized P&L
+// needs this to know whether an FX conversion is required at all.
+func (p *Pipeline) loadBrokerAccountCurrency(ctx context.Context, brokerAccountID uuid.UUID) (string, error) {
+	var currency string
+	err := p.pool.QueryRow(ctx, `SELECT currency FROM broker_accounts WHERE id = $1`, brokerAccountID).Scan(&currency)
+	if err != nil {
+		return "", fmt.Errorf("query broker_accounts: %w", err)
+	}
+	return currency, nil
+}
+
+// computeRealizedPnL is copied_trades.realized_pnl's one real writer --
+// previously every close path left this NULL forever (a real gap: no wire
+// data or DB column ever carried a P&L value for a closed trade). Follows
+// the exact same pip-value/FX-conversion convention moneymgmt.ComputeLotSize
+// already establishes (moneymgmt.QuoteCurrencyOf + FXRateProvider), just
+// applied in the opposite direction: instead of turning a risk amount into a
+// lot size, this turns a price move into the follower account's own
+// currency. Returns nil (not an error) on any lookup miss -- best-effort,
+// same "never block finalizing the close over an enrichment step" precedent
+// writeAccountSnapshotBestEffort's own name already sets; a NULL
+// realized_pnl is honest (unknown), never a fabricated zero.
+func (p *Pipeline) computeRealizedPnL(ctx context.Context, followerBrokerAccountID uuid.UUID, symbol domain.NormalizedSymbol, direction domain.TradeDirection, volumeLots, openPrice, closePrice float64) *float64 {
+	spec, mapped, err := p.loadConfirmedSymbolSpec(ctx, followerBrokerAccountID, symbol)
+	if err != nil || !mapped {
+		return nil
+	}
+	accountCurrency, err := p.loadBrokerAccountCurrency(ctx, followerBrokerAccountID)
+	if err != nil {
+		return nil
+	}
+	priceDiff := closePrice - openPrice
+	if direction == domain.TradeDirectionSell {
+		priceDiff = -priceDiff
+	}
+	rate := 1.0
+	quoteCcy := moneymgmt.QuoteCurrencyOf(symbol, spec)
+	if quoteCcy != accountCurrency {
+		r, err := p.fx.Rate(ctx, quoteCcy, accountCurrency)
+		if err != nil {
+			return nil
+		}
+		rate = r
+	}
+	pnl := priceDiff * spec.ContractSize * volumeLots * rate
+	return &pnl
 }
 
 // loadMoneyManagementProfile reads a money_management_profiles row directly

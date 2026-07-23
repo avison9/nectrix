@@ -15,6 +15,7 @@ public record InvitationsProperties(
     CtraderOauth ctraderOauth,
     BrokerAdapters brokerAdapters,
     TokenRefresh tokenRefresh,
+    AccountSnapshot accountSnapshot,
     MtBridge mtBridge,
     String acceptUrlBase) {
 
@@ -52,4 +53,14 @@ public record InvitationsProperties(
    */
   public record TokenRefresh(
       boolean enabled, long intervalSeconds, long refreshBeforeExpirySeconds) {}
+
+  /**
+   * Bugfix — {@code AccountSnapshotSchedulerJob}'s own poll cadence, the periodic {@code
+   * account_snapshots} writer that fixes analytics' equity curve being sparse/stale (previously
+   * only ever written as a side effect of copy-engine dispatching a trade). Same {@code enabled}
+   * default-false reasoning as {@link TokenRefresh} — no per-test Spring profile in this codebase,
+   * so leaving this on by default would make every {@code @SpringBootTest} fire real outbound
+   * snapshot calls the moment a CONNECTED broker_accounts row exists.
+   */
+  public record AccountSnapshot(boolean enabled, long intervalSeconds) {}
 }

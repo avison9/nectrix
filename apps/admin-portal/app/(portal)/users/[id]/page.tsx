@@ -4,6 +4,7 @@ import { getUserDetail } from "@nectrix/api-client";
 import { coreAppBaseUrl } from "@/lib/core-app";
 import { verifyAccessToken } from "@/lib/session";
 import { UserActions } from "../UserActions";
+import { LinkFollowerToMasterForm } from "../LinkFollowerToMasterForm";
 
 /**
  * TICKET-117 — real user detail: profile + every linked broker account (via
@@ -15,6 +16,10 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
   const token = jar.get("access_token")?.value;
   const session = token ? await verifyAccessToken(token) : null;
   const isAdmin = !!session?.roles.includes("ADMIN");
+  // #421 — manual follower-master linking is ADMIN+SUPER_ADMIN, a separate (wider) gate from
+  // isAdmin above (suspend/delete stay ADMIN-only) — same precedent
+  // tier-change-requests/[id]/page.tsx already established for this exact role pair.
+  const canLinkMaster = !!session?.roles.some((r) => r === "ADMIN" || r === "SUPER_ADMIN");
   const accessToken = jar.get("access_token")!.value;
 
   const detail = await getUserDetail(coreAppBaseUrl(), accessToken, id);
@@ -122,6 +127,21 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
           </tbody>
         </table>
       </div>
+
+      {canLinkMaster && (
+        <>
+          <h2 className="mt-8 text-[16px] font-semibold text-[var(--text)]">
+            Copy relationships
+          </h2>
+          <div className="mt-3 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-5">
+            <p className="mb-3 text-[13px] text-[var(--text-2)]">
+              Link this Follower directly to a Master, bypassing the invite-send/invite-accept and
+              follow-request flows.
+            </p>
+            <LinkFollowerToMasterForm followerId={user.id} brokerAccounts={brokerAccounts} />
+          </div>
+        </>
+      )}
 
       {showMtTerminals && (
         <>

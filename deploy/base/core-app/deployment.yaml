@@ -71,6 +71,8 @@ spec:
                 secretKeyRef: { name: core-app-secrets, key: ctrader-client-secret, optional: true }
             - name: TOKEN_REFRESH_ENABLED
               value: "false"
+            - name: ACCOUNT_SNAPSHOT_SCHEDULER_ENABLED
+              value: "false"
             # apps/broker-adapters' in-cluster Service DNS (own namespace:
             # copy-engine — see deploy/base/broker-adapters/service.yaml).
             - name: BROKER_ADAPTERS_INTERNAL_BASE_URL

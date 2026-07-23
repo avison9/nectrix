@@ -1,6 +1,7 @@
 package com.nectrix.coreapp.auth.api;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -21,6 +22,12 @@ public interface UserAdminApi {
    * @throws java.util.NoSuchElementException if no such user exists.
    */
   UserView getUser(UUID id);
+
+  /**
+   * #421 — lets {@code admin}'s new manual-link endpoint resolve a would-be Master by the email an
+   * admin types in, without importing {@code auth.repository} directly. Empty if no such user.
+   */
+  Optional<UserView> findByEmail(String email);
 
   /**
    * @param status one of {@code ACTIVE}/{@code SUSPENDED}/{@code DELETED} (the {@code users.status}

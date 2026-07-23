@@ -66,6 +66,15 @@ async function archiveAndDelete(id: string): Promise<ActionResult> {
       if (body?.error === "broker_account_not_ready_for_archival") {
         return { error: "Disconnect this account before deleting it." };
       }
+      if (body?.error === "master_primary_broker_account_required") {
+        // Bugfix — distinct from the case above: this account IS disconnected, but it's this
+        // Master's only account eligible to act as one, so deleting it isn't possible until they
+        // have another. Disconnecting again wouldn't help, so the message must say so.
+        return {
+          error:
+            "This is your only broker account able to act as Master — link another broker account before deleting this one.",
+        };
+      }
       return { error: "Couldn't archive and delete this account — please try again." };
     }
     return { error: "Something went wrong — please try again." };

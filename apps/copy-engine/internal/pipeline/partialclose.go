@@ -25,6 +25,12 @@ type openCopiedTrade struct {
 	followerBrokerPositionID string
 	currentOpenVolumeLots    float64
 	filledPrice              *float64
+	// direction (bugfix, realized-P&L) -- the ORIGINAL open trade_signal's own direction, not
+	// whatever a later PARTIALLY_CLOSED/CLOSED/MODIFIED event's own Position.Direction happens to
+	// echo. A position's direction never changes after it opens, so the durably-stored value is
+	// the trustworthy one for P&L sign -- computeRealizedPnL's own caller must never rely on the
+	// close event's own direction field for this reason.
+	direction string
 }
 
 // findOpenCopiedTrade locates the still-open copied_trades row for a given
@@ -45,14 +51,14 @@ func (p *Pipeline) findOpenCopiedTrade(ctx context.Context, relationshipID, mast
 	var t openCopiedTrade
 	var followerPositionID *string
 	err := p.pool.QueryRow(ctx, `
-		SELECT ct.id, ct.follower_broker_position_id, ct.current_open_volume_lots, ct.filled_price
+		SELECT ct.id, ct.follower_broker_position_id, ct.current_open_volume_lots, ct.filled_price, ts.direction
 		FROM copied_trades ct
 		JOIN trade_signals ts ON ts.id = ct.trade_signal_id
 		WHERE ct.copy_relationship_id = $1 AND ts.master_broker_account_id = $2 AND ts.broker_position_id = $3
 		  AND ct.status IN ('FILLED','PARTIALLY_CLOSED')
 		ORDER BY ct.created_at DESC LIMIT 1`,
 		relationshipID, masterBrokerAccountID, brokerPositionID,
-	).Scan(&t.id, &followerPositionID, &t.currentOpenVolumeLots, &t.filledPrice)
+	).Scan(&t.id, &followerPositionID, &t.currentOpenVolumeLots, &t.filledPrice, &t.direction)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return openCopiedTrade{}, false, nil
 	}
@@ -199,8 +205,13 @@ func (p *Pipeline) handleClose(ctx context.Context, rel relationship, signalID u
 		return nil
 	}
 
-	if _, err := p.pool.Exec(ctx, `UPDATE copied_trades SET status='CLOSED', current_open_volume_lots=0, closed_at=now() WHERE id=$1`,
-		copiedTrade.id); err != nil {
+	var realizedPnl *float64
+	if copiedTrade.filledPrice != nil && result.FilledPrice != nil {
+		realizedPnl = p.computeRealizedPnL(ctx, rel.followerBrokerAccountID, event.Position.Symbol,
+			domain.TradeDirection(copiedTrade.direction), copiedTrade.currentOpenVolumeLots, *copiedTrade.filledPrice, *result.FilledPrice)
+	}
+	if _, err := p.pool.Exec(ctx, `UPDATE copied_trades SET status='CLOSED', current_open_volume_lots=0, closed_at=now(), realized_pnl=$1 WHERE id=$2`,
+		realizedPnl, copiedTrade.id); err != nil {
 		return fmt.Errorf("update copied_trades (close): %w", err)
 	}
 

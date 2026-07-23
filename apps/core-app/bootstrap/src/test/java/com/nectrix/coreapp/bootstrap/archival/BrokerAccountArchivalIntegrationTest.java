@@ -468,6 +468,71 @@ class BrokerAccountArchivalIntegrationTest {
         .hasSize(1);
   }
 
+  /**
+   * Bugfix — this is the case {@link #seedFullChain}'s own comment explicitly avoided ("a master
+   * profile can never lose its primary account"): archiving the account that actually IS the
+   * master's own {@code primary_broker_account_id}. With no other eligible account, this must fail
+   * up front with a real, distinct error — not the misleading {@code
+   * broker_account_not_ready_for_archival} the old code fell into after already destroying the
+   * account's trade history.
+   */
+  @Test
+  void archiveAndDelete_forMastersOnlyEligibleAccount_isRejectedBeforeTouchingAnything() {
+    NewUser master = loginNewUser();
+    UUID onlyAccountId =
+        insertBrokerAccount(
+            master.userId(), "DISCONNECTED", Instant.now().minus(200, ChronoUnit.DAYS));
+    insertMasterProfile(master.userId(), onlyAccountId);
+
+    HttpResult response =
+        request(
+            "POST",
+            "/api/v1/broker-accounts/" + onlyAccountId + "/archive-and-delete",
+            master.accessToken());
+
+    assertThat(response.status()).isEqualTo(409);
+    assertThat(response.body().get("error")).isEqualTo("master_primary_broker_account_required");
+    assertThat(
+            jdbcTemplate.queryForList("SELECT id FROM broker_accounts WHERE id = ?", onlyAccountId))
+        .hasSize(1);
+  }
+
+  /**
+   * Bugfix — the other half: a real replacement DOES exist, so archival succeeds and {@code
+   * master_profiles.primary_broker_account_id} is auto-reassigned to it first.
+   */
+  @Test
+  void
+      archiveAndDelete_forMastersPrimaryAccount_autoReassignsToAnotherEligibleAccountThenSucceeds() {
+    NewUser master = loginNewUser();
+    UUID oldPrimaryId =
+        insertBrokerAccount(
+            master.userId(), "DISCONNECTED", Instant.now().minus(200, ChronoUnit.DAYS));
+    UUID replacementId = insertBrokerAccount(master.userId(), "CONNECTED", Instant.now());
+    jdbcTemplate.update(
+        "UPDATE broker_accounts SET connection_role = 'MASTER_ONLY' WHERE id IN (?, ?)",
+        oldPrimaryId,
+        replacementId);
+    UUID masterProfileId = insertMasterProfile(master.userId(), oldPrimaryId);
+
+    HttpResult response =
+        request(
+            "POST",
+            "/api/v1/broker-accounts/" + oldPrimaryId + "/archive-and-delete",
+            master.accessToken());
+
+    assertThat(response.status()).isEqualTo(200);
+    assertThat(
+            jdbcTemplate.queryForList("SELECT id FROM broker_accounts WHERE id = ?", oldPrimaryId))
+        .isEmpty();
+    String newPrimary =
+        jdbcTemplate.queryForObject(
+            "SELECT primary_broker_account_id::text FROM master_profiles WHERE id = ?",
+            String.class,
+            masterProfileId);
+    assertThat(newPrimary).isEqualTo(replacementId.toString());
+  }
+
   @Test
   void findStaleDisconnected_returnsOnlyAccountsPastTheThreshold_skipsRecentlyDisconnected() {
     NewUser staleUser = loginNewUser();

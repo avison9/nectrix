@@ -63,6 +63,23 @@ public class MasterProfileRepository {
   }
 
   /**
+   * Bugfix — lets a caller ask "is this broker account currently anyone's primary?" without knowing
+   * the master_profile id up front. {@code primary_broker_account_id} isn't unique at the schema
+   * level, but is in practice (a broker account belongs to exactly one user, and {@link
+   * #findByUserId} is itself a one-row-per-user lookup) — {@code findFirst} is a defensive
+   * safeguard, not a real multi-row case.
+   */
+  public Optional<MasterProfile> findByPrimaryBrokerAccountId(UUID brokerAccountId) {
+    return jdbcTemplate
+        .query(
+            "SELECT * FROM master_profiles WHERE primary_broker_account_id = ?",
+            ROW_MAPPER,
+            brokerAccountId)
+        .stream()
+        .findFirst();
+  }
+
+  /**
    * {@code feeCollectionMethod}/{@code performanceFeePercent} may be null — column defaults apply.
    * Defaults {@code isPublic} to {@code true} (the column's own DB default) — the real Master
    * self-service creation path.
@@ -149,6 +166,19 @@ public class MasterProfileRepository {
           ps.setObject(i, id);
           return ps.executeUpdate();
         });
+  }
+
+  /**
+   * Bugfix — lets a Master change which of their own broker accounts is their primary one after
+   * profile creation (previously set exactly once, at {@link #insert} time, with no update path at
+   * all). Caller is responsible for the ownership check (see {@code
+   * MasterProfileService#changePrimaryBrokerAccount}) — this method just writes the column.
+   */
+  public void updatePrimaryBrokerAccount(UUID id, UUID brokerAccountId) {
+    jdbcTemplate.update(
+        "UPDATE master_profiles SET primary_broker_account_id = ? WHERE id = ?",
+        brokerAccountId,
+        id);
   }
 
   private static Array toTextArray(PreparedStatement ps, List<String> tags)

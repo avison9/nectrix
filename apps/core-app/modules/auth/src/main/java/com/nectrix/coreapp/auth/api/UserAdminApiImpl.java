@@ -4,6 +4,7 @@ import com.nectrix.coreapp.auth.domain.User;
 import com.nectrix.coreapp.auth.repository.UserRepository;
 import java.util.List;
 import java.util.NoSuchElementException;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 
@@ -28,6 +29,11 @@ public class UserAdminApiImpl implements UserAdminApi {
             .findById(id)
             .orElseThrow(() -> new NoSuchElementException("No such user: " + id));
     return toView(user);
+  }
+
+  @Override
+  public Optional<UserView> findByEmail(String email) {
+    return userRepository.findByEmail(email).map(this::toView);
   }
 
   @Override

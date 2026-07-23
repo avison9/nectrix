@@ -106,16 +106,48 @@ public class CopiedTradeNotificationConsumer {
     };
   }
 
+  /**
+   * Bugfix — these used to be bare ("A new position was opened on your account.") with no symbol or
+   * size at all, useless for a user following more than one relationship/symbol at a time. {@code
+   * symbol}/{@code volume_lots} are already on this exact event (see this class's own Javadoc — the
+   * sibling {@code CopiedTradePositionConsumer} on the same topic already reads both), no new wire
+   * data needed.
+   */
   private String body(CopiedTradeEvent event) {
+    String symbol = event.hasSymbol() ? event.getSymbol().getCanonicalCode() : null;
+    String volume = event.hasVolumeLots() ? formatLots(event.getVolumeLots()) : null;
     return switch (event.getEventType()) {
-      case COPIED_TRADE_EVENT_TYPE_OPENED -> "A new position was opened on your account.";
-      case COPIED_TRADE_EVENT_TYPE_CLOSED -> "A copied position was closed.";
+      case COPIED_TRADE_EVENT_TYPE_OPENED ->
+          "A new position was opened on your account" + tradeSuffix(symbol, volume) + ".";
+      case COPIED_TRADE_EVENT_TYPE_CLOSED ->
+          "A copied position was closed" + tradeSuffix(symbol, volume) + ".";
       case COPIED_TRADE_EVENT_TYPE_FAILED ->
           event.hasRejectReason()
-              ? "A trade could not be copied: " + event.getRejectReason()
-              : "A trade could not be copied.";
+              ? "A trade could not be copied"
+                  + tradeSuffix(symbol, volume)
+                  + ": "
+                  + event.getRejectReason()
+              : "A trade could not be copied" + tradeSuffix(symbol, volume) + ".";
       default -> "";
     };
+  }
+
+  /** {@code ": EURUSD (1.5 lots)"}, degrading gracefully if either half is unavailable. */
+  private String tradeSuffix(String symbol, String volume) {
+    if (symbol == null && volume == null) {
+      return "";
+    }
+    if (symbol == null) {
+      return " (" + volume + " lots)";
+    }
+    if (volume == null) {
+      return ": " + symbol;
+    }
+    return ": " + symbol + " (" + volume + " lots)";
+  }
+
+  private String formatLots(double lots) {
+    return lots == Math.floor(lots) ? String.valueOf((long) lots) : String.valueOf(lots);
   }
 
   @PreDestroy

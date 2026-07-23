@@ -294,4 +294,163 @@ class MasterProfileIntegrationTest {
     assertThat(response.status()).isEqualTo(404);
     assertThat(response.body().get("error")).isEqualTo("master_profile_not_found");
   }
+
+  // ==================== Bugfix — change primary broker account ====================
+
+  @Test
+  void changePrimaryBrokerAccount_toOwnedAccount_updatesTheRealRow() {
+    NewUser master = newUser("MASTER");
+    UUID oldAccountId = insertBrokerAccount(master.userId());
+    UUID newAccountId = insertBrokerAccount(master.userId());
+    HttpResult created =
+        request(
+            "POST",
+            "/api/v1/master-profiles",
+            createRequestBody(oldAccountId),
+            master.accessToken());
+    String profileId = (String) created.body().get("id");
+
+    HttpResult response =
+        request(
+            "PATCH",
+            "/api/v1/master-profiles/" + profileId + "/primary-broker-account",
+            Map.of("broker_account_id", newAccountId.toString()),
+            master.accessToken());
+
+    assertThat(response.status()).isEqualTo(200);
+    assertThat(response.body().get("new_broker_account_id")).isEqualTo(newAccountId.toString());
+    assertThat(response.body().get("old_broker_account_id")).isEqualTo(oldAccountId.toString());
+    String stored =
+        jdbcTemplate.queryForObject(
+            "SELECT primary_broker_account_id::text FROM master_profiles WHERE id = ?",
+            String.class,
+            UUID.fromString(profileId));
+    assertThat(stored).isEqualTo(newAccountId.toString());
+  }
+
+  @Test
+  void changePrimaryBrokerAccount_toAnotherUsersAccount_isForbidden() {
+    NewUser master = newUser("MASTER");
+    UUID oldAccountId = insertBrokerAccount(master.userId());
+    HttpResult created =
+        request(
+            "POST",
+            "/api/v1/master-profiles",
+            createRequestBody(oldAccountId),
+            master.accessToken());
+    String profileId = (String) created.body().get("id");
+    NewUser someoneElse = newUser("MASTER");
+    UUID someoneElsesAccountId = insertBrokerAccount(someoneElse.userId());
+
+    HttpResult response =
+        request(
+            "PATCH",
+            "/api/v1/master-profiles/" + profileId + "/primary-broker-account",
+            Map.of("broker_account_id", someoneElsesAccountId.toString()),
+            master.accessToken());
+
+    assertThat(response.status()).isEqualTo(403);
+    String stored =
+        jdbcTemplate.queryForObject(
+            "SELECT primary_broker_account_id::text FROM master_profiles WHERE id = ?",
+            String.class,
+            UUID.fromString(profileId));
+    assertThat(stored).isEqualTo(oldAccountId.toString());
+  }
+
+  @Test
+  void changePrimaryBrokerAccount_forAnotherUsersProfile_isForbidden() {
+    NewUser master = newUser("MASTER");
+    UUID oldAccountId = insertBrokerAccount(master.userId());
+    HttpResult created =
+        request(
+            "POST",
+            "/api/v1/master-profiles",
+            createRequestBody(oldAccountId),
+            master.accessToken());
+    String profileId = (String) created.body().get("id");
+    NewUser attacker = newUser("MASTER");
+    UUID attackersOwnAccountId = insertBrokerAccount(attacker.userId());
+
+    HttpResult response =
+        request(
+            "PATCH",
+            "/api/v1/master-profiles/" + profileId + "/primary-broker-account",
+            Map.of("broker_account_id", attackersOwnAccountId.toString()),
+            attacker.accessToken());
+
+    assertThat(response.status()).isEqualTo(403);
+  }
+
+  /**
+   * The whole point of this feature — this is the exact bug that stopped a Master's real trades
+   * from ever being copied: {@code copy_relationships.master_broker_account_id} used to be frozen
+   * at invitation-acceptance time forever. Confirms it now moves with the primary account change.
+   */
+  @Test
+  void changePrimaryBrokerAccount_cascadesToAnActiveCopyRelationship() {
+    NewUser master = newUser("MASTER");
+    NewUser follower = newUser("FOLLOWER");
+    UUID oldAccountId = insertBrokerAccount(master.userId());
+    UUID newAccountId = insertBrokerAccount(master.userId());
+    UUID followerAccountId = insertBrokerAccount(follower.userId());
+    HttpResult created =
+        request(
+            "POST",
+            "/api/v1/master-profiles",
+            createRequestBody(oldAccountId),
+            master.accessToken());
+    UUID profileId = UUID.fromString((String) created.body().get("id"));
+
+    UUID mmProfileId = UUID.randomUUID();
+    jdbcTemplate.update(
+        "INSERT INTO money_management_profiles (id, method, multiplier) VALUES (?, 'MULTIPLIER', 1.0)",
+        mmProfileId);
+    UUID riskProfileId = UUID.randomUUID();
+    jdbcTemplate.update("INSERT INTO risk_profiles (id) VALUES (?)", riskProfileId);
+    UUID invitationId = UUID.randomUUID();
+    jdbcTemplate.update(
+        """
+        INSERT INTO invitations
+          (id, master_profile_id, invited_email, token_hash, status, created_by_user_id, expires_at)
+        VALUES (?, ?, ?, ?, 'ACCEPTED', ?, now() + interval '7 days')
+        """,
+        invitationId,
+        profileId,
+        "invitee-" + invitationId + "@example.com",
+        "token-hash-" + invitationId,
+        master.userId());
+    UUID copyRelationshipId = UUID.randomUUID();
+    jdbcTemplate.update(
+        """
+        INSERT INTO copy_relationships
+          (id, master_profile_id, master_broker_account_id, follower_user_id, follower_broker_account_id,
+           money_management_profile_id, risk_profile_id, status, performance_fee_percent,
+           fee_collection_method, originating_invitation_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE', 20.00, 'BROKER_PARTNERSHIP', ?)
+        """,
+        copyRelationshipId,
+        profileId,
+        oldAccountId,
+        follower.userId(),
+        followerAccountId,
+        mmProfileId,
+        riskProfileId,
+        invitationId);
+
+    HttpResult response =
+        request(
+            "PATCH",
+            "/api/v1/master-profiles/" + profileId + "/primary-broker-account",
+            Map.of("broker_account_id", newAccountId.toString()),
+            master.accessToken());
+
+    assertThat(response.status()).isEqualTo(200);
+    String storedMasterBrokerAccountId =
+        jdbcTemplate.queryForObject(
+            "SELECT master_broker_account_id::text FROM copy_relationships WHERE id = ?",
+            String.class,
+            copyRelationshipId);
+    assertThat(storedMasterBrokerAccountId).isEqualTo(newAccountId.toString());
+  }
 }

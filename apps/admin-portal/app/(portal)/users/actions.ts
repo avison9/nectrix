@@ -6,9 +6,11 @@ import {
   ApiError,
   createAdminUser,
   deleteUser,
+  linkFollowerToMaster,
   reinstateUser,
   searchUsers,
   suspendUser,
+  type LinkFollowerToMasterResult,
   type UserSummary,
 } from "@nectrix/api-client";
 import { coreAppBaseUrl } from "@/lib/core-app";
@@ -131,6 +133,47 @@ export async function reinstateUserAction(id: string): Promise<UserStatusActionS
       return { error: "You don't have permission to reinstate accounts." };
     }
     return { error: "Failed to reinstate this account." };
+  }
+}
+
+export interface LinkFollowerToMasterActionState {
+  error?: string;
+  result?: LinkFollowerToMasterResult;
+}
+
+/**
+ * #421 — ADMIN/SUPER_ADMIN-only server-side call: creates a real copy_relationships row directly.
+ * See AdminController#linkFollowerToMaster's own Javadoc for the exact status/error semantics this
+ * maps (404 no-such-master, 400 broker-account-not-owned/same-account, 409 duplicate link).
+ */
+export async function linkFollowerToMasterAction(
+  followerId: string,
+  masterEmail: string,
+  followerBrokerAccountId: string,
+): Promise<LinkFollowerToMasterActionState> {
+  const jar = await cookies();
+  const accessToken = jar.get("access_token")?.value;
+  if (!accessToken) {
+    return { error: "Your session has expired — please log in again." };
+  }
+  try {
+    const result = await linkFollowerToMaster(coreAppBaseUrl(), accessToken, followerId, {
+      masterEmail,
+      followerBrokerAccountId,
+    });
+    revalidatePath(`/users/${followerId}`);
+    return { result };
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 403) {
+      return { error: "You don't have permission to link accounts." };
+    }
+    if (error instanceof ApiError && error.status === 404) {
+      return { error: `No Master account found for ${masterEmail}.` };
+    }
+    if (error instanceof ApiError && error.status === 409) {
+      return { error: "A copy relationship already links these accounts." };
+    }
+    return { error: "Failed to link this account — check the broker account and try again." };
   }
 }
 
