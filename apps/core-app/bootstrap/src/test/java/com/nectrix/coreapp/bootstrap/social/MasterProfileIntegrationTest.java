@@ -5,11 +5,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.nectrix.coreapp.auth.api.UserProvisioningApi;
 import com.nectrix.coreapp.crypto.api.EncryptedField;
 import com.nectrix.coreapp.crypto.api.EnvelopeEncryptionService;
+import java.math.BigDecimal;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -67,6 +69,27 @@ class MasterProfileIntegrationTest {
               ? Map.of()
               : objectMapper.readValue(response.body(), Map.class);
       return new HttpResult(response.statusCode(), parsedBody);
+    } catch (Exception e) {
+      throw new IllegalStateException(e);
+    }
+  }
+
+  /**
+   * TICKET-125 — {@code GET /api/v1/master-profiles/me} returns a JSON array now (a user may own
+   * more than one profile), so it needs its own list-shaped parse instead of {@link #request}'s
+   * object-shaped one.
+   */
+  private List<Map<String, Object>> getMyProfiles(String accessToken) {
+    try {
+      HttpRequest httpRequest =
+          HttpRequest.newBuilder()
+              .uri(URI.create("http://localhost:" + port + "/api/v1/master-profiles/me"))
+              .header("Authorization", "Bearer " + accessToken)
+              .GET()
+              .build();
+      HttpResponse<String> response =
+          httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString());
+      return objectMapper.readValue(response.body(), List.class);
     } catch (Exception e) {
       throw new IllegalStateException(e);
     }
@@ -157,6 +180,58 @@ class MasterProfileIntegrationTest {
             String.class,
             UUID.fromString((String) response.body().get("id")));
     assertThat(storedUserId).isEqualTo(master.userId().toString());
+  }
+
+  @Test
+  void create_withMinFollowerBalance_storesAndReturnsIt() {
+    NewUser master = newUser("MASTER");
+    UUID brokerAccountId = insertBrokerAccount(master.userId());
+    Map<String, Object> body = new HashMap<>(createRequestBody(brokerAccountId));
+    body.put("min_follower_balance", 500);
+
+    HttpResult response = request("POST", "/api/v1/master-profiles", body, master.accessToken());
+
+    assertThat(response.status()).isEqualTo(200);
+    assertThat(((Number) response.body().get("min_follower_balance")).doubleValue())
+        .isEqualTo(500.0);
+    BigDecimal stored =
+        jdbcTemplate.queryForObject(
+            "SELECT min_follower_balance FROM master_profiles WHERE id = ?",
+            BigDecimal.class,
+            UUID.fromString((String) response.body().get("id")));
+    assertThat(stored).isEqualByComparingTo("500");
+  }
+
+  /**
+   * Feature — 0 is the explicit "clear a previously-set minimum" sentinel (this codebase has no
+   * null-vs-absent-field convention for PATCH requests) — see MasterProfileService's own
+   * normalizeMinFollowerBalance Javadoc.
+   */
+  @Test
+  void patch_withZeroMinFollowerBalance_clearsIt() {
+    NewUser master = newUser("MASTER");
+    UUID brokerAccountId = insertBrokerAccount(master.userId());
+    Map<String, Object> createBody = new HashMap<>(createRequestBody(brokerAccountId));
+    createBody.put("min_follower_balance", 500);
+    HttpResult created =
+        request("POST", "/api/v1/master-profiles", createBody, master.accessToken());
+    String profileId = (String) created.body().get("id");
+
+    HttpResult response =
+        request(
+            "PATCH",
+            "/api/v1/master-profiles/" + profileId,
+            Map.of("display_name", "Test Master", "is_public", true, "min_follower_balance", 0),
+            master.accessToken());
+
+    assertThat(response.status()).isEqualTo(200);
+    assertThat(response.body().get("min_follower_balance")).isNull();
+    BigDecimal stored =
+        jdbcTemplate.queryForObject(
+            "SELECT min_follower_balance FROM master_profiles WHERE id = ?",
+            BigDecimal.class,
+            UUID.fromString(profileId));
+    assertThat(stored).isNull();
   }
 
   @Test
@@ -279,20 +354,19 @@ class MasterProfileIntegrationTest {
             master.accessToken());
     String profileId = (String) created.body().get("id");
 
-    HttpResult response = request("GET", "/api/v1/master-profiles/me", null, master.accessToken());
+    List<Map<String, Object>> profiles = getMyProfiles(master.accessToken());
 
-    assertThat(response.status()).isEqualTo(200);
-    assertThat(response.body().get("id")).isEqualTo(profileId);
+    assertThat(profiles).hasSize(1);
+    assertThat(profiles.get(0).get("id")).isEqualTo(profileId);
   }
 
   @Test
-  void getMyProfile_withNoProfileYet_returns404() {
+  void getMyProfile_withNoProfileYet_returnsAnEmptyListNotAnError() {
     NewUser master = newUser("MASTER");
 
-    HttpResult response = request("GET", "/api/v1/master-profiles/me", null, master.accessToken());
+    List<Map<String, Object>> profiles = getMyProfiles(master.accessToken());
 
-    assertThat(response.status()).isEqualTo(404);
-    assertThat(response.body().get("error")).isEqualTo("master_profile_not_found");
+    assertThat(profiles).isEmpty();
   }
 
   // ==================== Bugfix — change primary broker account ====================

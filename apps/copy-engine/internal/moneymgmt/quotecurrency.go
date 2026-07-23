@@ -10,13 +10,22 @@ import domain "github.com/avison9/nectrix/go-domain"
 // packages/go-domain.SymbolSpec has no explicit quote-currency field (a real
 // gap -- see this ticket's plan "Open risks" #1; not addressed by widening
 // domain.go in this ticket). For FX pairs the canonical code's last 3
-// characters ARE the quote currency (EURUSD -> USD, exact and correct). For
-// every other asset class (index/commodity/crypto/stock CFDs) this falls
-// back to the symbol spec's margin currency as the best available proxy --
-// a real approximation, not a true quote-currency lookup, worth a proper
-// SymbolSpec.QuoteCurrency field in a later ticket.
+// characters ARE the quote currency (EURUSD -> USD, exact and correct).
+//
+// Bugfix — COMMODITY/CRYPTO canonical codes (XAUUSD, XAGUSD, BTCUSD, ETHUSD)
+// are the exact same "XXXYYY" shape and just as exact to parse this way; this
+// was previously restricted to AssetClassFX alone, so every one of these fell
+// through to spec.MarginCurrency, which broker-adapters' own ctrader/symbols.go
+// hardcodes to "" (a documented, still-open TODO -- no assetId->currency-code
+// lookup built yet) -- meaning realized/unrealized P&L silently came back nil
+// for every non-FX position, confirmed live (a real XAUUSD trade). INDEX/
+// STOCK_CFD codes (US500, AAPL, ...) have no embedded currency and must keep
+// falling back to margin_currency -- that gap is real and still open.
 func QuoteCurrencyOf(symbol domain.NormalizedSymbol, spec domain.SymbolSpec) string {
-	if symbol.AssetClass == domain.AssetClassFX && len(symbol.CanonicalCode) == 6 {
+	parsable := symbol.AssetClass == domain.AssetClassFX ||
+		symbol.AssetClass == domain.AssetClassCommodity ||
+		symbol.AssetClass == domain.AssetClassCrypto
+	if parsable && len(symbol.CanonicalCode) == 6 {
 		return symbol.CanonicalCode[3:]
 	}
 	return spec.MarginCurrency

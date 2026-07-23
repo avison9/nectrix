@@ -27,14 +27,6 @@ public interface MasterProfileLookupApi {
   Optional<MasterProfileSummaryView> findByPrimaryBrokerAccountId(UUID brokerAccountId);
 
   /**
-   * #421 — lets {@code trading}'s {@code AdminCopyLinkService} resolve a would-be Master's own
-   * {@code master_profiles} row from just their {@code user_id} (an admin identifies the Master by
-   * email, resolved to a {@code userId} first), without importing {@code social.repository}
-   * directly. Empty means this user isn't (yet) a Master.
-   */
-  Optional<MasterProfileSummaryView> findByUserId(UUID userId);
-
-  /**
    * Bugfix — lets a Master change their primary broker account, with the new account's ownership
    * validated same as {@code MasterProfileService#create} already does. Deliberately takes {@code
    * actingUserId} as a plain param rather than relying on {@code @PostAuthorize}/the request's own

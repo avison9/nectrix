@@ -1,10 +1,12 @@
-import { listMyBrokerIbLinks, listMyInvitations } from "@nectrix/api-client";
+import Link from "next/link";
+import { listCopyRelationships, listMyBrokerIbLinks, listMyInvitations } from "@nectrix/api-client";
 import type { Invitation } from "@nectrix/api-client";
 import { coreAppBaseUrl } from "@/lib/core-app";
 import { requireSession } from "@/lib/auth";
 import { InviteForm } from "./InviteForm";
 import { ResendButton } from "./ResendButton";
 import { RevokeButton } from "./RevokeButton";
+import { FollowersToggle } from "./FollowersToggle";
 
 const STATUS_LABEL: Record<Invitation["status"], string> = {
   PENDING: "Sent",
@@ -28,6 +30,29 @@ function timeAgo(iso: string): string {
   if (hours < 24) return `${hours}h ago`;
   const days = Math.floor(hours / 24);
   return `${days}d ago`;
+}
+
+/**
+ * Feature — "how long has this follower been following" needs a coarser range than the invite
+ * pipeline's own timeAgo above (which tops out at days, fine for a pipeline that's dead within a
+ * couple of weeks either way) — a real follower relationship can run for months/years.
+ */
+function durationSince(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  const minutes = Math.floor(ms / 60000);
+  if (minutes < 60) return `${Math.max(minutes, 0)}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d`;
+  if (days < 30) return `${Math.floor(days / 7)}w`;
+  if (days < 365) return `${Math.floor(days / 30)}mo`;
+  return `${Math.floor(days / 365)}y`;
+}
+
+function formatReturnPct(returnPct: number | null): string {
+  if (returnPct === null) return "—";
+  return `${returnPct >= 0 ? "+" : ""}${returnPct.toFixed(2)}%`;
 }
 
 /**
@@ -61,9 +86,10 @@ export default async function MasterFollowersPage() {
     );
   }
 
-  const [invitations, ibLinks] = await Promise.all([
+  const [invitations, ibLinks, relationships] = await Promise.all([
     listMyInvitations(coreAppBaseUrl(), accessToken),
     listMyBrokerIbLinks(coreAppBaseUrl(), accessToken),
+    listCopyRelationships(coreAppBaseUrl(), accessToken, { role: "master" }),
   ]);
   const activeIbLinks = ibLinks.filter((l) => l.isActive);
 
@@ -78,6 +104,105 @@ export default async function MasterFollowersPage() {
     { label: "Pending", value: String(pending) },
     { label: "Conversion", value: `${conversion}%` },
   ];
+
+  const pipelineContent = (
+    <div className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)]">
+      <div className="border-b border-[var(--border)] px-5 py-3.5 text-[14px] font-semibold text-[var(--text)]">
+        Invite pipeline
+      </div>
+      {invitations.length === 0 ? (
+        <div className="px-5 py-6 text-[13px] text-[var(--text-2)]">
+          No invitations sent yet — use the form above to invite your first follower.
+        </div>
+      ) : (
+        <div className="flex flex-col">
+          {invitations.map((inv) => (
+            <div
+              key={inv.id}
+              className="flex items-center gap-3.5 border-t border-[var(--border)] px-5 py-3.5 first:border-t-0"
+            >
+              <span className="min-w-0 flex-1 truncate font-mono text-[13px] text-[var(--text)]">
+                {inv.invitedEmail}
+              </span>
+              <span className="whitespace-nowrap text-[12.5px] text-[var(--text-3)]">
+                {timeAgo(inv.createdAt)}
+              </span>
+              <span
+                className={`rounded-full px-2.5 py-1 text-[12px] font-semibold whitespace-nowrap ${STATUS_TONE[inv.status]}`}
+              >
+                {STATUS_LABEL[inv.status]}
+              </span>
+              {inv.resendCount > 0 && (
+                <span className="whitespace-nowrap text-[11px] text-[var(--text-3)]">
+                  resent {inv.resendCount}x
+                  {inv.lastResentAt ? ` · ${timeAgo(inv.lastResentAt)}` : ""}
+                </span>
+              )}
+              <div className="flex shrink-0 gap-1.5">
+                {(inv.status === "PENDING" || inv.status === "EXPIRED") && (
+                  <ResendButton id={inv.id} />
+                )}
+                {inv.status === "PENDING" && <RevokeButton id={inv.id} />}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
+  const followersContent = (
+    <div className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)]">
+      <div className="border-b border-[var(--border)] px-5 py-3.5 text-[14px] font-semibold text-[var(--text)]">
+        Followers
+      </div>
+      {relationships.length === 0 ? (
+        <div className="px-5 py-6 text-[13px] text-[var(--text-2)]">
+          No one is copying you yet.
+        </div>
+      ) : (
+        <div className="flex flex-col">
+          {relationships.map((r) => {
+            const isActive = r.status === "ACTIVE";
+            return (
+              <Link
+                key={r.id}
+                href={`/master/followers/${r.id}`}
+                className="flex items-center gap-3.5 border-t border-[var(--border)] px-5 py-3.5 first:border-t-0 transition-colors hover:bg-[var(--surface-2)]"
+              >
+                <span className="min-w-0 flex-1 truncate text-[13.5px] font-semibold text-[var(--text)]">
+                  {r.followerDisplayName ?? `${r.id.slice(0, 8)}…`}
+                </span>
+                <span className="whitespace-nowrap text-[12.5px] text-[var(--text-3)]">
+                  Following {durationSince(r.createdAt)}
+                </span>
+                <span
+                  className={`whitespace-nowrap font-mono text-[13px] font-semibold ${
+                    r.returnPct === null
+                      ? "text-[var(--text-3)]"
+                      : r.returnPct >= 0
+                        ? "text-[var(--pos)]"
+                        : "text-[var(--neg)]"
+                  }`}
+                >
+                  {formatReturnPct(r.returnPct)}
+                </span>
+                <span
+                  className={`rounded-full px-2.5 py-1 text-[12px] font-semibold whitespace-nowrap ${
+                    isActive
+                      ? "bg-[var(--pos)]/15 text-[var(--pos)]"
+                      : "bg-[var(--neg)]/10 text-[var(--neg)]"
+                  }`}
+                >
+                  {isActive ? "Active" : "Inactive"}
+                </span>
+              </Link>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <div className="mx-auto max-w-[900px]">
@@ -111,49 +236,7 @@ export default async function MasterFollowersPage() {
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)]">
-        <div className="border-b border-[var(--border)] px-5 py-3.5 text-[14px] font-semibold text-[var(--text)]">
-          Invite pipeline
-        </div>
-        {invitations.length === 0 ? (
-          <div className="px-5 py-6 text-[13px] text-[var(--text-2)]">
-            No invitations sent yet — use the form above to invite your first follower.
-          </div>
-        ) : (
-          <div className="flex flex-col">
-            {invitations.map((inv) => (
-              <div
-                key={inv.id}
-                className="flex items-center gap-3.5 border-t border-[var(--border)] px-5 py-3.5 first:border-t-0"
-              >
-                <span className="min-w-0 flex-1 truncate font-mono text-[13px] text-[var(--text)]">
-                  {inv.invitedEmail}
-                </span>
-                <span className="whitespace-nowrap text-[12.5px] text-[var(--text-3)]">
-                  {timeAgo(inv.createdAt)}
-                </span>
-                <span
-                  className={`rounded-full px-2.5 py-1 text-[12px] font-semibold whitespace-nowrap ${STATUS_TONE[inv.status]}`}
-                >
-                  {STATUS_LABEL[inv.status]}
-                </span>
-                {inv.resendCount > 0 && (
-                  <span className="whitespace-nowrap text-[11px] text-[var(--text-3)]">
-                    resent {inv.resendCount}x
-                    {inv.lastResentAt ? ` · ${timeAgo(inv.lastResentAt)}` : ""}
-                  </span>
-                )}
-                <div className="flex shrink-0 gap-1.5">
-                  {(inv.status === "PENDING" || inv.status === "EXPIRED") && (
-                    <ResendButton id={inv.id} />
-                  )}
-                  {inv.status === "PENDING" && <RevokeButton id={inv.id} />}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+      <FollowersToggle pipelineContent={pipelineContent} followersContent={followersContent} />
     </div>
   );
 }

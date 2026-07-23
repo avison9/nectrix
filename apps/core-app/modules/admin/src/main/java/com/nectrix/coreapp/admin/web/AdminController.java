@@ -21,6 +21,7 @@ import com.nectrix.coreapp.invitations.api.BrokerAccountLookupApi;
 import com.nectrix.coreapp.invitations.api.BrokerAccountView;
 import com.nectrix.coreapp.invitations.api.TierChangeRequestAdminApi;
 import com.nectrix.coreapp.invitations.api.TierChangeRequestAdminApi.TierChangeRequestView;
+import com.nectrix.coreapp.social.api.MasterProfileLookupApi;
 import com.nectrix.coreapp.trading.api.AdminCopyRelationshipApi;
 import com.nectrix.coreapp.trading.api.AdminCopyRelationshipApi.LinkedCopyRelationshipView;
 import java.math.BigDecimal;
@@ -92,6 +93,7 @@ public class AdminController {
   private final AuditLogRepository auditLogRepository;
   private final ObjectMapper objectMapper;
   private final AdminCopyRelationshipApi adminCopyRelationshipApi;
+  private final MasterProfileLookupApi masterProfileLookupApi;
 
   /** System Health's Copy Engine throughput/error-rate window — see {@link #getSystemHealth}. */
   private static final Duration COPY_ENGINE_WINDOW = Duration.ofMinutes(15);
@@ -108,7 +110,8 @@ public class AdminController {
       KafkaConsumerLagService kafkaConsumerLagService,
       AuditLogRepository auditLogRepository,
       ObjectMapper objectMapper,
-      AdminCopyRelationshipApi adminCopyRelationshipApi) {
+      AdminCopyRelationshipApi adminCopyRelationshipApi,
+      MasterProfileLookupApi masterProfileLookupApi) {
     this.impersonationApi = impersonationApi;
     this.brokerAccountLookupApi = brokerAccountLookupApi;
     this.userProvisioningApi = userProvisioningApi;
@@ -121,6 +124,7 @@ public class AdminController {
     this.auditLogRepository = auditLogRepository;
     this.objectMapper = objectMapper;
     this.adminCopyRelationshipApi = adminCopyRelationshipApi;
+    this.masterProfileLookupApi = masterProfileLookupApi;
   }
 
   @PostMapping("/api/v1/admin/impersonate/{userId}")
@@ -262,11 +266,41 @@ public class AdminController {
   }
 
   /**
+   * TICKET-125 — a Master may own more than one eligible ({@code MASTER_ONLY}/{@code BOTH}) broker
+   * account, one per strategy; the admin-portal's own link form calls this after resolving a
+   * master's email, to let the admin pick WHICH of their accounts/strategies to link the follower
+   * to, instead of an implicit "the" primary account.
+   *
+   * <p>Bugfix — a {@code MASTER_ONLY}/{@code BOTH} broker account alone isn't linkable: {@code
+   * linkFollowerToMaster}'s own {@code AdminCopyLinkService} requires a real {@code
+   * master_profiles} row for the account (a {@code copy_relationships} row can't exist without
+   * one), which only exists once the Master has self-service-created a profile for it. Filtering
+   * here means the picker never offers an account that would 404 at submit time.
+   */
+  @GetMapping("/api/v1/admin/users/by-email/master-broker-accounts")
+  @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
+  public List<BrokerAccountView> findMasterBrokerAccountsByEmail(@RequestParam String email) {
+    UserView masterUser =
+        userAdminApi
+            .findByEmail(email)
+            .orElseThrow(() -> new NoSuchElementException("No such user: " + email));
+    return brokerAccountLookupApi.listForUser(masterUser.id()).stream()
+        .filter(a -> "MASTER_ONLY".equals(a.connectionRole()) || "BOTH".equals(a.connectionRole()))
+        .filter(a -> masterProfileLookupApi.findByPrimaryBrokerAccountId(a.id()).isPresent())
+        .toList();
+  }
+
+  /**
    * #421 — a SUPER_ADMIN/ADMIN can create a real {@code copy_relationships} row directly, without
    * the Master sending an invite or the Follower requesting one. ADMIN+SUPER_ADMIN — same "grants a
    * real capability" class of action {@link #approveTierChangeRequest} already establishes for
-   * SUPER_ADMIN. The Master is identified by email (resolved to a user id here, before ever
-   * reaching {@code trading}) rather than requiring a separate master-search UI/ endpoint.
+   * SUPER_ADMIN.
+   *
+   * <p>TICKET-125 — the Master is now identified by {@code masterBrokerAccountId} (resolved via
+   * {@link #findMasterBrokerAccountsByEmail} in the admin-portal's own two-step flow), not just an
+   * email resolved to a user id — a user with multiple eligible accounts can have more than one
+   * followable profile, so "which Master" alone is no longer enough to know which strategy the
+   * follower should copy.
    */
   @PostMapping("/api/v1/admin/users/{followerId}/copy-relationships")
   @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
@@ -275,14 +309,9 @@ public class AdminController {
       @RequestBody LinkFollowerToMasterRequest request,
       @AuthenticationPrincipal Jwt jwt) {
     UUID actingAdminId = currentUserId(jwt);
-    UserView masterUser =
-        userAdminApi
-            .findByEmail(request.masterEmail())
-            .orElseThrow(
-                () -> new NoSuchElementException("No such user: " + request.masterEmail()));
     LinkedCopyRelationshipView view =
         adminCopyRelationshipApi.linkFollowerToMaster(
-            followerId, masterUser.id(), request.followerBrokerAccountId());
+            followerId, request.masterBrokerAccountId(), request.followerBrokerAccountId());
     auditLogRepository.insert(
         actingAdminId,
         "ADMIN",
@@ -292,7 +321,7 @@ public class AdminController {
         objectMapper.writeValueAsString(
             Map.of(
                 "followerUserId", followerId.toString(),
-                "masterUserId", masterUser.id().toString(),
+                "masterBrokerAccountId", request.masterBrokerAccountId().toString(),
                 "status", view.status())));
     return new LinkFollowerToMasterResponse(view.id(), view.status(), view.masterDisplayName());
   }
@@ -616,7 +645,8 @@ public class AdminController {
   public record UserDetailResponse(
       UserView user, List<BrokerAccountView> brokerAccounts, MtTerminalsSection mtTerminals) {}
 
-  public record LinkFollowerToMasterRequest(String masterEmail, UUID followerBrokerAccountId) {}
+  public record LinkFollowerToMasterRequest(
+      UUID masterBrokerAccountId, UUID followerBrokerAccountId) {}
 
   public record LinkFollowerToMasterResponse(
       UUID copyRelationshipId, String status, String masterDisplayName) {}

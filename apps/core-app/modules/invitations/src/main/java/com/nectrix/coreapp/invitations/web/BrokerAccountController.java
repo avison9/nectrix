@@ -67,6 +67,16 @@ public class BrokerAccountController {
     return service.disconnectBrokerAccount(existing);
   }
 
+  /**
+   * Bugfix — the reverse of {@link #disconnect}: a disconnected account previously had no
+   * self-service way back short of deleting and fully re-linking from scratch via OAuth.
+   */
+  @PostMapping("/api/v1/broker-accounts/{id}/reconnect")
+  public BrokerAccount reconnect(@PathVariable UUID id) {
+    BrokerAccount existing = service.getBrokerAccount(id);
+    return service.reconnectBrokerAccount(existing);
+  }
+
   @DeleteMapping("/api/v1/broker-accounts/{id}")
   public ResponseEntity<Void> delete(@PathVariable UUID id) {
     BrokerAccount existing = service.getBrokerAccount(id);

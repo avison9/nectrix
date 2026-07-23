@@ -37,6 +37,12 @@ export async function startCopyingAction(
         // Already actioned (e.g. a duplicate submit) — treat as success, not an error.
         redirect("/onboarding");
       }
+      if (body?.error === "insufficient_follower_balance") {
+        return {
+          error:
+            "Your account balance doesn't meet this Master's minimum requirement to start copying.",
+        };
+      }
       return { error: "Couldn't start copying — please try again." };
     }
     return { error: "Something went wrong — please try again." };

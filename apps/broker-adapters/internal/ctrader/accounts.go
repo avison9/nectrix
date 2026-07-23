@@ -3,6 +3,7 @@ package ctrader
 import (
 	"context"
 	"fmt"
+	"sort"
 )
 
 // AccountSummary is one trading account associated with an OAuth access
@@ -49,6 +50,11 @@ func (a *CTraderAdapter) ListAccountsByAccessToken(ctx context.Context, accessTo
 	for _, acc := range byID {
 		result = append(result, acc)
 	}
+	// Bugfix — Go map iteration order is randomized, so without this the account-picking list
+	// (apps/web's CtraderCallbackClient) rendered in a different, unpredictable order every time
+	// a user re-ran this flow to link a second/third account under the same OAuth grant. Sorted
+	// by CtidTraderAccountID so the list is stable across repeated visits.
+	sort.Slice(result, func(i, j int) bool { return result[i].CtidTraderAccountID < result[j].CtidTraderAccountID })
 	return result, nil
 }
 

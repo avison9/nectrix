@@ -6,10 +6,12 @@ import {
   ApiError,
   createAdminUser,
   deleteUser,
+  findMasterBrokerAccountsByEmail,
   linkFollowerToMaster,
   reinstateUser,
   searchUsers,
   suspendUser,
+  type BrokerAccountSummary,
   type LinkFollowerToMasterResult,
   type UserSummary,
 } from "@nectrix/api-client";
@@ -141,14 +143,48 @@ export interface LinkFollowerToMasterActionState {
   result?: LinkFollowerToMasterResult;
 }
 
+export interface FindMasterBrokerAccountsActionState {
+  error?: string;
+  accounts?: BrokerAccountSummary[];
+}
+
+/**
+ * TICKET-125 — step 1 of the admin-portal's two-step link flow: resolve a Master's eligible
+ * (MASTER_ONLY/BOTH) broker accounts/strategies by email before picking which one to link.
+ */
+export async function findMasterBrokerAccountsByEmailAction(
+  masterEmail: string,
+): Promise<FindMasterBrokerAccountsActionState> {
+  const jar = await cookies();
+  const accessToken = jar.get("access_token")?.value;
+  if (!accessToken) {
+    return { error: "Your session has expired — please log in again." };
+  }
+  try {
+    const accounts = await findMasterBrokerAccountsByEmail(coreAppBaseUrl(), accessToken, masterEmail);
+    if (accounts.length === 0) {
+      return { error: `No Master strategy found for ${masterEmail}.` };
+    }
+    return { accounts };
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 403) {
+      return { error: "You don't have permission to look up accounts." };
+    }
+    if (error instanceof ApiError && error.status === 404) {
+      return { error: `No such user: ${masterEmail}.` };
+    }
+    return { error: "Failed to look up this Master — check the email and try again." };
+  }
+}
+
 /**
  * #421 — ADMIN/SUPER_ADMIN-only server-side call: creates a real copy_relationships row directly.
  * See AdminController#linkFollowerToMaster's own Javadoc for the exact status/error semantics this
- * maps (404 no-such-master, 400 broker-account-not-owned/same-account, 409 duplicate link).
+ * maps (400 broker-account-not-owned/same-account, 409 duplicate link).
  */
 export async function linkFollowerToMasterAction(
   followerId: string,
-  masterEmail: string,
+  masterBrokerAccountId: string,
   followerBrokerAccountId: string,
 ): Promise<LinkFollowerToMasterActionState> {
   const jar = await cookies();
@@ -158,7 +194,7 @@ export async function linkFollowerToMasterAction(
   }
   try {
     const result = await linkFollowerToMaster(coreAppBaseUrl(), accessToken, followerId, {
-      masterEmail,
+      masterBrokerAccountId,
       followerBrokerAccountId,
     });
     revalidatePath(`/users/${followerId}`);
@@ -166,9 +202,6 @@ export async function linkFollowerToMasterAction(
   } catch (error) {
     if (error instanceof ApiError && error.status === 403) {
       return { error: "You don't have permission to link accounts." };
-    }
-    if (error instanceof ApiError && error.status === 404) {
-      return { error: `No Master account found for ${masterEmail}.` };
     }
     if (error instanceof ApiError && error.status === 409) {
       return { error: "A copy relationship already links these accounts." };

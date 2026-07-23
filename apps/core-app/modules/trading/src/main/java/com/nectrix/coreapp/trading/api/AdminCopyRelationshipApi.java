@@ -14,15 +14,18 @@ import java.util.UUID;
 public interface AdminCopyRelationshipApi {
 
   /**
-   * @throws java.util.NoSuchElementException if {@code masterUserId} has no {@code master_profiles}
-   *     row.
+   * TICKET-125 — {@code masterBrokerAccountId} identifies which of the master's (possibly several)
+   * profiles/strategies to link to, not just which user.
+   *
+   * @throws java.util.NoSuchElementException if {@code masterBrokerAccountId} has no {@code
+   *     master_profiles} row.
    * @throws IllegalArgumentException if {@code followerBrokerAccountId} isn't owned by {@code
    *     followerUserId}, or equals the master's own primary broker account.
    * @throws IllegalStateException if a non-terminal relationship already links this exact
    *     master/follower broker account pair.
    */
   LinkedCopyRelationshipView linkFollowerToMaster(
-      UUID followerUserId, UUID masterUserId, UUID followerBrokerAccountId);
+      UUID followerUserId, UUID masterBrokerAccountId, UUID followerBrokerAccountId);
 
   record LinkedCopyRelationshipView(UUID id, String status, String masterDisplayName) {}
 }

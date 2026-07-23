@@ -7,6 +7,7 @@ import { DemoLiveTag } from "@/components/DemoLiveTag";
 import { ConnectionStatusBadge } from "@/components/ConnectionStatusBadge";
 import { DisconnectButton } from "./DisconnectButton";
 import { DeleteButton } from "./DeleteButton";
+import { ReconnectButton } from "./ReconnectButton";
 
 const PLATFORM_LABEL: Record<BrokerType, string> = {
   CTRADER: "cTrader",
@@ -173,7 +174,16 @@ function AccountCard({
             Manage
           </Link>
           {account.connectionStatus === "DISCONNECTED" ? (
-            <DeleteButton id={account.id} label={account.displayLabel ?? account.brokerAccountLogin} />
+            <>
+              <ReconnectButton
+                id={account.id}
+                label={account.displayLabel ?? account.brokerAccountLogin}
+              />
+              <DeleteButton
+                id={account.id}
+                label={account.displayLabel ?? account.brokerAccountLogin}
+              />
+            </>
           ) : (
             <DisconnectButton
               id={account.id}

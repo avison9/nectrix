@@ -11,6 +11,9 @@ export function EditMasterProfileForm({ profile }: { profile: MasterProfile }) {
   const [performanceFeePercent, setPerformanceFeePercent] = useState(
     String(profile.performanceFeePercent),
   );
+  const [minFollowerBalance, setMinFollowerBalance] = useState(
+    profile.minFollowerBalance !== null ? String(profile.minFollowerBalance) : "",
+  );
   const [isPublic, setIsPublic] = useState(profile.isPublic);
   const [error, setError] = useState<string | undefined>();
   const [saved, setSaved] = useState(false);
@@ -30,6 +33,9 @@ export function EditMasterProfileForm({ profile }: { profile: MasterProfile }) {
           .filter(Boolean),
         performanceFeePercent: Number(performanceFeePercent),
         isPublic,
+        // 0 (blank field) explicitly clears a previously-set minimum — see api-client's own
+        // patchMasterProfile Javadoc.
+        minFollowerBalance: minFollowerBalance === "" ? 0 : Number(minFollowerBalance),
       });
       if ("error" in result) {
         setError(result.error);
@@ -82,6 +88,21 @@ export function EditMasterProfileForm({ profile }: { profile: MasterProfile }) {
           required
           value={performanceFeePercent}
           onChange={(e) => setPerformanceFeePercent(e.target.value)}
+          className="h-10 rounded-[10px] border border-[var(--border)] bg-transparent px-3 text-[13.5px] text-[var(--text)] outline-none focus:border-[var(--accent)]"
+        />
+      </label>
+
+      <label className="flex flex-col gap-1.5">
+        <span className="text-[12.5px] font-medium text-[var(--text-2)]">
+          Minimum follower balance <span className="text-[var(--text-3)]">(optional)</span>
+        </span>
+        <input
+          type="number"
+          min="0"
+          step="0.01"
+          placeholder="No minimum"
+          value={minFollowerBalance}
+          onChange={(e) => setMinFollowerBalance(e.target.value)}
           className="h-10 rounded-[10px] border border-[var(--border)] bg-transparent px-3 text-[13.5px] text-[var(--text)] outline-none focus:border-[var(--accent)]"
         />
       </label>

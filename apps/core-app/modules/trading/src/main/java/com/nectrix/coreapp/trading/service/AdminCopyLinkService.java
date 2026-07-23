@@ -38,25 +38,35 @@ public class AdminCopyLinkService {
   private final MoneyManagementProfileRepository moneyManagementProfileRepository;
   private final RiskProfileRepository riskProfileRepository;
   private final CopyRelationshipRepository copyRelationshipRepository;
+  private final MinFollowerBalanceGate minFollowerBalanceGate;
 
   public AdminCopyLinkService(
       MasterProfileLookupApi masterProfileLookupApi,
       BrokerAccountLookupApi brokerAccountLookupApi,
       MoneyManagementProfileRepository moneyManagementProfileRepository,
       RiskProfileRepository riskProfileRepository,
-      CopyRelationshipRepository copyRelationshipRepository) {
+      CopyRelationshipRepository copyRelationshipRepository,
+      MinFollowerBalanceGate minFollowerBalanceGate) {
     this.masterProfileLookupApi = masterProfileLookupApi;
     this.brokerAccountLookupApi = brokerAccountLookupApi;
     this.moneyManagementProfileRepository = moneyManagementProfileRepository;
     this.riskProfileRepository = riskProfileRepository;
     this.copyRelationshipRepository = copyRelationshipRepository;
+    this.minFollowerBalanceGate = minFollowerBalanceGate;
   }
 
+  /**
+   * TICKET-125 — {@code masterBrokerAccountId} identifies WHICH of the master's (possibly several)
+   * profiles/strategies this admin means to link the follower to; a user with multiple eligible
+   * broker accounts can have more than one {@code master_profiles} row, so this can no longer be
+   * resolved from just {@code masterUserId} alone (previously always defaulted to "the" profile,
+   * back when {@code user_id} was unique).
+   */
   public CopyRelationship linkFollowerToMaster(
-      UUID followerUserId, UUID masterUserId, UUID followerBrokerAccountId) {
+      UUID followerUserId, UUID masterBrokerAccountId, UUID followerBrokerAccountId) {
     MasterProfileSummaryView master =
         masterProfileLookupApi
-            .findByUserId(masterUserId)
+            .findByPrimaryBrokerAccountId(masterBrokerAccountId)
             .orElseThrow(NoSuchMasterProfileException::new);
     BrokerAccountView followerAccount = lookupOwned(followerUserId, followerBrokerAccountId);
     if (master.primaryBrokerAccountId().equals(followerAccount.id())) {
@@ -66,6 +76,9 @@ public class AdminCopyLinkService {
         master.primaryBrokerAccountId(), followerAccount.id())) {
       throw new DuplicateCopyRelationshipException();
     }
+    BigDecimal startingEquity =
+        minFollowerBalanceGate.checkAndCaptureStartingEquity(
+            master.minFollowerBalance(), followerAccount.id());
 
     UUID moneyManagementProfileId =
         moneyManagementProfileRepository.insert(
@@ -84,7 +97,8 @@ public class AdminCopyLinkService {
             riskProfileId,
             master.performanceFeePercent(),
             master.feeCollectionMethod(),
-            status);
+            status,
+            startingEquity);
     return copyRelationshipRepository
         .findById(copyRelationshipId)
         .orElseThrow(CopyRelationshipNotFoundException::new);

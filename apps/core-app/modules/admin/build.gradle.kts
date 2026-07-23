@@ -52,6 +52,11 @@ dependencies {
     // #421 — AdminCopyRelationshipApi (manual follower-master linking). One-way
     // edge (trading doesn't depend on admin), same shape as the billing edge above.
     implementation(project(":modules:trading"))
+    // TICKET-125 — MasterProfileLookupApi#findByPrimaryBrokerAccountId, so the
+    // master-broker-accounts-by-email lookup only ever offers accounts that already have a
+    // master_profile (the real prerequisite linkFollowerToMaster's own AdminCopyLinkService
+    // enforces) — a MASTER_ONLY/BOTH broker account alone isn't enough.
+    implementation(project(":modules:social"))
     // AuditLogRepository — extracted into this shared-kernel module (same tier as
     // modules:crypto) once modules:invitations also needed to write audit_log
     // (the Nectrix-hosted MT5/MT4 terminal-provisioning work), exactly as that

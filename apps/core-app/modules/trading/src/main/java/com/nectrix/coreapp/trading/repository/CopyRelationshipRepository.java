@@ -47,7 +47,8 @@ public class CopyRelationshipRepository {
             originatingFollowRequestId != null ? UUID.fromString(originatingFollowRequestId) : null,
             rs.getTimestamp("created_at").toInstant(),
             stoppedAt != null ? stoppedAt.toInstant() : null,
-            excludedSymbols);
+            excludedSymbols,
+            rs.getBigDecimal("starting_equity"));
       };
 
   private final JdbcTemplate jdbcTemplate;
@@ -108,14 +109,15 @@ public class CopyRelationshipRepository {
       BigDecimal performanceFeePercent,
       String feeCollectionMethod,
       String status,
-      UUID originatingInvitationId) {
+      UUID originatingInvitationId,
+      BigDecimal startingEquity) {
     return jdbcTemplate.queryForObject(
         """
         INSERT INTO copy_relationships
           (master_profile_id, master_broker_account_id, follower_user_id, follower_broker_account_id,
            money_management_profile_id, risk_profile_id, performance_fee_percent,
-           fee_collection_method, status, originating_invitation_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           fee_collection_method, status, originating_invitation_id, starting_equity)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         RETURNING id
         """,
         UUID.class,
@@ -128,7 +130,8 @@ public class CopyRelationshipRepository {
         performanceFeePercent,
         feeCollectionMethod,
         status,
-        originatingInvitationId);
+        originatingInvitationId,
+        startingEquity);
   }
 
   /**
@@ -147,14 +150,15 @@ public class CopyRelationshipRepository {
       UUID riskProfileId,
       BigDecimal performanceFeePercent,
       String feeCollectionMethod,
-      String status) {
+      String status,
+      BigDecimal startingEquity) {
     return jdbcTemplate.queryForObject(
         """
         INSERT INTO copy_relationships
           (master_profile_id, master_broker_account_id, follower_user_id, follower_broker_account_id,
            money_management_profile_id, risk_profile_id, performance_fee_percent,
-           fee_collection_method, status, originating_admin_action)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, true)
+           fee_collection_method, status, originating_admin_action, starting_equity)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, true, ?)
         RETURNING id
         """,
         UUID.class,
@@ -166,7 +170,8 @@ public class CopyRelationshipRepository {
         riskProfileId,
         performanceFeePercent,
         feeCollectionMethod,
-        status);
+        status,
+        startingEquity);
   }
 
   /**

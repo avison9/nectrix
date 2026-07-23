@@ -49,6 +49,7 @@ public class InvitationCopySetupService {
   private final MoneyManagementProfileRepository moneyManagementProfileRepository;
   private final RiskProfileRepository riskProfileRepository;
   private final CopyRelationshipRepository copyRelationshipRepository;
+  private final MinFollowerBalanceGate minFollowerBalanceGate;
 
   public InvitationCopySetupService(
       InvitationLookupApi invitationLookupApi,
@@ -57,7 +58,8 @@ public class InvitationCopySetupService {
       UserInvitationLookupRepository userInvitationLookupRepository,
       MoneyManagementProfileRepository moneyManagementProfileRepository,
       RiskProfileRepository riskProfileRepository,
-      CopyRelationshipRepository copyRelationshipRepository) {
+      CopyRelationshipRepository copyRelationshipRepository,
+      MinFollowerBalanceGate minFollowerBalanceGate) {
     this.invitationLookupApi = invitationLookupApi;
     this.masterProfileLookupApi = masterProfileLookupApi;
     this.brokerAccountLookupApi = brokerAccountLookupApi;
@@ -65,6 +67,7 @@ public class InvitationCopySetupService {
     this.moneyManagementProfileRepository = moneyManagementProfileRepository;
     this.riskProfileRepository = riskProfileRepository;
     this.copyRelationshipRepository = copyRelationshipRepository;
+    this.minFollowerBalanceGate = minFollowerBalanceGate;
   }
 
   public Optional<PendingInvitation> getPendingInvitation(UUID callerUserId) {
@@ -110,6 +113,9 @@ public class InvitationCopySetupService {
     BrokerAccountView followerAccount = lookupOwned(callerUserId, followerBrokerAccountId);
     MasterProfileSummaryView master =
         masterProfileLookupApi.getMasterProfile(invitation.masterProfileId());
+    BigDecimal startingEquity =
+        minFollowerBalanceGate.checkAndCaptureStartingEquity(
+            master.minFollowerBalance(), followerAccount.id());
 
     UUID moneyManagementProfileId =
         insertMoneyManagementProfile(
@@ -138,7 +144,8 @@ public class InvitationCopySetupService {
             master.performanceFeePercent(),
             master.feeCollectionMethod(),
             status,
-            invitationId);
+            invitationId,
+            startingEquity);
     return copyRelationshipRepository
         .findById(copyRelationshipId)
         .orElseThrow(CopyRelationshipNotFoundException::new);
