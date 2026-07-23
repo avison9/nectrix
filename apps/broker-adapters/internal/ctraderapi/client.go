@@ -319,6 +319,14 @@ func (c *Client) heartbeatLoop() {
 			}
 		case <-c.closed:
 			return
+		// Bugfix -- readLoopDone (Done()) is the real "this connection is dead"
+		// signal, distinct from closed (only set by an explicit Close() call).
+		// Without this case, a connection the read loop already detected as
+		// dead (remote end dropped it, a real EOF) left this loop still
+		// waking up every tick and writing into the same broken socket
+		// forever, logging the same warning indefinitely instead of stopping.
+		case <-c.readLoopDone:
+			return
 		}
 	}
 }
