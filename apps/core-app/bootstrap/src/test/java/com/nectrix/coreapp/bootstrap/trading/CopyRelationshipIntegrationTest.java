@@ -39,9 +39,9 @@ class CopyRelationshipIntegrationTest {
   /**
    * TICKET-120 — overrides {@code nectrix.documents.public-endpoint-override} for this test only:
    * this test's own HTTP client fetches the presigned URL from inside the SAME JVM as the app
-   * itself, not from a real browser, so it needs to reach MinIO the same way the app's own
-   * internal S3 client already does — via {@code DOCUMENTS_ENDPOINT_OVERRIDE}, which is already
-   * set correctly per-topology everywhere this test runs (devcontainer: {@code minio:9000}; CI/bare
+   * itself, not from a real browser, so it needs to reach MinIO the same way the app's own internal
+   * S3 client already does — via {@code DOCUMENTS_ENDPOINT_OVERRIDE}, which is already set
+   * correctly per-topology everywhere this test runs (devcontainer: {@code minio:9000}; CI/bare
    * host: {@code localhost:9000}). Bugfix — this used to hardcode {@code http://minio:9000}, which
    * only happens to be right inside the devcontainer's own docker network; that broke CI (bare
    * runner, no {@code minio} hostname to resolve at all) and a bare host-run alike. Falling back to
