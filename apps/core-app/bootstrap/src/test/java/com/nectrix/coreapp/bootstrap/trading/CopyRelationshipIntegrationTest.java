@@ -38,18 +38,21 @@ class CopyRelationshipIntegrationTest {
 
   /**
    * TICKET-120 — overrides {@code nectrix.documents.public-endpoint-override} for this test only:
-   * the devcontainer's own env default ({@code http://localhost:9000}) is what a real HOST browser
-   * resolves, but this test's own HTTP client runs INSIDE the devcontainer's own docker network,
-   * where MinIO is only reachable as {@code minio:9000} — same "test needs to reach whatever's
-   * actually resolvable from where IT runs, not where a real browser would" reasoning, honestly
-   * distinct from the real host/browser-reachability concern {@code
-   * AgreementDocumentStorageProperties}' own Javadoc documents (that real concern isn't testable
-   * from here at all, matching this codebase's own established live-verification-runbook precedent
-   * for untestable-from-CI concerns).
+   * this test's own HTTP client fetches the presigned URL from inside the SAME JVM as the app
+   * itself, not from a real browser, so it needs to reach MinIO the same way the app's own internal
+   * S3 client already does — via {@code DOCUMENTS_ENDPOINT_OVERRIDE}, which is already set
+   * correctly per-topology everywhere this test runs (devcontainer: {@code minio:9000}; CI/bare
+   * host: {@code localhost:9000}). Bugfix — this used to hardcode {@code http://minio:9000}, which
+   * only happens to be right inside the devcontainer's own docker network; that broke CI (bare
+   * runner, no {@code minio} hostname to resolve at all) and a bare host-run alike. Falling back to
+   * {@code DOCUMENTS_ENDPOINT_OVERRIDE} needs no new configuration anywhere — it's already correct
+   * everywhere this test needs to run.
    */
   @DynamicPropertySource
   static void documentsPublicEndpoint(DynamicPropertyRegistry registry) {
-    registry.add("nectrix.documents.public-endpoint-override", () -> "http://minio:9000");
+    registry.add(
+        "nectrix.documents.public-endpoint-override",
+        () -> System.getenv("DOCUMENTS_ENDPOINT_OVERRIDE"));
   }
 
   @LocalServerPort private int port;
