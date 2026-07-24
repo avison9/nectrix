@@ -109,7 +109,24 @@ func NewMux(serviceName string, adapter domain.BrokerAdapter, masterHandle domai
 		_ = json.NewEncoder(w).Encode(pl.ComputeUnrealizedPnLBatch(r.Context(), items))
 	})))
 
+	// Feature — the Engine Control page's own status snapshot (mirrors
+	// broker-adapters'/mt5-bridge-gateway's identical GET /internal/self/status route
+	// and shared-secret gating).
+	mux.Handle("GET /internal/self/status", requireSharedSecret(internalServiceToken, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		status := pl.Status()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(selfStatusResponse{
+			ActiveRelationshipCount: status.ActiveRelationshipCount,
+			LastReconcileAt:         status.LastReconcileAt,
+		})
+	})))
+
 	return otelhttp.NewHandler(withMetrics(mux), serviceName)
+}
+
+type selfStatusResponse struct {
+	ActiveRelationshipCount int       `json:"activeRelationshipCount"`
+	LastReconcileAt         time.Time `json:"lastReconcileAt"`
 }
 
 // requireSharedSecret mirrors broker-adapters' own internalapi.requireSharedSecret --

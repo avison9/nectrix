@@ -486,11 +486,15 @@ export interface CopyEngineHealth {
   failedInWindow: number;
 }
 
-// Mirrors admin.service.KafkaConsumerLagService.ConsumerGroupLag.
+// Mirrors admin.service.KafkaConsumerLagService.ConsumerGroupLag. messagesReceived is topic-wide
+// (independent of any one consumer group); messagesProcessed is this group's own committed
+// progress against that topic. Both -1 alongside lag on a failed lookup (see the Java Javadoc).
 export interface ConsumerGroupLag {
   groupId: string;
   topic: string;
   lag: number;
+  messagesReceived: number;
+  messagesProcessed: number;
 }
 
 // TICKET-123 — mirrors AdminController.TerminalHealthView. podProvisioned=false means no live
@@ -524,6 +528,21 @@ export interface SystemHealthSnapshot {
   reconciliationDriftLastHour: number;
   kafkaConsumerLag: ConsumerGroupLag[];
   mtTerminals: MtTerminalsSection;
+}
+
+// Engine Control page — mirrors AdminController.EngineStatusView. status is one of
+// "CONNECTED"/"IDLE"/"STALE"/"DISCONNECTED" for broker-adapters/copy-engine/mt5-bridge-gateway, or
+// just "CONNECTED"/"DISCONNECTED" for mt-terminal-host/redis — connectedCount/lastReconcileAt/
+// latencyMs are each null whenever they don't apply to that engine's own state model.
+export type EngineStatusState = "CONNECTED" | "IDLE" | "STALE" | "DISCONNECTED";
+
+export interface EngineStatus {
+  serviceId: string;
+  displayName: string;
+  status: EngineStatusState;
+  connectedCount: number | null;
+  lastReconcileAt: string | null;
+  latencyMs: number | null;
 }
 
 // TICKET-118 — Invitation System (Master invites a Follower). Mirrors

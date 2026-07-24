@@ -25,6 +25,7 @@ import type {
   CopyRelationship,
   CopyRelationshipStatus,
   CtraderAccountOption,
+  EngineStatus,
   FeeCollectionMethod,
   FeeLedgerDetail,
   FeeLedgerDetailPage,
@@ -78,6 +79,7 @@ export type {
   CopyRelationship,
   CopyRelationshipStatus,
   CtraderAccountOption,
+  EngineStatus,
   FeeCollectionMethod,
   FeeLedgerDetail,
   FeeLedgerDetailPage,
@@ -1376,6 +1378,57 @@ export async function getSystemHealth(
 ): Promise<SystemHealthSnapshot> {
   return coreAppFetch<SystemHealthSnapshot>(baseUrl, "/api/v1/admin/system-health", {
     method: "GET",
+    accessToken,
+  });
+}
+
+/** ADMIN+SUPPORT can view — see AdminController#getEngineStatus's own Javadoc for the state model. */
+export async function getEngineStatus(
+  baseUrl: string,
+  accessToken: string,
+): Promise<EngineStatus[]> {
+  return coreAppFetch<EngineStatus[]>(baseUrl, "/api/v1/admin/engine-status", {
+    method: "GET",
+    accessToken,
+  });
+}
+
+/**
+ * ADMIN-only server-side — restarting/stopping/starting a live engine is a real operational
+ * action, not a read (same "SUPPORT cannot action platform state" distinction suspendUser/
+ * deleteUser above establish). Throws ApiError(409) if service control is disabled server-side,
+ * ApiError(502) if the underlying docker command itself failed — see
+ * AdminExceptionHandler#handleServiceControlFailure's own Javadoc.
+ */
+export async function restartEngine(
+  baseUrl: string,
+  accessToken: string,
+  serviceId: string,
+): Promise<void> {
+  await coreAppFetch<null>(baseUrl, `/api/v1/admin/engines/${serviceId}/restart`, {
+    method: "POST",
+    accessToken,
+  });
+}
+
+export async function stopEngine(
+  baseUrl: string,
+  accessToken: string,
+  serviceId: string,
+): Promise<void> {
+  await coreAppFetch<null>(baseUrl, `/api/v1/admin/engines/${serviceId}/stop`, {
+    method: "POST",
+    accessToken,
+  });
+}
+
+export async function startEngine(
+  baseUrl: string,
+  accessToken: string,
+  serviceId: string,
+): Promise<void> {
+  await coreAppFetch<null>(baseUrl, `/api/v1/admin/engines/${serviceId}/start`, {
+    method: "POST",
     accessToken,
   });
 }

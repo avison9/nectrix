@@ -79,7 +79,7 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(healthResponse{Service: serviceName, Status: "ok"})
 	})
-	mux.Handle("/internal/", internalapi.NewMux(rawAdapter, loop, adapter, internalServiceToken, logger))
+	mux.Handle("/internal/", internalapi.NewMux(rawAdapter, loop, loop, adapter, internalServiceToken, logger))
 
 	server := &http.Server{Addr: addr, Handler: mux}
 

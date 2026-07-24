@@ -151,4 +151,32 @@ tasks.register<Test>("integrationTest") {
         includeTags("integration")
     }
     hikariTestPoolSizeProps.forEach { (k, v) -> systemProperty(k, v) }
+    // Bugfix — every one of these tests is a real HTTP round trip against a real Postgres row
+    // (@SpringBootTest, RANDOM_PORT), and none of them clean up after themselves. Run locally
+    // against the shared dev database (whatever POSTGRES_DB a sourced .env already has in the
+    // environment), this floods it with hundreds of leftover @example.com rows every run —
+    // confirmed live, repeatedly: those rows flood broker-adapters' reconcile loop, which caches
+    // its account list in memory, stalling real price-tick subscriptions until someone notices,
+    // manually cleans the DB, and restarts every dev service. CI is unaffected — its own
+    // integration-test job already runs this against a fresh, ephemeral Postgres service
+    // container that's destroyed after the job, with POSTGRES_DB=nectrix set directly in that
+    // workflow's env (see .github/workflows/main-pipeline.yml) — CI=true is GitHub Actions' own
+    // automatic env var, so this override only ever fires for a local run, and only ever
+    // overrides POSTGRES_DB specifically (POSTGRES_HOST/PORT/the app-role password stay whatever
+    // the ambient environment already provides, local or CI).
+    //
+    // nectrix_test itself is a one-time-provisioned sibling database on the same local Postgres
+    // container — same schema as nectrix (`pg_dump --schema-only`) plus just the `roles` and
+    // `kms_key_versions` reference tables' data (real config these tests need — grantRole's own
+    // FK lookup, EnvelopeEncryptionService's current-key lookup — not "seed data" in the
+    // dev-users sense), deliberately WITHOUT the real dev-seed users/broker-accounts/etc.: these
+    // tests create their own fixtures already, and starting from a real seed row here would just
+    // be unused clutter, not a functional need. If nectrix_test is ever dropped, recreate it with:
+    //   createdb -U nectrix nectrix_test
+    //   pg_dump -U nectrix --schema-only -d nectrix | psql -U nectrix -d nectrix_test
+    //   pg_dump -U nectrix --data-only --table=roles -d nectrix | psql -U nectrix -d nectrix_test
+    //   pg_dump -U nectrix --data-only --table=kms_key_versions -d nectrix | psql -U nectrix -d nectrix_test
+    if (System.getenv("CI") == null) {
+        environment("POSTGRES_DB", "nectrix_test")
+    }
 }

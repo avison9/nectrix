@@ -135,6 +135,12 @@ export default async function SystemHealthPage() {
                   Topic
                 </th>
                 <th className="pb-2 text-right text-[11.5px] font-semibold uppercase tracking-wide text-[var(--text-3)]">
+                  Received
+                </th>
+                <th className="pb-2 text-right text-[11.5px] font-semibold uppercase tracking-wide text-[var(--text-3)]">
+                  Processed
+                </th>
+                <th className="pb-2 text-right text-[11.5px] font-semibold uppercase tracking-wide text-[var(--text-3)]">
                   Lag
                 </th>
               </tr>
@@ -144,6 +150,12 @@ export default async function SystemHealthPage() {
                 <tr key={row.groupId} className="border-b border-[var(--border)] last:border-0">
                   <td className="py-2 font-mono text-[12px] text-[var(--text-2)]">{row.groupId}</td>
                   <td className="py-2 text-[var(--text-2)]">{row.topic}</td>
+                  <td className="py-2 text-right font-mono text-[var(--text-2)]">
+                    {row.messagesReceived < 0 ? "n/a" : row.messagesReceived}
+                  </td>
+                  <td className="py-2 text-right font-mono text-[var(--text-2)]">
+                    {row.messagesProcessed < 0 ? "n/a" : row.messagesProcessed}
+                  </td>
                   <td
                     className={`py-2 text-right font-mono ${
                       row.lag < 0

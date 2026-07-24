@@ -709,7 +709,43 @@ func (p *Pipeline) CheckReconciliationOnce(ctx context.Context) error {
 			slog.Default().Error("pipeline: follower reconciliation failed", "followerBrokerAccountId", id, "error", err)
 		}
 	}
+
+	relationshipCount, err := p.countActiveRelationships(ctx)
+	if err != nil {
+		return fmt.Errorf("count active relationships for reconciliation: %w", err)
+	}
+
+	// Feature — the Engine Control page's own "stale vs connected" signal, same
+	// convention as apps/broker-adapters' reconcile.Loop: set unconditionally at the
+	// end of every cycle that completed successfully, whether or not any drift was
+	// actually found.
+	p.selfStatusMu.Lock()
+	p.lastReconcileAt = time.Now()
+	p.activeRelationshipCount = relationshipCount
+	p.selfStatusMu.Unlock()
+
 	return nil
+}
+
+func (p *Pipeline) countActiveRelationships(ctx context.Context) (int, error) {
+	var count int
+	if err := p.pool.QueryRow(ctx, `SELECT COUNT(*) FROM copy_relationships WHERE status = 'ACTIVE'`).Scan(&count); err != nil {
+		return 0, fmt.Errorf("query active relationship count: %w", err)
+	}
+	return count, nil
+}
+
+// Status is the Engine Control page's own self-reported snapshot — served
+// via internal/httpapi's GET /internal/self/status route.
+type Status struct {
+	ActiveRelationshipCount int
+	LastReconcileAt         time.Time
+}
+
+func (p *Pipeline) Status() Status {
+	p.selfStatusMu.Lock()
+	defer p.selfStatusMu.Unlock()
+	return Status{ActiveRelationshipCount: p.activeRelationshipCount, LastReconcileAt: p.lastReconcileAt}
 }
 
 // ==================== PUBLISH ====================

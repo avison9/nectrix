@@ -15,8 +15,10 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/avison9/nectrix/broker-adapters/internal/ctrader"
+	"github.com/avison9/nectrix/broker-adapters/internal/reconcile"
 	domain "github.com/avison9/nectrix/go-domain"
 )
 
@@ -32,6 +34,13 @@ type AccountLister interface {
 // real Loop, matching AccountLister's own precedent.
 type HandleProvider interface {
 	HandleFor(brokerAccountID string) (domain.ConnectionHandle, bool)
+}
+
+// SelfStatusProvider is the *reconcile.Loop subset the Engine Control page's
+// status endpoint needs. ConnectedCount/LastReconcileAt map directly to that
+// page's status badge (see reconcile.Status's own doc comment).
+type SelfStatusProvider interface {
+	Status() reconcile.Status
 }
 
 type listAccountsRequest struct {
@@ -96,13 +105,16 @@ func toOrderResultWire(result domain.NormalizedOrderResult) orderResultWire {
 // the raw one) — TICKET-106: this gives the new PlaceOrder route a
 // Redis-backed idempotency guard beneath Copy Engine's own Postgres-level
 // one, for free.
-func NewMux(lister AccountLister, handles HandleProvider, adapter domain.BrokerAdapter, sharedSecret string, logger *slog.Logger) http.Handler {
+func NewMux(lister AccountLister, handles HandleProvider, selfStatus SelfStatusProvider, adapter domain.BrokerAdapter, sharedSecret string, logger *slog.Logger) http.Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /internal/ctrader/accounts", func(w http.ResponseWriter, r *http.Request) {
 		handleListAccounts(w, r, lister, logger)
+	})
+	mux.HandleFunc("GET /internal/self/status", func(w http.ResponseWriter, r *http.Request) {
+		handleSelfStatus(w, r, selfStatus)
 	})
 	mux.HandleFunc("GET /internal/ctrader/accounts/{brokerAccountId}/snapshot", func(w http.ResponseWriter, r *http.Request) {
 		handleGetAccountSnapshot(w, r, handles, adapter, logger)
@@ -138,6 +150,25 @@ func requireSharedSecret(sharedSecret string, next http.Handler) http.Handler {
 			return
 		}
 		next.ServeHTTP(w, r)
+	})
+}
+
+// selfStatusResponse is the Engine Control page's own wire contract —
+// `lastReconcileAt` is the zero time (encodes as `"0001-01-01T00:00:00Z"`)
+// until this process's very first reconcile cycle completes, which the admin
+// page's own status derivation treats identically to "never reconciled" —
+// still correctly renders as Stale/Disconnected, not a crash on a null.
+type selfStatusResponse struct {
+	ConnectedCount  int       `json:"connectedCount"`
+	LastReconcileAt time.Time `json:"lastReconcileAt"`
+}
+
+func handleSelfStatus(w http.ResponseWriter, r *http.Request, selfStatus SelfStatusProvider) {
+	status := selfStatus.Status()
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(selfStatusResponse{
+		ConnectedCount:  status.ConnectedCount,
+		LastReconcileAt: status.LastReconcileAt,
 	})
 }
 

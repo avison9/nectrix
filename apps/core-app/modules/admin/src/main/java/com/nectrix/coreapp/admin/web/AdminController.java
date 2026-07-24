@@ -1,5 +1,7 @@
 package com.nectrix.coreapp.admin.web;
 
+import com.nectrix.coreapp.admin.client.InfraStatusClient;
+import com.nectrix.coreapp.admin.client.InfraStatusClient.EngineSelfStatus;
 import com.nectrix.coreapp.admin.client.MtTerminalHostClient;
 import com.nectrix.coreapp.admin.client.MtTerminalHostClient.TerminalStatus;
 import com.nectrix.coreapp.admin.repository.AdminRepository;
@@ -7,6 +9,9 @@ import com.nectrix.coreapp.admin.repository.AdminRepository.BrokerConnectionCoun
 import com.nectrix.coreapp.admin.repository.AdminRepository.MtBrokerAccountRef;
 import com.nectrix.coreapp.admin.service.KafkaConsumerLagService;
 import com.nectrix.coreapp.admin.service.KafkaConsumerLagService.ConsumerGroupLag;
+import com.nectrix.coreapp.admin.service.RedisHealthCheck;
+import com.nectrix.coreapp.admin.service.ServiceControlClient;
+import com.nectrix.coreapp.admin.service.ServiceControlClient.ServiceId;
 import com.nectrix.coreapp.audit.repository.AuditLogRepository;
 import com.nectrix.coreapp.auth.api.ImpersonationApi;
 import com.nectrix.coreapp.auth.api.ImpersonationResult;
@@ -27,6 +32,7 @@ import com.nectrix.coreapp.trading.api.AdminCopyRelationshipApi.LinkedCopyRelati
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -34,6 +40,7 @@ import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.BiConsumer;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -94,9 +101,20 @@ public class AdminController {
   private final ObjectMapper objectMapper;
   private final AdminCopyRelationshipApi adminCopyRelationshipApi;
   private final MasterProfileLookupApi masterProfileLookupApi;
+  private final InfraStatusClient infraStatusClient;
+  private final RedisHealthCheck redisHealthCheck;
+  private final Optional<ServiceControlClient> serviceControlClient;
 
   /** System Health's Copy Engine throughput/error-rate window — see {@link #getSystemHealth}. */
   private static final Duration COPY_ENGINE_WINDOW = Duration.ofMinutes(15);
+
+  /**
+   * Engine Control page's "stale" cutoff — 2x the 30s reconcile/poll interval every one of
+   * broker-adapters/copy-engine/mt5-bridge-gateway's own loops already uses (see each service's
+   * own main.go), so "stale" genuinely means "this loop stopped making progress," not just
+   * "nothing changed last cycle."
+   */
+  private static final Duration ENGINE_STALE_THRESHOLD = Duration.ofSeconds(60);
 
   public AdminController(
       ImpersonationApi impersonationApi,
@@ -111,7 +129,10 @@ public class AdminController {
       AuditLogRepository auditLogRepository,
       ObjectMapper objectMapper,
       AdminCopyRelationshipApi adminCopyRelationshipApi,
-      MasterProfileLookupApi masterProfileLookupApi) {
+      MasterProfileLookupApi masterProfileLookupApi,
+      InfraStatusClient infraStatusClient,
+      RedisHealthCheck redisHealthCheck,
+      Optional<ServiceControlClient> serviceControlClient) {
     this.impersonationApi = impersonationApi;
     this.brokerAccountLookupApi = brokerAccountLookupApi;
     this.userProvisioningApi = userProvisioningApi;
@@ -125,6 +146,9 @@ public class AdminController {
     this.objectMapper = objectMapper;
     this.adminCopyRelationshipApi = adminCopyRelationshipApi;
     this.masterProfileLookupApi = masterProfileLookupApi;
+    this.infraStatusClient = infraStatusClient;
+    this.redisHealthCheck = redisHealthCheck;
+    this.serviceControlClient = serviceControlClient;
   }
 
   @PostMapping("/api/v1/admin/impersonate/{userId}")
@@ -534,6 +558,106 @@ public class AdminController {
   }
 
   /**
+   * The Engine Control page's own status snapshot — broker-adapters/copy-engine/
+   * mt5-bridge-gateway's own new {@code GET /internal/self/status} routes (4-state:
+   * CONNECTED/IDLE/STALE/DISCONNECTED), mt-terminal-host's existing pod-status call reused purely
+   * as a reachability signal (2-state), and Redis's own real {@code PING} (2-state) — see this
+   * feature's own plan doc for why each gets the state model it does.
+   */
+  @GetMapping("/api/v1/admin/engine-status")
+  @PreAuthorize("hasAnyRole('ADMIN','SUPPORT')")
+  public List<EngineStatusView> getEngineStatus() {
+    List<EngineStatusView> views = new ArrayList<>();
+    views.add(
+        buildReconcilingEngineStatus(
+            "broker-adapters", "Broker Adapters", infraStatusClient.getBrokerAdaptersStatus()));
+    views.add(
+        buildReconcilingEngineStatus(
+            "copy-engine", "Copy Engine", infraStatusClient.getCopyEngineStatus()));
+    views.add(
+        buildReconcilingEngineStatus(
+            "mt5-bridge-gateway",
+            "MT5 Bridge Gateway",
+            infraStatusClient.getMt5BridgeGatewayStatus()));
+    views.add(buildMtTerminalHostEngineStatus());
+    views.add(buildRedisEngineStatus());
+    return views;
+  }
+
+  private EngineStatusView buildReconcilingEngineStatus(
+      String serviceId, String displayName, Optional<EngineSelfStatus> statusOpt) {
+    if (statusOpt.isEmpty()) {
+      return new EngineStatusView(serviceId, displayName, "DISCONNECTED", null, null, null);
+    }
+    EngineSelfStatus status = statusOpt.get();
+    boolean stale =
+        status.lastReconcileAt() == null
+            || Duration.between(status.lastReconcileAt(), Instant.now())
+                    .compareTo(ENGINE_STALE_THRESHOLD)
+                > 0;
+    String state = stale ? "STALE" : (status.count() > 0 ? "CONNECTED" : "IDLE");
+    return new EngineStatusView(
+        serviceId, displayName, state, status.count(), status.lastReconcileAt(), null);
+  }
+
+  private EngineStatusView buildMtTerminalHostEngineStatus() {
+    Optional<List<TerminalStatus>> podStatuses = mtTerminalHostClient.listTerminalStatuses();
+    String state = podStatuses.isPresent() ? "CONNECTED" : "DISCONNECTED";
+    Integer count = podStatuses.map(List::size).orElse(null);
+    return new EngineStatusView("mt-terminal-host", "MT Terminal Host", state, count, null, null);
+  }
+
+  private EngineStatusView buildRedisEngineStatus() {
+    RedisHealthCheck.Status status = redisHealthCheck.check();
+    String state = status.connected() ? "CONNECTED" : "DISCONNECTED";
+    return new EngineStatusView("redis", "Redis", state, null, null, status.latencyMs());
+  }
+
+  /**
+   * ADMIN-only — same "SUPPORT cannot action platform state" distinction {@code
+   * /ledger-adjustments} establishes; restarting a live engine is a real operational action, not a
+   * read. Disabled (no {@link ServiceControlClient} bean at all) surfaces as a real 409 via the
+   * existing {@code IllegalStateException} handler — the same outcome whether it's disabled by
+   * config or genuinely unavailable, since a caller can't act on the distinction either way.
+   */
+  @PostMapping("/api/v1/admin/engines/{serviceId}/restart")
+  @PreAuthorize("hasRole('ADMIN')")
+  public ResponseEntity<Void> restartEngine(
+      @PathVariable String serviceId, @AuthenticationPrincipal Jwt jwt) {
+    return controlEngine(serviceId, "RESTART", jwt, ServiceControlClient::restart);
+  }
+
+  @PostMapping("/api/v1/admin/engines/{serviceId}/stop")
+  @PreAuthorize("hasRole('ADMIN')")
+  public ResponseEntity<Void> stopEngine(
+      @PathVariable String serviceId, @AuthenticationPrincipal Jwt jwt) {
+    return controlEngine(serviceId, "STOP", jwt, ServiceControlClient::stop);
+  }
+
+  @PostMapping("/api/v1/admin/engines/{serviceId}/start")
+  @PreAuthorize("hasRole('ADMIN')")
+  public ResponseEntity<Void> startEngine(
+      @PathVariable String serviceId, @AuthenticationPrincipal Jwt jwt) {
+    return controlEngine(serviceId, "START", jwt, ServiceControlClient::start);
+  }
+
+  private ResponseEntity<Void> controlEngine(
+      String serviceIdParam,
+      String action,
+      Jwt jwt,
+      BiConsumer<ServiceControlClient, ServiceId> operation) {
+    ServiceControlClient client =
+        serviceControlClient.orElseThrow(
+            () -> new IllegalStateException("service control is disabled"));
+    ServiceId serviceId = ServiceId.fromConfigKey(serviceIdParam);
+    operation.accept(client, serviceId);
+    UUID actingAdminId = currentUserId(jwt);
+    auditLogRepository.insert(
+        actingAdminId, "ADMIN", "ENGINE_" + action, "ENGINE", serviceIdParam, null);
+    return ResponseEntity.status(HttpStatus.NO_CONTENT).build();
+  }
+
+  /**
    * TICKET-123 — joins every linked MT4/MT5 {@code broker_accounts} row against mt-terminal-host's
    * live pod statuses, so "no pod at all" (never provisioned, or torn down) is distinguishable from
    * "pod exists but unhealthy" — both are real, different failure modes an Admin/Support user needs
@@ -691,4 +815,19 @@ public class AdminController {
       long reconciliationDriftLastHour,
       List<ConsumerGroupLag> kafkaConsumerLag,
       MtTerminalsSection mtTerminals) {}
+
+  /**
+   * Engine Control page's one row per engine. {@code status} is one of CONNECTED/IDLE/STALE/
+   * DISCONNECTED for broker-adapters/copy-engine/mt5-bridge-gateway, or just CONNECTED/
+   * DISCONNECTED for mt-terminal-host/redis (see {@link #getEngineStatus}'s own Javadoc).
+   * {@code connectedCount}/{@code lastReconcileAt}/{@code latencyMs} are each null whenever they
+   * don't apply to that engine's own state model, never a fabricated zero.
+   */
+  public record EngineStatusView(
+      String serviceId,
+      String displayName,
+      String status,
+      Integer connectedCount,
+      Instant lastReconcileAt,
+      Long latencyMs) {}
 }

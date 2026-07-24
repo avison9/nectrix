@@ -104,8 +104,9 @@ type Loop struct {
 	interval        time.Duration
 	logger          *slog.Logger
 
-	mu        sync.Mutex
-	connected map[string]connectedAccount
+	mu              sync.Mutex
+	connected       map[string]connectedAccount
+	lastReconcileAt time.Time
 }
 
 func New(lister BrokerAccountLister, credentials CredentialFetcher, statusReporter StatusReporter, symbolResolver domain.SymbolResolver, mappingReporter SymbolMappingReporter, adapter Adapter, onEvent func(context.Context, domain.NormalizedTradeEvent) error, interval time.Duration, logger *slog.Logger) *Loop {
@@ -172,6 +173,12 @@ func (l *Loop) reconcileOnce(ctx context.Context) {
 		}
 		l.connectLocked(ctx, id)
 	}
+
+	// Feature — the Engine Control page's own "stale vs connected" signal: this is set
+	// unconditionally at the end of every cycle (list succeeded, whether or not any
+	// connect/disconnect actually happened), so "stale" genuinely means "this loop stopped
+	// running," never "nothing changed last cycle."
+	l.lastReconcileAt = time.Now()
 }
 
 func (l *Loop) connectLocked(ctx context.Context, id string) {
@@ -285,4 +292,17 @@ func (l *Loop) HandleFor(brokerAccountID string) (domain.ConnectionHandle, bool)
 	defer l.mu.Unlock()
 	conn, ok := l.connected[brokerAccountID]
 	return conn.handle, ok
+}
+
+// Status is the Engine Control page's own self-reported snapshot, served via
+// internal/internalapi's GET /internal/self/status route.
+type Status struct {
+	ConnectedCount  int
+	LastReconcileAt time.Time
+}
+
+func (l *Loop) Status() Status {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return Status{ConnectedCount: len(l.connected), LastReconcileAt: l.lastReconcileAt}
 }

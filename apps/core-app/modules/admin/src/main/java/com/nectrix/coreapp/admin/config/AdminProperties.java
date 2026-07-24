@@ -1,5 +1,6 @@
 package com.nectrix.coreapp.admin.config;
 
+import java.util.Map;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
@@ -11,7 +12,12 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * it).
  */
 @ConfigurationProperties(prefix = "nectrix.admin")
-public record AdminProperties(MtTerminalHost mtTerminalHost) {
+public record AdminProperties(
+    MtTerminalHost mtTerminalHost,
+    EngineService brokerAdapters,
+    EngineService copyEngine,
+    EngineService mtBridge,
+    ServiceControl serviceControl) {
 
   /**
    * TICKET-123 — apps/mt-terminal-host's new, deliberately read-only {@code GET
@@ -21,4 +27,24 @@ public record AdminProperties(MtTerminalHost mtTerminalHost) {
    * core-app, never the reverse.
    */
   public record MtTerminalHost(String internalBaseUrl, String serviceToken) {}
+
+  /**
+   * Engine Control page — the shared {@code internalBaseUrl}/{@code serviceToken} shape for
+   * broker-adapters/copy-engine/mt5-bridge-gateway's own {@code GET /internal/self/status} routes.
+   * Declared again here (rather than reusing {@code invitations.config.InvitationsProperties}' or
+   * {@code trading.config.TradingProperties}' own records for the same services) because
+   * cross-module code only ever imports another module's {@code ..api..} package
+   * (docs/04-architecture-overview.md §4.4) — a {@code config} record doesn't qualify, even though
+   * every value here resolves the exact same env var as those modules' own properties.
+   */
+  public record EngineService(String internalBaseUrl, String serviceToken) {}
+
+  /**
+   * Local-Docker restart/stop/start capability (Engine Control page) — see {@code
+   * DockerServiceControlClient}'s own Javadoc for why this defaults to disabled. {@code containers}
+   * maps a fixed {@code serviceId} (broker-adapters/copy-engine/mt5-bridge-gateway/mt-terminal-host)
+   * to the real {@code docker run --name} value it was started with locally — there's no
+   * docker-compose-derived naming convention to infer this from.
+   */
+  public record ServiceControl(boolean enabled, Map<String, String> containers) {}
 }

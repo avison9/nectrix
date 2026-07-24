@@ -49,6 +49,12 @@ dependencies {
     implementation(project(":modules:invitations"))
     // TICKET-117 — FeeLedgerAdminApi (dispute raise/list/detail/resolve).
     implementation(project(":modules:billing"))
+    // Engine Control page — RedisHealthCheck's real PING against the same shared,
+    // cluster-aware client modules:auth's own RedisClientConfiguration already registers as a bean
+    // (OAuthLinkStateStore/RateLimiterService) — one UnifiedJedis bean in bootstrap's single
+    // ApplicationContext, autowired here by type, no cross-module import of any auth-module class
+    // needed. Not yet a direct dependency of this module before now.
+    implementation("com.nectrix:redis-client")
     // #421 — AdminCopyRelationshipApi (manual follower-master linking). One-way
     // edge (trading doesn't depend on admin), same shape as the billing edge above.
     implementation(project(":modules:trading"))

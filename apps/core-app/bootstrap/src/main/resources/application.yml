@@ -193,3 +193,27 @@ nectrix:
     mt-terminal-host:
       internal-base-url: ${MT_TERMINAL_HOST_INTERNAL_BASE_URL:http://localhost:8093}
       service-token: ${INTERNAL_SERVICE_TOKEN}
+    # Engine Control page — InfraStatusClient's own GET /internal/self/status calls. Same
+    # internal-base-url/service-token values as nectrix.invitations.broker-adapters/mt-bridge and
+    # nectrix.trading.copy-engine above (same underlying env vars) — declared again here because
+    # cross-module code only ever imports another module's ..api.. package, never a config record.
+    broker-adapters:
+      internal-base-url: ${BROKER_ADAPTERS_INTERNAL_BASE_URL:http://localhost:8091}
+      service-token: ${INTERNAL_SERVICE_TOKEN}
+    copy-engine:
+      internal-base-url: ${COPY_ENGINE_INTERNAL_BASE_URL:http://localhost:8090}
+      service-token: ${INTERNAL_SERVICE_TOKEN}
+    mt-bridge:
+      internal-base-url: ${MT5_BRIDGE_GATEWAY_INTERNAL_BASE_URL:http://localhost:8092}
+      service-token: ${INTERNAL_SERVICE_TOKEN}
+    # Local-Docker restart/stop/start — defaults OFF (see DockerServiceControlClient's own
+    # Javadoc): only ever makes sense when core-app itself runs directly on a dev machine, never
+    # inside a container/pod. containers maps a fixed serviceId to the real `docker run --name`
+    # value this session's own ad-hoc container recreations actually used.
+    service-control:
+      enabled: ${ADMIN_SERVICE_CONTROL_ENABLED:false}
+      containers:
+        broker-adapters: ${BROKER_ADAPTERS_CONTAINER_NAME:nectrix-brokeradapters-run}
+        copy-engine: ${COPY_ENGINE_CONTAINER_NAME:nectrix-copyengine-run}
+        mt5-bridge-gateway: ${MT5_BRIDGE_GATEWAY_CONTAINER_NAME:nectrix-mt5bridgegateway-run}
+        mt-terminal-host: ${MT_TERMINAL_HOST_CONTAINER_NAME:nectrix-mtterminalhost-run}
