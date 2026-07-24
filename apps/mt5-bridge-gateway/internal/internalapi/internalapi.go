@@ -17,10 +17,28 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
 
 	domain "github.com/avison9/nectrix/go-domain"
 	"github.com/avison9/nectrix/mt5-bridge-gateway/internal/eabridge"
 )
+
+// Status is the Engine Control page's own self-reported snapshot for this
+// service — ConnectedCount is the number of live EA sessions right now
+// (WebSocket + MT4 HTTP long-poll, see eabridge.Server.SessionCount);
+// LastReconcileAt is when internal/pairing's discovery loop last synced its
+// pairing-token registry with Core App's own view of which MT5/MT4 accounts
+// should be pairable.
+type Status struct {
+	ConnectedCount  int
+	LastReconcileAt time.Time
+}
+
+// SelfStatusProvider is the composite (eabridge.Server + pairing.Loop) this
+// service's main.go wires together to answer GET /internal/self/status.
+type SelfStatusProvider interface {
+	Status() Status
+}
 
 // PlatformAdapters is this service's two dedup-wrapped domain.BrokerAdapter
 // instances (mirrors main.go's mt5Adapter/mt4Adapter pair) -- one process
@@ -89,11 +107,14 @@ func toOrderResultWire(result domain.NormalizedOrderResult) orderResultWire {
 // deployment (INTERNAL_SERVICE_TOKEN, the same value already used for this
 // service's own outbound core-app calls) — an empty sharedSecret rejects
 // every request rather than silently accepting an unauthenticated one.
-func NewMux(adapters PlatformAdapters, sharedSecret string, logger *slog.Logger) http.Handler {
+func NewMux(adapters PlatformAdapters, selfStatus SelfStatusProvider, sharedSecret string, logger *slog.Logger) http.Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /internal/self/status", func(w http.ResponseWriter, r *http.Request) {
+		handleSelfStatus(w, r, selfStatus)
+	})
 	mux.HandleFunc("GET /internal/mt/accounts/{brokerAccountId}/snapshot", func(w http.ResponseWriter, r *http.Request) {
 		handleGetAccountSnapshot(w, r, adapters, logger)
 	})
@@ -128,6 +149,16 @@ func requireSharedSecret(sharedSecret string, next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+type selfStatusResponse struct {
+	ConnectedCount  int       `json:"connectedCount"`
+	LastReconcileAt time.Time `json:"lastReconcileAt"`
+}
+
+func handleSelfStatus(w http.ResponseWriter, r *http.Request, selfStatus SelfStatusProvider) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(selfStatusResponse(selfStatus.Status()))
 }
 
 func handleGetAccountSnapshot(w http.ResponseWriter, r *http.Request, adapters PlatformAdapters, logger *slog.Logger) {

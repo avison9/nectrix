@@ -1,5 +1,7 @@
 package com.nectrix.coreapp.trading.web;
 
+import com.nectrix.coreapp.auth.api.UserAdminApi;
+import com.nectrix.coreapp.social.api.MasterProfileLookupApi;
 import com.nectrix.coreapp.trading.domain.CopiedTrade;
 import com.nectrix.coreapp.trading.domain.CopyRelationship;
 import com.nectrix.coreapp.trading.domain.MoneyManagementProfile;
@@ -10,12 +12,16 @@ import com.nectrix.coreapp.trading.repository.MoneyManagementProfileRepository;
 import com.nectrix.coreapp.trading.repository.RiskProfileRepository;
 import com.nectrix.coreapp.trading.service.CopyRelationshipNotFoundException;
 import com.nectrix.coreapp.trading.service.CopyRelationshipService;
+import com.nectrix.coreapp.trading.service.ReturnPctEnrichmentService;
 import com.nectrix.coreapp.trading.service.UnrealizedPnlEnrichmentService;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -34,12 +40,17 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 public class CopyRelationshipController {
 
+  private static final Logger log = LoggerFactory.getLogger(CopyRelationshipController.class);
+
   private final CopyRelationshipService service;
   private final MoneyManagementProfileRepository moneyManagementProfileRepository;
   private final RiskProfileRepository riskProfileRepository;
   private final CopiedTradeRepository copiedTradeRepository;
   private final CopyRelationshipRepository copyRelationshipRepository;
   private final UnrealizedPnlEnrichmentService unrealizedPnlEnrichmentService;
+  private final ReturnPctEnrichmentService returnPctEnrichmentService;
+  private final MasterProfileLookupApi masterProfileLookupApi;
+  private final UserAdminApi userAdminApi;
 
   public CopyRelationshipController(
       CopyRelationshipService service,
@@ -47,13 +58,19 @@ public class CopyRelationshipController {
       RiskProfileRepository riskProfileRepository,
       CopiedTradeRepository copiedTradeRepository,
       CopyRelationshipRepository copyRelationshipRepository,
-      UnrealizedPnlEnrichmentService unrealizedPnlEnrichmentService) {
+      UnrealizedPnlEnrichmentService unrealizedPnlEnrichmentService,
+      ReturnPctEnrichmentService returnPctEnrichmentService,
+      MasterProfileLookupApi masterProfileLookupApi,
+      UserAdminApi userAdminApi) {
     this.service = service;
     this.moneyManagementProfileRepository = moneyManagementProfileRepository;
     this.riskProfileRepository = riskProfileRepository;
     this.copiedTradeRepository = copiedTradeRepository;
     this.copyRelationshipRepository = copyRelationshipRepository;
     this.unrealizedPnlEnrichmentService = unrealizedPnlEnrichmentService;
+    this.returnPctEnrichmentService = returnPctEnrichmentService;
+    this.masterProfileLookupApi = masterProfileLookupApi;
+    this.userAdminApi = userAdminApi;
   }
 
   @GetMapping("/api/v1/copy-relationships")
@@ -61,14 +78,34 @@ public class CopyRelationshipController {
       @AuthenticationPrincipal Jwt jwt,
       @RequestParam(defaultValue = "follower") String role,
       @RequestParam(required = false) String status) {
-    return service.listForUser(currentUserId(jwt), role, status).stream()
-        .map(this::toView)
+    List<CopyRelationship> relationships = service.listForUser(currentUserId(jwt), role, status);
+    // Feature — return% is only ever computed for the Master's own "followers" list (extra live
+    // broker calls a Follower's own "masters you copy" list has no use for).
+    Map<UUID, BigDecimal> returnPctByRelationshipId =
+        "master".equals(role) ? returnPctEnrichmentService.enrich(relationships) : Map.of();
+    return relationships.stream()
+        .map(cr -> toView(cr, returnPctByRelationshipId.get(cr.id())))
         .toList();
   }
 
   @GetMapping("/api/v1/copy-relationships/{id}")
   public CopyRelationshipView getById(@PathVariable UUID id) {
     return toView(service.getCopyRelationship(id));
+  }
+
+  /**
+   * Feature — the Master-side counterpart to {@link #getById}, backing the Followers detail view
+   * ({@code /master/followers/{id}}). Ownership-checked against the master side (see {@link
+   * CopyRelationshipService#getCopyRelationshipForMaster}'s own Javadoc for why this is a distinct
+   * endpoint rather than widening {@link #getById}). Reuses the same {@link #toView} the list
+   * endpoint uses, so return% is included and balance/equity is never exposed.
+   */
+  @GetMapping("/api/v1/copy-relationships/{id}/master-view")
+  public CopyRelationshipView getByIdAsMaster(@PathVariable UUID id) {
+    CopyRelationship relationship = service.getCopyRelationshipForMaster(id);
+    Map<UUID, BigDecimal> returnPctByRelationshipId =
+        returnPctEnrichmentService.enrich(List.of(relationship));
+    return toView(relationship, returnPctByRelationshipId.get(relationship.id()));
   }
 
   @PatchMapping("/api/v1/copy-relationships/{id}")
@@ -247,6 +284,16 @@ public class CopyRelationshipController {
   }
 
   private CopyRelationshipView toView(CopyRelationship cr) {
+    return toView(cr, null);
+  }
+
+  /**
+   * Feature — {@code returnPct} is only ever populated by callers that have already run {@link
+   * ReturnPctEnrichmentService} over a batch (the Master's own followers list/detail view); every
+   * other call site (mutation responses, the Follower's own list) passes {@code null} via {@link
+   * #toView(CopyRelationship)} and shows no return% — never a fabricated one.
+   */
+  private CopyRelationshipView toView(CopyRelationship cr, BigDecimal returnPct) {
     MoneyManagementProfile mm =
         moneyManagementProfileRepository
             .findById(cr.moneyManagementProfileId())
@@ -274,7 +321,36 @@ public class CopyRelationshipController {
         cr.originatingFollowRequestId(),
         cr.highWaterMark(),
         cr.createdAt(),
-        cr.excludedSymbols());
+        cr.excludedSymbols(),
+        masterDisplayNameOf(cr),
+        followerDisplayNameOf(cr),
+        returnPct);
+  }
+
+  /**
+   * Bugfix — the Follower's "masters you copy" list and the Master's "followers" table were both
+   * showing a raw relationship/broker-account UUID; both names are resolvable straight from {@link
+   * CopyRelationship}'s own {@code masterProfileId}/{@code followerUserId}. Best-effort, same
+   * "never fail the whole list over one enrichment miss" precedent {@link
+   * UnrealizedPnlEnrichmentService} already established — an absent name falls back to the id
+   * client-side.
+   */
+  private String masterDisplayNameOf(CopyRelationship cr) {
+    try {
+      return masterProfileLookupApi.getMasterProfile(cr.masterProfileId()).displayName();
+    } catch (NoSuchElementException e) {
+      log.warn("copy-relationship {}: no such master profile {}", cr.id(), cr.masterProfileId());
+      return null;
+    }
+  }
+
+  private String followerDisplayNameOf(CopyRelationship cr) {
+    try {
+      return userAdminApi.getUser(cr.followerUserId()).displayName();
+    } catch (NoSuchElementException e) {
+      log.warn("copy-relationship {}: no such follower user {}", cr.id(), cr.followerUserId());
+      return null;
+    }
   }
 
   private UUID currentUserId(Jwt jwt) {
@@ -330,7 +406,16 @@ public class CopyRelationshipController {
       UUID originatingFollowRequestId,
       BigDecimal highWaterMark,
       Instant createdAt,
-      List<String> excludedSymbols) {}
+      List<String> excludedSymbols,
+      // Bugfix — null means the lookup missed (deleted profile/user); the client falls back to
+      // the id itself rather than showing a blank label.
+      String masterDisplayName,
+      String followerDisplayName,
+      // Feature — % return on the follower's account since this relationship began, computed by
+      // ReturnPctEnrichmentService. Null for the Follower's own list (never computed there), for
+      // relationships created before starting_equity existed, or on a live-lookup miss — never a
+      // balance/equity value itself.
+      BigDecimal returnPct) {}
 
   /**
    * TICKET-124 — the wire shape for a Trade History row: every {@link CopiedTrade} field except

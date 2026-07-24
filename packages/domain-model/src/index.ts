@@ -184,6 +184,9 @@ export interface CtraderAccountOption {
   isLive: boolean;
   traderLogin: number;
   brokerTitleShort: string;
+  // Bugfix — lets the picker mark/disable accounts already linked to this user, so re-running
+  // this flow to link a second/third account can't silently re-select an already-linked one.
+  alreadyLinked: boolean;
 }
 
 // TICKET-111 — Master Profile Creation & CopyRelationship State Machine.
@@ -204,6 +207,9 @@ export interface MasterProfile {
   isPublic: boolean;
   verifiedAt: string | null;
   createdAt: string;
+  // Feature — the minimum broker-account balance a Follower must have to start copying this
+  // Master. Null means no minimum.
+  minFollowerBalance: number | null;
 }
 
 // Bugfix — mirrors bootstrap.archival's PrimaryBrokerAccountChange (social.api), the
@@ -262,6 +268,14 @@ export interface CopyRelationship {
   // dispatch.go comment for why an already-copied position must still close normally even after
   // its symbol is added here.
   excludedSymbols: string[];
+  // Bugfix — null means the server-side lookup missed (deleted profile/user); callers fall back
+  // to the id itself rather than showing a blank label.
+  masterDisplayName: string | null;
+  followerDisplayName: string | null;
+  // Feature — % return on the follower's account since this relationship began. Only ever
+  // populated for the Master's own followers list/detail view; null means unavailable (no
+  // starting_equity anchor, or a live-lookup miss) — never a balance/equity value itself.
+  returnPct: number | null;
 }
 
 // Mirrors CopyRelationshipController.TradesPage/CopiedTrade (read-only trades-history view).
@@ -472,11 +486,15 @@ export interface CopyEngineHealth {
   failedInWindow: number;
 }
 
-// Mirrors admin.service.KafkaConsumerLagService.ConsumerGroupLag.
+// Mirrors admin.service.KafkaConsumerLagService.ConsumerGroupLag. messagesReceived is topic-wide
+// (independent of any one consumer group); messagesProcessed is this group's own committed
+// progress against that topic. Both -1 alongside lag on a failed lookup (see the Java Javadoc).
 export interface ConsumerGroupLag {
   groupId: string;
   topic: string;
   lag: number;
+  messagesReceived: number;
+  messagesProcessed: number;
 }
 
 // TICKET-123 — mirrors AdminController.TerminalHealthView. podProvisioned=false means no live
@@ -510,6 +528,21 @@ export interface SystemHealthSnapshot {
   reconciliationDriftLastHour: number;
   kafkaConsumerLag: ConsumerGroupLag[];
   mtTerminals: MtTerminalsSection;
+}
+
+// Engine Control page — mirrors AdminController.EngineStatusView. status is one of
+// "CONNECTED"/"IDLE"/"STALE"/"DISCONNECTED" for broker-adapters/copy-engine/mt5-bridge-gateway, or
+// just "CONNECTED"/"DISCONNECTED" for mt-terminal-host/redis — connectedCount/lastReconcileAt/
+// latencyMs are each null whenever they don't apply to that engine's own state model.
+export type EngineStatusState = "CONNECTED" | "IDLE" | "STALE" | "DISCONNECTED";
+
+export interface EngineStatus {
+  serviceId: string;
+  displayName: string;
+  status: EngineStatusState;
+  connectedCount: number | null;
+  lastReconcileAt: string | null;
+  latencyMs: number | null;
 }
 
 // TICKET-118 — Invitation System (Master invites a Follower). Mirrors

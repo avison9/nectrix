@@ -11,6 +11,7 @@ import (
 
 	"github.com/avison9/nectrix/broker-adapters/internal/ctrader"
 	"github.com/avison9/nectrix/broker-adapters/internal/internalapi"
+	"github.com/avison9/nectrix/broker-adapters/internal/reconcile"
 	domain "github.com/avison9/nectrix/go-domain"
 )
 
@@ -34,6 +35,17 @@ type fakeHandleProvider struct {
 func (f *fakeHandleProvider) HandleFor(brokerAccountID string) (domain.ConnectionHandle, bool) {
 	h, ok := f.handles[brokerAccountID]
 	return h, ok
+}
+
+// fakeSelfStatusProvider mirrors *reconcile.Loop.Status without needing a
+// real Loop -- zero value is fine for every existing test here, none of
+// which exercise the new self-status route itself.
+type fakeSelfStatusProvider struct {
+	status reconcile.Status
+}
+
+func (f *fakeSelfStatusProvider) Status() reconcile.Status {
+	return f.status
 }
 
 // fakeBrokerAdapter implements the full domain.BrokerAdapter interface;
@@ -139,7 +151,7 @@ func TestListAccounts_Success(t *testing.T) {
 	lister := &fakeAccountLister{accounts: []ctrader.AccountSummary{
 		{CtidTraderAccountID: 42, IsLive: false, TraderLogin: 12345, BrokerTitleShort: "IC Markets"},
 	}}
-	mux := internalapi.NewMux(lister, &fakeHandleProvider{}, &fakeBrokerAdapter{}, sharedSecret, nil)
+	mux := internalapi.NewMux(lister, &fakeHandleProvider{}, &fakeSelfStatusProvider{}, &fakeBrokerAdapter{}, sharedSecret, nil)
 
 	rec := doRequest(t, mux, sharedSecret, `{"accessToken":"tok-1"}`)
 	if rec.Code != http.StatusOK {
@@ -166,7 +178,7 @@ func TestListAccounts_Success(t *testing.T) {
 
 func TestListAccounts_MissingOrWrongSharedSecretRejected(t *testing.T) {
 	lister := &fakeAccountLister{}
-	mux := internalapi.NewMux(lister, &fakeHandleProvider{}, &fakeBrokerAdapter{}, sharedSecret, nil)
+	mux := internalapi.NewMux(lister, &fakeHandleProvider{}, &fakeSelfStatusProvider{}, &fakeBrokerAdapter{}, sharedSecret, nil)
 
 	for _, token := range []string{"", "wrong-token"} {
 		rec := doRequest(t, mux, token, `{"accessToken":"tok-1"}`)
@@ -178,7 +190,7 @@ func TestListAccounts_MissingOrWrongSharedSecretRejected(t *testing.T) {
 
 func TestListAccounts_EmptySharedSecretConfigRejectsEverything(t *testing.T) {
 	lister := &fakeAccountLister{}
-	mux := internalapi.NewMux(lister, &fakeHandleProvider{}, &fakeBrokerAdapter{}, "", nil)
+	mux := internalapi.NewMux(lister, &fakeHandleProvider{}, &fakeSelfStatusProvider{}, &fakeBrokerAdapter{}, "", nil)
 
 	rec := doRequest(t, mux, "", `{"accessToken":"tok-1"}`)
 	if rec.Code != http.StatusUnauthorized {
@@ -188,7 +200,7 @@ func TestListAccounts_EmptySharedSecretConfigRejectsEverything(t *testing.T) {
 
 func TestListAccounts_MissingAccessTokenRejected(t *testing.T) {
 	lister := &fakeAccountLister{}
-	mux := internalapi.NewMux(lister, &fakeHandleProvider{}, &fakeBrokerAdapter{}, sharedSecret, nil)
+	mux := internalapi.NewMux(lister, &fakeHandleProvider{}, &fakeSelfStatusProvider{}, &fakeBrokerAdapter{}, sharedSecret, nil)
 
 	rec := doRequest(t, mux, sharedSecret, `{}`)
 	if rec.Code != http.StatusBadRequest {
@@ -198,7 +210,7 @@ func TestListAccounts_MissingAccessTokenRejected(t *testing.T) {
 
 func TestListAccounts_InvalidJSONRejected(t *testing.T) {
 	lister := &fakeAccountLister{}
-	mux := internalapi.NewMux(lister, &fakeHandleProvider{}, &fakeBrokerAdapter{}, sharedSecret, nil)
+	mux := internalapi.NewMux(lister, &fakeHandleProvider{}, &fakeSelfStatusProvider{}, &fakeBrokerAdapter{}, sharedSecret, nil)
 
 	rec := doRequest(t, mux, sharedSecret, `not json`)
 	if rec.Code != http.StatusBadRequest {
@@ -208,7 +220,7 @@ func TestListAccounts_InvalidJSONRejected(t *testing.T) {
 
 func TestListAccounts_ListerErrorSurfacesAsBadGateway(t *testing.T) {
 	lister := &fakeAccountLister{err: errors.New("ctrader: no accounts found")}
-	mux := internalapi.NewMux(lister, &fakeHandleProvider{}, &fakeBrokerAdapter{}, sharedSecret, nil)
+	mux := internalapi.NewMux(lister, &fakeHandleProvider{}, &fakeSelfStatusProvider{}, &fakeBrokerAdapter{}, sharedSecret, nil)
 
 	rec := doRequest(t, mux, sharedSecret, `{"accessToken":"tok-1"}`)
 	if rec.Code != http.StatusBadGateway {
@@ -221,7 +233,7 @@ func TestListAccounts_ListerErrorSurfacesAsBadGateway(t *testing.T) {
 func TestGetAccountSnapshot_Success(t *testing.T) {
 	handle := domain.ConnectionHandle{ID: "h1", BrokerType: domain.BrokerTypeCTrader, AccountID: "acct-1"}
 	adapter := &fakeBrokerAdapter{snapshot: domain.AccountSnapshot{BrokerAccountID: "acct-1", Currency: "USD", Balance: 10000, Equity: 9800}}
-	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, adapter, sharedSecret, nil)
+	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, &fakeSelfStatusProvider{}, adapter, sharedSecret, nil)
 
 	rec := doPathRequest(t, mux, http.MethodGet, "/internal/ctrader/accounts/acct-1/snapshot", sharedSecret, "")
 	if rec.Code != http.StatusOK {
@@ -241,7 +253,7 @@ func TestGetAccountSnapshot_Success(t *testing.T) {
 }
 
 func TestGetAccountSnapshot_UnknownAccount_NotFound(t *testing.T) {
-	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{}, &fakeBrokerAdapter{}, sharedSecret, nil)
+	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{}, &fakeSelfStatusProvider{}, &fakeBrokerAdapter{}, sharedSecret, nil)
 
 	rec := doPathRequest(t, mux, http.MethodGet, "/internal/ctrader/accounts/unknown/snapshot", sharedSecret, "")
 	if rec.Code != http.StatusNotFound {
@@ -252,7 +264,7 @@ func TestGetAccountSnapshot_UnknownAccount_NotFound(t *testing.T) {
 func TestGetAccountSnapshot_AdapterError_BadGateway(t *testing.T) {
 	handle := domain.ConnectionHandle{AccountID: "acct-1"}
 	adapter := &fakeBrokerAdapter{snapshotErr: errors.New("ctrader: connection dropped")}
-	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, adapter, sharedSecret, nil)
+	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, &fakeSelfStatusProvider{}, adapter, sharedSecret, nil)
 
 	rec := doPathRequest(t, mux, http.MethodGet, "/internal/ctrader/accounts/acct-1/snapshot", sharedSecret, "")
 	if rec.Code != http.StatusBadGateway {
@@ -261,7 +273,7 @@ func TestGetAccountSnapshot_AdapterError_BadGateway(t *testing.T) {
 }
 
 func TestGetAccountSnapshot_MissingToken_Unauthorized(t *testing.T) {
-	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{}, &fakeBrokerAdapter{}, sharedSecret, nil)
+	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{}, &fakeSelfStatusProvider{}, &fakeBrokerAdapter{}, sharedSecret, nil)
 
 	rec := doPathRequest(t, mux, http.MethodGet, "/internal/ctrader/accounts/acct-1/snapshot", "", "")
 	if rec.Code != http.StatusUnauthorized {
@@ -275,7 +287,7 @@ func TestPlaceOrder_Success(t *testing.T) {
 	handle := domain.ConnectionHandle{ID: "h1", BrokerType: domain.BrokerTypeCTrader, AccountID: "acct-1"}
 	filledPrice := 1.10005
 	adapter := &fakeBrokerAdapter{orderResult: domain.NormalizedOrderResult{Success: true, BrokerPositionID: "pos-1", FilledPrice: &filledPrice}}
-	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, adapter, sharedSecret, nil)
+	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, &fakeSelfStatusProvider{}, adapter, sharedSecret, nil)
 
 	body := `{"platform":"","order":{"idempotencyKey":"idem-1","followerBrokerAccountId":"acct-1","symbol":{"canonicalCode":"EURUSD","assetClass":"FX"},"direction":"BUY","volumeLots":1.5,"maxSlippagePips":5,"clientOrderTag":"rel-1:pos-1"}}`
 	rec := doPathRequest(t, mux, http.MethodPost, "/internal/ctrader/accounts/acct-1/orders", sharedSecret, body)
@@ -302,7 +314,7 @@ func TestPlaceOrder_Success(t *testing.T) {
 }
 
 func TestPlaceOrder_UnknownAccount_NotFound(t *testing.T) {
-	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{}, &fakeBrokerAdapter{}, sharedSecret, nil)
+	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{}, &fakeSelfStatusProvider{}, &fakeBrokerAdapter{}, sharedSecret, nil)
 
 	rec := doPathRequest(t, mux, http.MethodPost, "/internal/ctrader/accounts/unknown/orders", sharedSecret, `{"order":{}}`)
 	if rec.Code != http.StatusNotFound {
@@ -312,7 +324,7 @@ func TestPlaceOrder_UnknownAccount_NotFound(t *testing.T) {
 
 func TestPlaceOrder_MismatchedFollowerAccountId_BadRequest(t *testing.T) {
 	handle := domain.ConnectionHandle{AccountID: "acct-1"}
-	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, &fakeBrokerAdapter{}, sharedSecret, nil)
+	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, &fakeSelfStatusProvider{}, &fakeBrokerAdapter{}, sharedSecret, nil)
 
 	body := `{"order":{"followerBrokerAccountId":"acct-2"}}`
 	rec := doPathRequest(t, mux, http.MethodPost, "/internal/ctrader/accounts/acct-1/orders", sharedSecret, body)
@@ -323,7 +335,7 @@ func TestPlaceOrder_MismatchedFollowerAccountId_BadRequest(t *testing.T) {
 
 func TestPlaceOrder_InvalidJSON_BadRequest(t *testing.T) {
 	handle := domain.ConnectionHandle{AccountID: "acct-1"}
-	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, &fakeBrokerAdapter{}, sharedSecret, nil)
+	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, &fakeSelfStatusProvider{}, &fakeBrokerAdapter{}, sharedSecret, nil)
 
 	rec := doPathRequest(t, mux, http.MethodPost, "/internal/ctrader/accounts/acct-1/orders", sharedSecret, `not json`)
 	if rec.Code != http.StatusBadRequest {
@@ -334,7 +346,7 @@ func TestPlaceOrder_InvalidJSON_BadRequest(t *testing.T) {
 func TestPlaceOrder_AdapterError_BadGateway(t *testing.T) {
 	handle := domain.ConnectionHandle{AccountID: "acct-1"}
 	adapter := &fakeBrokerAdapter{orderErr: errors.New("ctrader: request timed out")}
-	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, adapter, sharedSecret, nil)
+	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, &fakeSelfStatusProvider{}, adapter, sharedSecret, nil)
 
 	rec := doPathRequest(t, mux, http.MethodPost, "/internal/ctrader/accounts/acct-1/orders", sharedSecret, `{"order":{}}`)
 	if rec.Code != http.StatusBadGateway {
@@ -347,7 +359,7 @@ func TestPlaceOrder_AdapterError_BadGateway(t *testing.T) {
 func TestModifyPosition_Success(t *testing.T) {
 	handle := domain.ConnectionHandle{ID: "h1", BrokerType: domain.BrokerTypeCTrader, AccountID: "acct-1"}
 	adapter := &fakeBrokerAdapter{modifyResult: domain.NormalizedOrderResult{Success: true, BrokerPositionID: "pos-1"}}
-	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, adapter, sharedSecret, nil)
+	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, &fakeSelfStatusProvider{}, adapter, sharedSecret, nil)
 
 	body := `{"platform":"","slPrice":1.0950,"tpPrice":1.1050}`
 	rec := doPathRequest(t, mux, http.MethodPost, "/internal/ctrader/accounts/acct-1/positions/pos-1/modify", sharedSecret, body)
@@ -369,7 +381,7 @@ func TestModifyPosition_Success(t *testing.T) {
 }
 
 func TestModifyPosition_UnknownAccount_NotFound(t *testing.T) {
-	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{}, &fakeBrokerAdapter{}, sharedSecret, nil)
+	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{}, &fakeSelfStatusProvider{}, &fakeBrokerAdapter{}, sharedSecret, nil)
 
 	rec := doPathRequest(t, mux, http.MethodPost, "/internal/ctrader/accounts/unknown/positions/pos-1/modify", sharedSecret, `{}`)
 	if rec.Code != http.StatusNotFound {
@@ -379,7 +391,7 @@ func TestModifyPosition_UnknownAccount_NotFound(t *testing.T) {
 
 func TestModifyPosition_InvalidJSON_BadRequest(t *testing.T) {
 	handle := domain.ConnectionHandle{AccountID: "acct-1"}
-	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, &fakeBrokerAdapter{}, sharedSecret, nil)
+	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, &fakeSelfStatusProvider{}, &fakeBrokerAdapter{}, sharedSecret, nil)
 
 	rec := doPathRequest(t, mux, http.MethodPost, "/internal/ctrader/accounts/acct-1/positions/pos-1/modify", sharedSecret, `not json`)
 	if rec.Code != http.StatusBadRequest {
@@ -390,7 +402,7 @@ func TestModifyPosition_InvalidJSON_BadRequest(t *testing.T) {
 func TestModifyPosition_AdapterError_BadGateway(t *testing.T) {
 	handle := domain.ConnectionHandle{AccountID: "acct-1"}
 	adapter := &fakeBrokerAdapter{modifyErr: errors.New("ctrader: request timed out")}
-	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, adapter, sharedSecret, nil)
+	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, &fakeSelfStatusProvider{}, adapter, sharedSecret, nil)
 
 	rec := doPathRequest(t, mux, http.MethodPost, "/internal/ctrader/accounts/acct-1/positions/pos-1/modify", sharedSecret, `{}`)
 	if rec.Code != http.StatusBadGateway {
@@ -403,7 +415,7 @@ func TestModifyPosition_AdapterError_BadGateway(t *testing.T) {
 func TestClosePosition_FullClose_Success(t *testing.T) {
 	handle := domain.ConnectionHandle{ID: "h1", BrokerType: domain.BrokerTypeCTrader, AccountID: "acct-1"}
 	adapter := &fakeBrokerAdapter{closeResult: domain.NormalizedOrderResult{Success: true, BrokerPositionID: "pos-1"}}
-	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, adapter, sharedSecret, nil)
+	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, &fakeSelfStatusProvider{}, adapter, sharedSecret, nil)
 
 	rec := doPathRequest(t, mux, http.MethodPost, "/internal/ctrader/accounts/acct-1/positions/pos-1/close", sharedSecret, `{"platform":""}`)
 	if rec.Code != http.StatusOK {
@@ -423,7 +435,7 @@ func TestClosePosition_FullClose_Success(t *testing.T) {
 func TestClosePosition_PartialClose_PassesVolume(t *testing.T) {
 	handle := domain.ConnectionHandle{AccountID: "acct-1"}
 	adapter := &fakeBrokerAdapter{closeResult: domain.NormalizedOrderResult{Success: true}}
-	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, adapter, sharedSecret, nil)
+	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, &fakeSelfStatusProvider{}, adapter, sharedSecret, nil)
 
 	rec := doPathRequest(t, mux, http.MethodPost, "/internal/ctrader/accounts/acct-1/positions/pos-1/close", sharedSecret, `{"volumeLots":0.75}`)
 	if rec.Code != http.StatusOK {
@@ -435,7 +447,7 @@ func TestClosePosition_PartialClose_PassesVolume(t *testing.T) {
 }
 
 func TestClosePosition_UnknownAccount_NotFound(t *testing.T) {
-	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{}, &fakeBrokerAdapter{}, sharedSecret, nil)
+	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{}, &fakeSelfStatusProvider{}, &fakeBrokerAdapter{}, sharedSecret, nil)
 
 	rec := doPathRequest(t, mux, http.MethodPost, "/internal/ctrader/accounts/unknown/positions/pos-1/close", sharedSecret, `{}`)
 	if rec.Code != http.StatusNotFound {
@@ -445,7 +457,7 @@ func TestClosePosition_UnknownAccount_NotFound(t *testing.T) {
 
 func TestClosePosition_InvalidJSON_BadRequest(t *testing.T) {
 	handle := domain.ConnectionHandle{AccountID: "acct-1"}
-	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, &fakeBrokerAdapter{}, sharedSecret, nil)
+	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, &fakeSelfStatusProvider{}, &fakeBrokerAdapter{}, sharedSecret, nil)
 
 	rec := doPathRequest(t, mux, http.MethodPost, "/internal/ctrader/accounts/acct-1/positions/pos-1/close", sharedSecret, `not json`)
 	if rec.Code != http.StatusBadRequest {
@@ -456,7 +468,7 @@ func TestClosePosition_InvalidJSON_BadRequest(t *testing.T) {
 func TestClosePosition_AdapterError_BadGateway(t *testing.T) {
 	handle := domain.ConnectionHandle{AccountID: "acct-1"}
 	adapter := &fakeBrokerAdapter{closeErr: errors.New("ctrader: request timed out")}
-	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, adapter, sharedSecret, nil)
+	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, &fakeSelfStatusProvider{}, adapter, sharedSecret, nil)
 
 	rec := doPathRequest(t, mux, http.MethodPost, "/internal/ctrader/accounts/acct-1/positions/pos-1/close", sharedSecret, `{}`)
 	if rec.Code != http.StatusBadGateway {
@@ -471,7 +483,7 @@ func TestGetOpenPositions_Success(t *testing.T) {
 	adapter := &fakeBrokerAdapter{positions: []domain.NormalizedPosition{
 		{BrokerPositionID: "pos-1", Symbol: domain.NormalizedSymbol{CanonicalCode: "EURUSD", AssetClass: domain.AssetClassFX}, Direction: domain.TradeDirectionBuy, VolumeLots: 1.5, OpenPrice: 1.2000},
 	}}
-	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, adapter, sharedSecret, nil)
+	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, &fakeSelfStatusProvider{}, adapter, sharedSecret, nil)
 
 	rec := doPathRequest(t, mux, http.MethodGet, "/internal/ctrader/accounts/acct-1/positions", sharedSecret, "")
 	if rec.Code != http.StatusOK {
@@ -491,7 +503,7 @@ func TestGetOpenPositions_Success(t *testing.T) {
 }
 
 func TestGetOpenPositions_UnknownAccount_NotFound(t *testing.T) {
-	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{}, &fakeBrokerAdapter{}, sharedSecret, nil)
+	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{}, &fakeSelfStatusProvider{}, &fakeBrokerAdapter{}, sharedSecret, nil)
 
 	rec := doPathRequest(t, mux, http.MethodGet, "/internal/ctrader/accounts/unknown/positions", sharedSecret, "")
 	if rec.Code != http.StatusNotFound {
@@ -502,7 +514,7 @@ func TestGetOpenPositions_UnknownAccount_NotFound(t *testing.T) {
 func TestGetOpenPositions_AdapterError_BadGateway(t *testing.T) {
 	handle := domain.ConnectionHandle{AccountID: "acct-1"}
 	adapter := &fakeBrokerAdapter{positionsErr: errors.New("ctrader: connection dropped")}
-	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, adapter, sharedSecret, nil)
+	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{handles: map[string]domain.ConnectionHandle{"acct-1": handle}}, &fakeSelfStatusProvider{}, adapter, sharedSecret, nil)
 
 	rec := doPathRequest(t, mux, http.MethodGet, "/internal/ctrader/accounts/acct-1/positions", sharedSecret, "")
 	if rec.Code != http.StatusBadGateway {
@@ -511,7 +523,7 @@ func TestGetOpenPositions_AdapterError_BadGateway(t *testing.T) {
 }
 
 func TestGetOpenPositions_MissingToken_Unauthorized(t *testing.T) {
-	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{}, &fakeBrokerAdapter{}, sharedSecret, nil)
+	mux := internalapi.NewMux(&fakeAccountLister{}, &fakeHandleProvider{}, &fakeSelfStatusProvider{}, &fakeBrokerAdapter{}, sharedSecret, nil)
 
 	rec := doPathRequest(t, mux, http.MethodGet, "/internal/ctrader/accounts/acct-1/positions", "", "")
 	if rec.Code != http.StatusUnauthorized {

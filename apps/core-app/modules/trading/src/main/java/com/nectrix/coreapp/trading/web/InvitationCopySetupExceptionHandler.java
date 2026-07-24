@@ -1,6 +1,7 @@
 package com.nectrix.coreapp.trading.web;
 
 import com.nectrix.coreapp.trading.service.BrokerAccountNotOwnedException;
+import com.nectrix.coreapp.trading.service.InsufficientFollowerBalanceException;
 import com.nectrix.coreapp.trading.service.InvitationAlreadyUsedException;
 import com.nectrix.coreapp.trading.service.InvitationNotAcceptedException;
 import com.nectrix.coreapp.trading.service.InvitationNotFoundException;
@@ -33,6 +34,12 @@ public class InvitationCopySetupExceptionHandler {
   public ResponseEntity<ErrorBody> handleBrokerAccountNotOwned() {
     return ResponseEntity.status(HttpStatus.FORBIDDEN)
         .body(new ErrorBody("broker_account_not_owned"));
+  }
+
+  @ExceptionHandler(InsufficientFollowerBalanceException.class)
+  public ResponseEntity<ErrorBody> handleInsufficientFollowerBalance() {
+    return ResponseEntity.status(HttpStatus.FORBIDDEN)
+        .body(new ErrorBody("insufficient_follower_balance"));
   }
 
   public record ErrorBody(String error) {}

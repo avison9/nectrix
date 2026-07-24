@@ -141,8 +141,8 @@ class AdminCopyLinkIntegrationTest {
             "POST",
             "/api/v1/admin/users/" + followerId + "/copy-relationships",
             Map.of(
-                "master_email",
-                master.email(),
+                "master_broker_account_id",
+                master.primaryBrokerAccountId().toString(),
                 "follower_broker_account_id",
                 followerBrokerAccountId.toString()),
             adminToken);
@@ -175,8 +175,8 @@ class AdminCopyLinkIntegrationTest {
             "POST",
             "/api/v1/admin/users/" + followerId + "/copy-relationships",
             Map.of(
-                "master_email",
-                master.email(),
+                "master_broker_account_id",
+                master.primaryBrokerAccountId().toString(),
                 "follower_broker_account_id",
                 followerBrokerAccountId.toString()),
             adminToken);
@@ -186,7 +186,7 @@ class AdminCopyLinkIntegrationTest {
   }
 
   @Test
-  void nonMasterEmail_returns404() {
+  void unknownMasterBrokerAccountId_returns404() {
     UUID followerId = createUser("admin-link-follower-" + UUID.randomUUID() + "@example.com");
     grantRole(followerId, "FOLLOWER");
     UUID followerBrokerAccountId = insertBrokerAccount(followerId);
@@ -197,13 +197,59 @@ class AdminCopyLinkIntegrationTest {
             "POST",
             "/api/v1/admin/users/" + followerId + "/copy-relationships",
             Map.of(
-                "master_email",
-                "no-such-user-" + UUID.randomUUID() + "@example.com",
+                "master_broker_account_id",
+                UUID.randomUUID().toString(),
                 "follower_broker_account_id",
                 followerBrokerAccountId.toString()),
             adminToken);
 
     assertThat(result.status()).isEqualTo(404);
+  }
+
+  /**
+   * TICKET-125 — the admin-portal's own two-step flow resolves a Master's eligible broker accounts
+   * by email before this endpoint is ever called; an unknown email 404s here instead.
+   */
+  @Test
+  void findMasterBrokerAccountsByEmail_returnsTheirEligibleAccounts() {
+    MasterFixture master = createMaster("STRIPE_INVOICE");
+    String adminToken = createAdminToken();
+
+    HttpResponse<String> response =
+        uncheckedGet(
+            "/api/v1/admin/users/by-email/master-broker-accounts?email=" + master.email(),
+            adminToken);
+
+    assertThat(response.statusCode()).isEqualTo(200);
+    assertThat(response.body()).contains(master.primaryBrokerAccountId().toString());
+  }
+
+  @Test
+  void findMasterBrokerAccountsByEmail_forUnknownEmail_returns404() {
+    String adminToken = createAdminToken();
+
+    HttpResponse<String> response =
+        uncheckedGet(
+            "/api/v1/admin/users/by-email/master-broker-accounts?email=no-such-user-"
+                + UUID.randomUUID()
+                + "@example.com",
+            adminToken);
+
+    assertThat(response.statusCode()).isEqualTo(404);
+  }
+
+  private HttpResponse<String> uncheckedGet(String path, String token) {
+    try {
+      HttpRequest request =
+          HttpRequest.newBuilder()
+              .uri(URI.create("http://localhost:" + port + path))
+              .header("Authorization", "Bearer " + token)
+              .GET()
+              .build();
+      return httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+    } catch (Exception e) {
+      throw new IllegalStateException(e);
+    }
   }
 
   @Test
@@ -220,8 +266,8 @@ class AdminCopyLinkIntegrationTest {
             "POST",
             "/api/v1/admin/users/" + followerId + "/copy-relationships",
             Map.of(
-                "master_email",
-                master.email(),
+                "master_broker_account_id",
+                master.primaryBrokerAccountId().toString(),
                 "follower_broker_account_id",
                 notOwnedAccountId.toString()),
             adminToken);
@@ -239,8 +285,8 @@ class AdminCopyLinkIntegrationTest {
 
     Map<String, Object> body =
         Map.of(
-            "master_email",
-            master.email(),
+            "master_broker_account_id",
+            master.primaryBrokerAccountId().toString(),
             "follower_broker_account_id",
             followerBrokerAccountId.toString());
     HttpResult first =
@@ -270,8 +316,8 @@ class AdminCopyLinkIntegrationTest {
             "POST",
             "/api/v1/admin/users/" + followerId + "/copy-relationships",
             Map.of(
-                "master_email",
-                master.email(),
+                "master_broker_account_id",
+                master.primaryBrokerAccountId().toString(),
                 "follower_broker_account_id",
                 followerBrokerAccountId.toString()),
             followerToken);

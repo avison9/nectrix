@@ -102,8 +102,8 @@ export async function MasterDashboard({ accessToken }: { accessToken: string }) 
                 <tbody>
                   {relationships.map((r) => (
                     <tr key={r.id} className="border-t border-[var(--border)]">
-                      <td className="px-5 py-3 font-mono text-[12.5px] text-[var(--text-2)]">
-                        {r.id.slice(0, 8)}…
+                      <td className="px-5 py-3 text-[13px] font-medium text-[var(--text)]">
+                        {r.followerDisplayName ?? `${r.id.slice(0, 8)}…`}
                       </td>
                       <td className="px-5 py-3 text-[13px] text-[var(--text-2)]">{r.copyDirection}</td>
                       <td className="px-5 py-3 text-right">

@@ -165,17 +165,25 @@ function CtraderCallbackInner({ accountRole }: { accountRole: ConnectionRole }) 
             {accounts.map((account) => (
               <label
                 key={account.ctidTraderAccountId}
-                className="flex cursor-pointer items-center gap-3 rounded-[10px] border border-[var(--border)] bg-[var(--surface)] p-3"
+                className={`flex items-center gap-3 rounded-[10px] border border-[var(--border)] bg-[var(--surface)] p-3 ${
+                  account.alreadyLinked ? "cursor-not-allowed opacity-50" : "cursor-pointer"
+                }`}
               >
                 <input
                   type="radio"
                   name="account"
+                  disabled={account.alreadyLinked}
                   checked={selected === account.ctidTraderAccountId}
                   onChange={() => setSelected(account.ctidTraderAccountId)}
                 />
                 <span className="text-[13.5px] text-[var(--text)]">
                   {account.brokerTitleShort} · {account.traderLogin} ·{" "}
                   {account.isLive ? "Live" : "Demo"}
+                  {account.alreadyLinked && (
+                    <span className="ml-2 text-[11.5px] font-medium text-[var(--text-3)]">
+                      Already connected
+                    </span>
+                  )}
                 </span>
               </label>
             ))}

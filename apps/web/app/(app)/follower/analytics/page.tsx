@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { getFollowerAnalytics, listCopyRelationships } from "@nectrix/api-client";
+import { getFollowerAnalytics, listAllCopiedTrades, listCopyRelationships } from "@nectrix/api-client";
 import type { AnalyticsPeriod } from "@nectrix/api-client";
 import { coreAppBaseUrl } from "@/lib/core-app";
 import { requireSession } from "@/lib/auth";
@@ -29,9 +29,12 @@ export default async function FollowerAnalyticsPage({
   const period = (PERIODS.includes(params.period as AnalyticsPeriod) ? params.period : "30D") as AnalyticsPeriod;
   const baseUrl = coreAppBaseUrl();
 
-  const [analytics, relationships] = await Promise.all([
+  const [analytics, relationships, allTrades, rejectedTrades, failedTrades] = await Promise.all([
     getFollowerAnalytics(baseUrl, accessToken, period),
     listCopyRelationships(baseUrl, accessToken, { role: "follower", status: "ACTIVE" }),
+    listAllCopiedTrades(baseUrl, accessToken, { role: "follower", pageSize: 1 }),
+    listAllCopiedTrades(baseUrl, accessToken, { role: "follower", status: "REJECTED", pageSize: 1 }),
+    listAllCopiedTrades(baseUrl, accessToken, { role: "follower", status: "FAILED", pageSize: 1 }),
   ]);
   const { equityCurve, monthlyReturns, pnlByInstrument } = analytics;
 
@@ -43,7 +46,11 @@ export default async function FollowerAnalyticsPage({
     null as (typeof monthlyReturns)[number] | null,
   );
   const totalInstrumentPnl = pnlByInstrument.reduce((sum, p) => sum + p.totalPnl, 0);
-  const totalTradesCopied = pnlByInstrument.reduce((sum, p) => sum + p.tradeCount, 0);
+  // Bugfix — pnlByInstrument.tradeCount only ever counts CLOSED trades (it's a realized-P&L
+  // breakdown), so a still-open copied trade was invisible here even though it genuinely was
+  // copied. "Trades copied" means every trade that actually dispatched, not just closed ones —
+  // every status except REJECTED/FAILED.
+  const totalTradesCopied = allTrades.total - rejectedTrades.total - failedTrades.total;
   const mastersCopied = new Set(relationships.map((r) => r.masterProfileId)).size;
 
   const stats = [

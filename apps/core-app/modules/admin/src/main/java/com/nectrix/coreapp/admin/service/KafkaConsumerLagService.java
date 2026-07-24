@@ -13,6 +13,7 @@ import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.ListOffsetsResult;
 import org.apache.kafka.clients.admin.OffsetSpec;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.TopicPartitionInfo;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.env.Environment;
@@ -61,7 +62,16 @@ public class KafkaConsumerLagService {
     this.adminClient = AdminClient.create(props);
   }
 
-  public record ConsumerGroupLag(String groupId, String topic, long lag) {}
+  /**
+   * {@code messagesReceived} is topic-wide (every partition's real log-end minus real log-start
+   * offset, via {@code OffsetSpec.earliest()}/{@code latest()}) — independent of any one consumer
+   * group, so it stays accurate even for a group that's never run. {@code messagesProcessed} is
+   * this group's own committed offset minus each partition's earliest offset, summed — "how many of
+   * the messages this topic has ever received has this group actually consumed." Both are -1 on a
+   * failure to compute, same sentinel {@code lag} already used.
+   */
+  public record ConsumerGroupLag(
+      String groupId, String topic, long lag, long messagesReceived, long messagesProcessed) {}
 
   public List<ConsumerGroupLag> currentLag() {
     return KNOWN_CONSUMER_GROUPS.entrySet().stream()
@@ -71,40 +81,65 @@ public class KafkaConsumerLagService {
 
   private ConsumerGroupLag lagFor(String groupId, String topic) {
     try {
+      List<TopicPartitionInfo> partitionInfos =
+          adminClient
+              .describeTopics(List.of(topic))
+              .allTopicNames()
+              .get(10, TimeUnit.SECONDS)
+              .get(topic)
+              .partitions();
+      List<TopicPartition> partitions =
+          partitionInfos.stream().map(p -> new TopicPartition(topic, p.partition())).toList();
+
+      Map<TopicPartition, OffsetSpec> earliestSpecs =
+          partitions.stream()
+              .collect(java.util.stream.Collectors.toMap(tp -> tp, tp -> OffsetSpec.earliest()));
+      Map<TopicPartition, OffsetSpec> latestSpecs =
+          partitions.stream()
+              .collect(java.util.stream.Collectors.toMap(tp -> tp, tp -> OffsetSpec.latest()));
+      ListOffsetsResult earliestOffsetsResult = adminClient.listOffsets(earliestSpecs);
+      ListOffsetsResult latestOffsetsResult = adminClient.listOffsets(latestSpecs);
+
+      Map<TopicPartition, Long> earliestOffsets = new java.util.HashMap<>();
+      Map<TopicPartition, Long> latestOffsets = new java.util.HashMap<>();
+      long messagesReceived = 0;
+      for (TopicPartition partition : partitions) {
+        long earliest =
+            earliestOffsetsResult.partitionResult(partition).get(10, TimeUnit.SECONDS).offset();
+        long latest =
+            latestOffsetsResult.partitionResult(partition).get(10, TimeUnit.SECONDS).offset();
+        earliestOffsets.put(partition, earliest);
+        latestOffsets.put(partition, latest);
+        messagesReceived += Math.max(0, latest - earliest);
+      }
+
       Map<TopicPartition, org.apache.kafka.clients.consumer.OffsetAndMetadata> committed =
           adminClient
               .listConsumerGroupOffsets(groupId)
               .partitionsToOffsetAndMetadata()
               .get(10, TimeUnit.SECONDS);
 
-      Map<TopicPartition, OffsetSpec> latestSpecs =
-          committed.keySet().stream()
-              .collect(java.util.stream.Collectors.toMap(tp -> tp, tp -> OffsetSpec.latest()));
-      if (latestSpecs.isEmpty()) {
-        return new ConsumerGroupLag(groupId, topic, 0);
-      }
-      ListOffsetsResult logEndOffsets = adminClient.listOffsets(latestSpecs);
-
       long totalLag = 0;
-      for (Map.Entry<TopicPartition, org.apache.kafka.clients.consumer.OffsetAndMetadata> entry :
-          committed.entrySet()) {
-        TopicPartition partition = entry.getKey();
-        long committedOffset = entry.getValue() == null ? -1 : entry.getValue().offset();
-        long logEndOffset =
-            logEndOffsets.partitionResult(partition).get(10, TimeUnit.SECONDS).offset();
+      long messagesProcessed = 0;
+      for (TopicPartition partition : partitions) {
+        org.apache.kafka.clients.consumer.OffsetAndMetadata committedMeta =
+            committed.get(partition);
+        long committedOffset = committedMeta == null ? -1 : committedMeta.offset();
         if (committedOffset >= 0) {
-          totalLag += Math.max(0, logEndOffset - committedOffset);
+          totalLag += Math.max(0, latestOffsets.get(partition) - committedOffset);
+          messagesProcessed += Math.max(0, committedOffset - earliestOffsets.get(partition));
         }
         // committedOffset < 0 (never committed) -- auto.offset.reset=latest means this
-        // consumer starts at the tail, not behind; contributes zero lag (see class Javadoc).
+        // consumer starts at the tail, not behind; contributes zero lag/processed (see class
+        // Javadoc).
       }
-      return new ConsumerGroupLag(groupId, topic, totalLag);
+      return new ConsumerGroupLag(groupId, topic, totalLag, messagesReceived, messagesProcessed);
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
-      return new ConsumerGroupLag(groupId, topic, -1);
+      return new ConsumerGroupLag(groupId, topic, -1, -1, -1);
     } catch (ExecutionException | TimeoutException e) {
       log.warn("admin: failed to compute consumer lag for group={}", groupId, e);
-      return new ConsumerGroupLag(groupId, topic, -1);
+      return new ConsumerGroupLag(groupId, topic, -1, -1, -1);
     }
   }
 

@@ -32,11 +32,6 @@ public class MasterProfileLookupApiImpl implements MasterProfileLookupApi {
   }
 
   @Override
-  public Optional<MasterProfileSummaryView> findByUserId(UUID userId) {
-    return repository.findByUserId(userId).map(this::toView);
-  }
-
-  @Override
   public PrimaryBrokerAccountChange changePrimaryBrokerAccount(
       UUID masterProfileId, UUID actingUserId, UUID newBrokerAccountId) {
     MasterProfile existing = findOrThrow(masterProfileId);
@@ -63,6 +58,7 @@ public class MasterProfileLookupApiImpl implements MasterProfileLookupApi {
         profile.primaryBrokerAccountId(),
         profile.feeCollectionMethod(),
         profile.displayName(),
-        profile.performanceFeePercent());
+        profile.performanceFeePercent(),
+        profile.minFollowerBalance());
   }
 }

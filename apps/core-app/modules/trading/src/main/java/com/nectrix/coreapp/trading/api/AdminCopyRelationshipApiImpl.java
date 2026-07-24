@@ -6,6 +6,7 @@ import com.nectrix.coreapp.trading.domain.CopyRelationship;
 import com.nectrix.coreapp.trading.service.AdminCopyLinkService;
 import com.nectrix.coreapp.trading.service.BrokerAccountNotOwnedException;
 import com.nectrix.coreapp.trading.service.DuplicateCopyRelationshipException;
+import com.nectrix.coreapp.trading.service.InsufficientFollowerBalanceException;
 import com.nectrix.coreapp.trading.service.NoSuchMasterProfileException;
 import com.nectrix.coreapp.trading.service.SameBrokerAccountException;
 import java.util.NoSuchElementException;
@@ -26,15 +27,18 @@ public class AdminCopyRelationshipApiImpl implements AdminCopyRelationshipApi {
 
   @Override
   public LinkedCopyRelationshipView linkFollowerToMaster(
-      UUID followerUserId, UUID masterUserId, UUID followerBrokerAccountId) {
+      UUID followerUserId, UUID masterBrokerAccountId, UUID followerBrokerAccountId) {
     CopyRelationship relationship;
     try {
       relationship =
           adminCopyLinkService.linkFollowerToMaster(
-              followerUserId, masterUserId, followerBrokerAccountId);
+              followerUserId, masterBrokerAccountId, followerBrokerAccountId);
     } catch (NoSuchMasterProfileException e) {
-      throw new NoSuchElementException("No master profile for user " + masterUserId);
-    } catch (BrokerAccountNotOwnedException | SameBrokerAccountException e) {
+      throw new NoSuchElementException(
+          "No master profile for broker account " + masterBrokerAccountId);
+    } catch (BrokerAccountNotOwnedException
+        | SameBrokerAccountException
+        | InsufficientFollowerBalanceException e) {
       throw new IllegalArgumentException(e.getClass().getSimpleName());
     } catch (DuplicateCopyRelationshipException e) {
       throw new IllegalStateException("A copy relationship already links these broker accounts");

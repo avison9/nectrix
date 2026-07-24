@@ -57,6 +57,7 @@ describe("CreateMasterProfileForm (TICKET-111)", () => {
       isPublic: true,
       verifiedAt: null,
       createdAt: "2026-01-01T00:00:00Z",
+      minFollowerBalance: null,
     });
     render(<CreateMasterProfileForm brokerAccounts={[account]} />);
 

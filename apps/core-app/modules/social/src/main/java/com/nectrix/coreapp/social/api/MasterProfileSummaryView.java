@@ -16,4 +16,7 @@ public record MasterProfileSummaryView(
     UUID primaryBrokerAccountId,
     String feeCollectionMethod,
     String displayName,
-    BigDecimal performanceFeePercent) {}
+    BigDecimal performanceFeePercent,
+    // Feature — null means no minimum. trading's InvitationCopySetupService/AdminCopyLinkService
+    // read this to gate copy-relationship activation on the follower's live balance.
+    BigDecimal minFollowerBalance) {}

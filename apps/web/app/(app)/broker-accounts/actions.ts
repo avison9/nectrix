@@ -5,6 +5,7 @@ import {
   archiveAndDeleteBrokerAccount,
   deleteBrokerAccount,
   disconnectBrokerAccount,
+  reconnectBrokerAccount,
 } from "@nectrix/api-client";
 import { coreAppBaseUrl } from "@/lib/core-app";
 import { requireSession } from "@/lib/auth";
@@ -26,6 +27,24 @@ export async function disconnectBrokerAccountAction(id: string): Promise<ActionR
     if (error instanceof ApiError) {
       const body = error.body as { error?: string } | null;
       return { error: body?.error ?? "Couldn't disconnect this account — please try again." };
+    }
+    return { error: "Something went wrong — please try again." };
+  }
+}
+
+/**
+ * Bugfix — the reverse of {@link disconnectBrokerAccountAction}: a disconnected account previously
+ * had no self-service way back short of deleting and fully re-linking from scratch via OAuth.
+ */
+export async function reconnectBrokerAccountAction(id: string): Promise<ActionResult> {
+  const { accessToken } = await requireSession();
+  try {
+    await reconnectBrokerAccount(coreAppBaseUrl(), accessToken, id);
+    return { ok: true };
+  } catch (error) {
+    if (error instanceof ApiError) {
+      const body = error.body as { error?: string } | null;
+      return { error: body?.error ?? "Couldn't reconnect this account — please try again." };
     }
     return { error: "Something went wrong — please try again." };
   }

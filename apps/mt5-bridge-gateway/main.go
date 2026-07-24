@@ -41,6 +41,23 @@ type healthResponse struct {
 	Status  string `json:"status"`
 }
 
+// selfStatusProvider composes eabridge.Server's live session count with
+// pairing.Loop's own reconcile cadence into the single internalapi.Status
+// snapshot the Engine Control page reads — no single component here owns
+// both halves of that signal (see this service's own architecture: eaServer
+// IS the connection lifecycle, pairingLoop is a separate periodic sync).
+type selfStatusProvider struct {
+	eaServer    *eabridge.Server
+	pairingLoop *pairing.Loop
+}
+
+func (p selfStatusProvider) Status() internalapi.Status {
+	return internalapi.Status{
+		ConnectedCount:  p.eaServer.SessionCount(),
+		LastReconcileAt: p.pairingLoop.LastReconcileAt(),
+	}
+}
+
 func main() {
 	ctx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stopSignals()
@@ -120,7 +137,7 @@ func main() {
 	mux.Handle(eaHTTPHelloPath, eaServer.HelloHandler())
 	mux.Handle(eaHTTPPollPath, eaServer.PollHandler())
 	mux.Handle(eaHTTPEventsPath, eaServer.EventsHandler())
-	mux.Handle("/internal/", internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5Adapter, MT4: mt4Adapter}, internalServiceToken, logger))
+	mux.Handle("/internal/", internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5Adapter, MT4: mt4Adapter}, selfStatusProvider{eaServer, pairingLoop}, internalServiceToken, logger))
 
 	server := &http.Server{Addr: addr, Handler: mux}
 

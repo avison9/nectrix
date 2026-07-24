@@ -138,6 +138,20 @@ func (s *Server) Session(brokerAccountID string) (*Session, bool) {
 	return sess, ok
 }
 
+// SessionCount is the Engine Control page's own "connected count" signal —
+// every live EA session across both transports (WebSocket sessions plus
+// MT4's HTTP long-polling sessions, see httphandler.go), served via
+// internal/internalapi's GET /internal/self/status route.
+func (s *Server) SessionCount() int {
+	s.mu.RLock()
+	wsCount := len(s.sessions)
+	s.mu.RUnlock()
+	s.httpMu.Lock()
+	httpCount := len(s.httpSessions)
+	s.httpMu.Unlock()
+	return wsCount + httpCount
+}
+
 // AnySession returns an arbitrary live session for the given platform —
 // used for account-agnostic-in-practice metadata calls (ResolveSymbol/
 // GetSymbolSpecification, whose domain.BrokerAdapter signature carries no

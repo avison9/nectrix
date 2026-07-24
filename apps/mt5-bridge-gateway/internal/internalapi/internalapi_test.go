@@ -91,6 +91,18 @@ func (f *fakeBrokerAdapter) GetSymbolSpecification(ctx context.Context, symbol d
 	return domain.SymbolSpec{}, errors.New("not implemented")
 }
 
+// fakeSelfStatusProvider mirrors selfStatusProvider's composite Status()
+// without needing a real eabridge.Server/pairing.Loop — zero value is fine
+// for every existing test here, none of which exercise the new self-status
+// route itself.
+type fakeSelfStatusProvider struct {
+	status internalapi.Status
+}
+
+func (f *fakeSelfStatusProvider) Status() internalapi.Status {
+	return f.status
+}
+
 const sharedSecret = "test-internal-token"
 
 func doRequest(t *testing.T, mux http.Handler, method, path, token, body string) *httptest.ResponseRecorder {
@@ -109,7 +121,7 @@ func doRequest(t *testing.T, mux http.Handler, method, path, token, body string)
 func TestGetAccountSnapshot_MT5_Success(t *testing.T) {
 	mt5 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT5, snapshot: domain.AccountSnapshot{BrokerAccountID: "acct-1", Currency: "USD", Balance: 5000, Equity: 4900}}
 	mt4 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT4}
-	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: mt4}, sharedSecret, nil)
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: mt4}, &fakeSelfStatusProvider{}, sharedSecret, nil)
 
 	rec := doRequest(t, mux, http.MethodGet, "/internal/mt/accounts/acct-1/snapshot?platform=MT5", sharedSecret, "")
 	if rec.Code != http.StatusOK {
@@ -134,7 +146,7 @@ func TestGetAccountSnapshot_MT5_Success(t *testing.T) {
 func TestGetAccountSnapshot_MT4_RoutesToMT4Adapter(t *testing.T) {
 	mt5 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT5}
 	mt4 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT4, snapshot: domain.AccountSnapshot{BrokerAccountID: "acct-2", Balance: 1000}}
-	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: mt4}, sharedSecret, nil)
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: mt4}, &fakeSelfStatusProvider{}, sharedSecret, nil)
 
 	rec := doRequest(t, mux, http.MethodGet, "/internal/mt/accounts/acct-2/snapshot?platform=MT4", sharedSecret, "")
 	if rec.Code != http.StatusOK {
@@ -149,7 +161,7 @@ func TestGetAccountSnapshot_MT4_RoutesToMT4Adapter(t *testing.T) {
 }
 
 func TestGetAccountSnapshot_UnrecognizedPlatform_BadRequest(t *testing.T) {
-	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: &fakeBrokerAdapter{}, MT4: &fakeBrokerAdapter{}}, sharedSecret, nil)
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: &fakeBrokerAdapter{}, MT4: &fakeBrokerAdapter{}}, &fakeSelfStatusProvider{}, sharedSecret, nil)
 
 	rec := doRequest(t, mux, http.MethodGet, "/internal/mt/accounts/acct-1/snapshot?platform=CTRADER", sharedSecret, "")
 	if rec.Code != http.StatusBadRequest {
@@ -159,7 +171,7 @@ func TestGetAccountSnapshot_UnrecognizedPlatform_BadRequest(t *testing.T) {
 
 func TestGetAccountSnapshot_NoSession_NotFound(t *testing.T) {
 	mt5 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT5, snapshotErr: fmt.Errorf("mtadapter(MT5): no live EA session for broker account acct-1: %w", eabridge.ErrNoSession)}
-	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: &fakeBrokerAdapter{}}, sharedSecret, nil)
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: &fakeBrokerAdapter{}}, &fakeSelfStatusProvider{}, sharedSecret, nil)
 
 	rec := doRequest(t, mux, http.MethodGet, "/internal/mt/accounts/acct-1/snapshot?platform=MT5", sharedSecret, "")
 	if rec.Code != http.StatusNotFound {
@@ -169,7 +181,7 @@ func TestGetAccountSnapshot_NoSession_NotFound(t *testing.T) {
 
 func TestGetAccountSnapshot_OtherAdapterError_BadGateway(t *testing.T) {
 	mt5 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT5, snapshotErr: errors.New("eabridge: request timed out")}
-	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: &fakeBrokerAdapter{}}, sharedSecret, nil)
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: &fakeBrokerAdapter{}}, &fakeSelfStatusProvider{}, sharedSecret, nil)
 
 	rec := doRequest(t, mux, http.MethodGet, "/internal/mt/accounts/acct-1/snapshot?platform=MT5", sharedSecret, "")
 	if rec.Code != http.StatusBadGateway {
@@ -178,7 +190,7 @@ func TestGetAccountSnapshot_OtherAdapterError_BadGateway(t *testing.T) {
 }
 
 func TestGetAccountSnapshot_MissingToken_Unauthorized(t *testing.T) {
-	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: &fakeBrokerAdapter{}, MT4: &fakeBrokerAdapter{}}, sharedSecret, nil)
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: &fakeBrokerAdapter{}, MT4: &fakeBrokerAdapter{}}, &fakeSelfStatusProvider{}, sharedSecret, nil)
 
 	rec := doRequest(t, mux, http.MethodGet, "/internal/mt/accounts/acct-1/snapshot?platform=MT5", "", "")
 	if rec.Code != http.StatusUnauthorized {
@@ -187,7 +199,7 @@ func TestGetAccountSnapshot_MissingToken_Unauthorized(t *testing.T) {
 }
 
 func TestEmptySharedSecretConfigRejectsEverything(t *testing.T) {
-	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: &fakeBrokerAdapter{}, MT4: &fakeBrokerAdapter{}}, "", nil)
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: &fakeBrokerAdapter{}, MT4: &fakeBrokerAdapter{}}, &fakeSelfStatusProvider{}, "", nil)
 
 	rec := doRequest(t, mux, http.MethodGet, "/internal/mt/accounts/acct-1/snapshot?platform=MT5", "", "")
 	if rec.Code != http.StatusUnauthorized {
@@ -201,7 +213,7 @@ func TestPlaceOrder_MT5_Success(t *testing.T) {
 	filledPrice := 1.10005
 	mt5 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT5, orderResult: domain.NormalizedOrderResult{Success: true, BrokerPositionID: "pos-1", FilledPrice: &filledPrice}}
 	mt4 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT4}
-	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: mt4}, sharedSecret, nil)
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: mt4}, &fakeSelfStatusProvider{}, sharedSecret, nil)
 
 	body := `{"platform":"MT5","order":{"idempotencyKey":"idem-1","followerBrokerAccountId":"acct-1","symbol":{"canonicalCode":"EURUSD","assetClass":"FX"},"direction":"BUY","volumeLots":1.5,"maxSlippagePips":5,"clientOrderTag":"rel-1:pos-1"}}`
 	rec := doRequest(t, mux, http.MethodPost, "/internal/mt/accounts/acct-1/orders", sharedSecret, body)
@@ -233,7 +245,7 @@ func TestPlaceOrder_MT5_Success(t *testing.T) {
 func TestPlaceOrder_MT4_RoutesToMT4Adapter(t *testing.T) {
 	mt5 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT5}
 	mt4 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT4, orderResult: domain.NormalizedOrderResult{Success: true, BrokerPositionID: "pos-2"}}
-	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: mt4}, sharedSecret, nil)
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: mt4}, &fakeSelfStatusProvider{}, sharedSecret, nil)
 
 	body := `{"platform":"MT4","order":{"idempotencyKey":"idem-2"}}`
 	rec := doRequest(t, mux, http.MethodPost, "/internal/mt/accounts/acct-2/orders", sharedSecret, body)
@@ -249,7 +261,7 @@ func TestPlaceOrder_MT4_RoutesToMT4Adapter(t *testing.T) {
 }
 
 func TestPlaceOrder_UnrecognizedPlatform_BadRequest(t *testing.T) {
-	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: &fakeBrokerAdapter{}, MT4: &fakeBrokerAdapter{}}, sharedSecret, nil)
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: &fakeBrokerAdapter{}, MT4: &fakeBrokerAdapter{}}, &fakeSelfStatusProvider{}, sharedSecret, nil)
 
 	rec := doRequest(t, mux, http.MethodPost, "/internal/mt/accounts/acct-1/orders", sharedSecret, `{"platform":"CTRADER","order":{}}`)
 	if rec.Code != http.StatusBadRequest {
@@ -258,7 +270,7 @@ func TestPlaceOrder_UnrecognizedPlatform_BadRequest(t *testing.T) {
 }
 
 func TestPlaceOrder_MismatchedFollowerAccountId_BadRequest(t *testing.T) {
-	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT5}, MT4: &fakeBrokerAdapter{}}, sharedSecret, nil)
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT5}, MT4: &fakeBrokerAdapter{}}, &fakeSelfStatusProvider{}, sharedSecret, nil)
 
 	body := `{"platform":"MT5","order":{"followerBrokerAccountId":"acct-2"}}`
 	rec := doRequest(t, mux, http.MethodPost, "/internal/mt/accounts/acct-1/orders", sharedSecret, body)
@@ -268,7 +280,7 @@ func TestPlaceOrder_MismatchedFollowerAccountId_BadRequest(t *testing.T) {
 }
 
 func TestPlaceOrder_InvalidJSON_BadRequest(t *testing.T) {
-	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: &fakeBrokerAdapter{}, MT4: &fakeBrokerAdapter{}}, sharedSecret, nil)
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: &fakeBrokerAdapter{}, MT4: &fakeBrokerAdapter{}}, &fakeSelfStatusProvider{}, sharedSecret, nil)
 
 	rec := doRequest(t, mux, http.MethodPost, "/internal/mt/accounts/acct-1/orders", sharedSecret, `not json`)
 	if rec.Code != http.StatusBadRequest {
@@ -278,7 +290,7 @@ func TestPlaceOrder_InvalidJSON_BadRequest(t *testing.T) {
 
 func TestPlaceOrder_NoSession_NotFound(t *testing.T) {
 	mt5 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT5, orderErr: fmt.Errorf("mtadapter(MT5): no live EA session for broker account acct-1: %w", eabridge.ErrNoSession)}
-	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: &fakeBrokerAdapter{}}, sharedSecret, nil)
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: &fakeBrokerAdapter{}}, &fakeSelfStatusProvider{}, sharedSecret, nil)
 
 	rec := doRequest(t, mux, http.MethodPost, "/internal/mt/accounts/acct-1/orders", sharedSecret, `{"platform":"MT5","order":{}}`)
 	if rec.Code != http.StatusNotFound {
@@ -288,7 +300,7 @@ func TestPlaceOrder_NoSession_NotFound(t *testing.T) {
 
 func TestPlaceOrder_OtherAdapterError_BadGateway(t *testing.T) {
 	mt5 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT5, orderErr: errors.New("eabridge: request timed out")}
-	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: &fakeBrokerAdapter{}}, sharedSecret, nil)
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: &fakeBrokerAdapter{}}, &fakeSelfStatusProvider{}, sharedSecret, nil)
 
 	rec := doRequest(t, mux, http.MethodPost, "/internal/mt/accounts/acct-1/orders", sharedSecret, `{"platform":"MT5","order":{}}`)
 	if rec.Code != http.StatusBadGateway {
@@ -301,7 +313,7 @@ func TestPlaceOrder_OtherAdapterError_BadGateway(t *testing.T) {
 func TestModifyPosition_MT5_Success(t *testing.T) {
 	mt5 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT5, modifyResult: domain.NormalizedOrderResult{Success: true, BrokerPositionID: "pos-1"}}
 	mt4 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT4}
-	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: mt4}, sharedSecret, nil)
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: mt4}, &fakeSelfStatusProvider{}, sharedSecret, nil)
 
 	body := `{"platform":"MT5","slPrice":1.0950,"tpPrice":1.1050}`
 	rec := doRequest(t, mux, http.MethodPost, "/internal/mt/accounts/acct-1/positions/pos-1/modify", sharedSecret, body)
@@ -322,7 +334,7 @@ func TestModifyPosition_MT5_Success(t *testing.T) {
 func TestModifyPosition_MT4_RoutesToMT4Adapter(t *testing.T) {
 	mt5 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT5}
 	mt4 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT4, modifyResult: domain.NormalizedOrderResult{Success: true}}
-	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: mt4}, sharedSecret, nil)
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: mt4}, &fakeSelfStatusProvider{}, sharedSecret, nil)
 
 	rec := doRequest(t, mux, http.MethodPost, "/internal/mt/accounts/acct-2/positions/pos-2/modify", sharedSecret, `{"platform":"MT4"}`)
 	if rec.Code != http.StatusOK {
@@ -337,7 +349,7 @@ func TestModifyPosition_MT4_RoutesToMT4Adapter(t *testing.T) {
 }
 
 func TestModifyPosition_UnrecognizedPlatform_BadRequest(t *testing.T) {
-	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: &fakeBrokerAdapter{}, MT4: &fakeBrokerAdapter{}}, sharedSecret, nil)
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: &fakeBrokerAdapter{}, MT4: &fakeBrokerAdapter{}}, &fakeSelfStatusProvider{}, sharedSecret, nil)
 
 	rec := doRequest(t, mux, http.MethodPost, "/internal/mt/accounts/acct-1/positions/pos-1/modify", sharedSecret, `{"platform":"CTRADER"}`)
 	if rec.Code != http.StatusBadRequest {
@@ -346,7 +358,7 @@ func TestModifyPosition_UnrecognizedPlatform_BadRequest(t *testing.T) {
 }
 
 func TestModifyPosition_InvalidJSON_BadRequest(t *testing.T) {
-	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: &fakeBrokerAdapter{}, MT4: &fakeBrokerAdapter{}}, sharedSecret, nil)
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: &fakeBrokerAdapter{}, MT4: &fakeBrokerAdapter{}}, &fakeSelfStatusProvider{}, sharedSecret, nil)
 
 	rec := doRequest(t, mux, http.MethodPost, "/internal/mt/accounts/acct-1/positions/pos-1/modify", sharedSecret, `not json`)
 	if rec.Code != http.StatusBadRequest {
@@ -356,7 +368,7 @@ func TestModifyPosition_InvalidJSON_BadRequest(t *testing.T) {
 
 func TestModifyPosition_NoSession_NotFound(t *testing.T) {
 	mt5 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT5, modifyErr: fmt.Errorf("mtadapter(MT5): no live EA session for broker account acct-1: %w", eabridge.ErrNoSession)}
-	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: &fakeBrokerAdapter{}}, sharedSecret, nil)
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: &fakeBrokerAdapter{}}, &fakeSelfStatusProvider{}, sharedSecret, nil)
 
 	rec := doRequest(t, mux, http.MethodPost, "/internal/mt/accounts/acct-1/positions/pos-1/modify", sharedSecret, `{"platform":"MT5"}`)
 	if rec.Code != http.StatusNotFound {
@@ -366,7 +378,7 @@ func TestModifyPosition_NoSession_NotFound(t *testing.T) {
 
 func TestModifyPosition_OtherAdapterError_BadGateway(t *testing.T) {
 	mt5 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT5, modifyErr: errors.New("eabridge: request timed out")}
-	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: &fakeBrokerAdapter{}}, sharedSecret, nil)
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: &fakeBrokerAdapter{}}, &fakeSelfStatusProvider{}, sharedSecret, nil)
 
 	rec := doRequest(t, mux, http.MethodPost, "/internal/mt/accounts/acct-1/positions/pos-1/modify", sharedSecret, `{"platform":"MT5"}`)
 	if rec.Code != http.StatusBadGateway {
@@ -378,7 +390,7 @@ func TestModifyPosition_OtherAdapterError_BadGateway(t *testing.T) {
 
 func TestClosePosition_MT5_FullClose_Success(t *testing.T) {
 	mt5 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT5, closeResult: domain.NormalizedOrderResult{Success: true, BrokerPositionID: "pos-1"}}
-	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: &fakeBrokerAdapter{}}, sharedSecret, nil)
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: &fakeBrokerAdapter{}}, &fakeSelfStatusProvider{}, sharedSecret, nil)
 
 	rec := doRequest(t, mux, http.MethodPost, "/internal/mt/accounts/acct-1/positions/pos-1/close", sharedSecret, `{"platform":"MT5"}`)
 	if rec.Code != http.StatusOK {
@@ -392,7 +404,7 @@ func TestClosePosition_MT5_FullClose_Success(t *testing.T) {
 func TestClosePosition_MT4_RoutesToMT4Adapter_PartialClose(t *testing.T) {
 	mt5 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT5}
 	mt4 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT4, closeResult: domain.NormalizedOrderResult{Success: true}}
-	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: mt4}, sharedSecret, nil)
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: mt4}, &fakeSelfStatusProvider{}, sharedSecret, nil)
 
 	rec := doRequest(t, mux, http.MethodPost, "/internal/mt/accounts/acct-2/positions/pos-2/close", sharedSecret, `{"platform":"MT4","volumeLots":0.5}`)
 	if rec.Code != http.StatusOK {
@@ -407,7 +419,7 @@ func TestClosePosition_MT4_RoutesToMT4Adapter_PartialClose(t *testing.T) {
 }
 
 func TestClosePosition_UnrecognizedPlatform_BadRequest(t *testing.T) {
-	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: &fakeBrokerAdapter{}, MT4: &fakeBrokerAdapter{}}, sharedSecret, nil)
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: &fakeBrokerAdapter{}, MT4: &fakeBrokerAdapter{}}, &fakeSelfStatusProvider{}, sharedSecret, nil)
 
 	rec := doRequest(t, mux, http.MethodPost, "/internal/mt/accounts/acct-1/positions/pos-1/close", sharedSecret, `{"platform":"CTRADER"}`)
 	if rec.Code != http.StatusBadRequest {
@@ -416,7 +428,7 @@ func TestClosePosition_UnrecognizedPlatform_BadRequest(t *testing.T) {
 }
 
 func TestClosePosition_InvalidJSON_BadRequest(t *testing.T) {
-	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: &fakeBrokerAdapter{}, MT4: &fakeBrokerAdapter{}}, sharedSecret, nil)
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: &fakeBrokerAdapter{}, MT4: &fakeBrokerAdapter{}}, &fakeSelfStatusProvider{}, sharedSecret, nil)
 
 	rec := doRequest(t, mux, http.MethodPost, "/internal/mt/accounts/acct-1/positions/pos-1/close", sharedSecret, `not json`)
 	if rec.Code != http.StatusBadRequest {
@@ -426,7 +438,7 @@ func TestClosePosition_InvalidJSON_BadRequest(t *testing.T) {
 
 func TestClosePosition_NoSession_NotFound(t *testing.T) {
 	mt5 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT5, closeErr: fmt.Errorf("mtadapter(MT5): no live EA session for broker account acct-1: %w", eabridge.ErrNoSession)}
-	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: &fakeBrokerAdapter{}}, sharedSecret, nil)
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: &fakeBrokerAdapter{}}, &fakeSelfStatusProvider{}, sharedSecret, nil)
 
 	rec := doRequest(t, mux, http.MethodPost, "/internal/mt/accounts/acct-1/positions/pos-1/close", sharedSecret, `{"platform":"MT5"}`)
 	if rec.Code != http.StatusNotFound {
@@ -436,7 +448,7 @@ func TestClosePosition_NoSession_NotFound(t *testing.T) {
 
 func TestClosePosition_OtherAdapterError_BadGateway(t *testing.T) {
 	mt5 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT5, closeErr: errors.New("eabridge: request timed out")}
-	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: &fakeBrokerAdapter{}}, sharedSecret, nil)
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: &fakeBrokerAdapter{}}, &fakeSelfStatusProvider{}, sharedSecret, nil)
 
 	rec := doRequest(t, mux, http.MethodPost, "/internal/mt/accounts/acct-1/positions/pos-1/close", sharedSecret, `{"platform":"MT5"}`)
 	if rec.Code != http.StatusBadGateway {
@@ -451,7 +463,7 @@ func TestGetOpenPositions_MT5_Success(t *testing.T) {
 		{BrokerPositionID: "pos-1", Symbol: domain.NormalizedSymbol{CanonicalCode: "EURUSD", AssetClass: domain.AssetClassFX}, Direction: domain.TradeDirectionBuy, VolumeLots: 1.5, OpenPrice: 1.2000},
 	}}
 	mt4 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT4}
-	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: mt4}, sharedSecret, nil)
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: mt4}, &fakeSelfStatusProvider{}, sharedSecret, nil)
 
 	rec := doRequest(t, mux, http.MethodGet, "/internal/mt/accounts/acct-1/positions?platform=MT5", sharedSecret, "")
 	if rec.Code != http.StatusOK {
@@ -476,7 +488,7 @@ func TestGetOpenPositions_MT5_Success(t *testing.T) {
 func TestGetOpenPositions_MT4_RoutesToMT4Adapter(t *testing.T) {
 	mt5 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT5}
 	mt4 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT4, positions: []domain.NormalizedPosition{{BrokerPositionID: "pos-2"}}}
-	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: mt4}, sharedSecret, nil)
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: mt4}, &fakeSelfStatusProvider{}, sharedSecret, nil)
 
 	rec := doRequest(t, mux, http.MethodGet, "/internal/mt/accounts/acct-2/positions?platform=MT4", sharedSecret, "")
 	if rec.Code != http.StatusOK {
@@ -491,7 +503,7 @@ func TestGetOpenPositions_MT4_RoutesToMT4Adapter(t *testing.T) {
 }
 
 func TestGetOpenPositions_UnrecognizedPlatform_BadRequest(t *testing.T) {
-	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: &fakeBrokerAdapter{}, MT4: &fakeBrokerAdapter{}}, sharedSecret, nil)
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: &fakeBrokerAdapter{}, MT4: &fakeBrokerAdapter{}}, &fakeSelfStatusProvider{}, sharedSecret, nil)
 
 	rec := doRequest(t, mux, http.MethodGet, "/internal/mt/accounts/acct-1/positions?platform=CTRADER", sharedSecret, "")
 	if rec.Code != http.StatusBadRequest {
@@ -501,7 +513,7 @@ func TestGetOpenPositions_UnrecognizedPlatform_BadRequest(t *testing.T) {
 
 func TestGetOpenPositions_NoSession_NotFound(t *testing.T) {
 	mt5 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT5, positionsErr: fmt.Errorf("mtadapter(MT5): no live EA session for broker account acct-1: %w", eabridge.ErrNoSession)}
-	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: &fakeBrokerAdapter{}}, sharedSecret, nil)
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: &fakeBrokerAdapter{}}, &fakeSelfStatusProvider{}, sharedSecret, nil)
 
 	rec := doRequest(t, mux, http.MethodGet, "/internal/mt/accounts/acct-1/positions?platform=MT5", sharedSecret, "")
 	if rec.Code != http.StatusNotFound {
@@ -511,7 +523,7 @@ func TestGetOpenPositions_NoSession_NotFound(t *testing.T) {
 
 func TestGetOpenPositions_OtherAdapterError_BadGateway(t *testing.T) {
 	mt5 := &fakeBrokerAdapter{brokerType: domain.BrokerTypeMT5, positionsErr: errors.New("eabridge: request timed out")}
-	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: &fakeBrokerAdapter{}}, sharedSecret, nil)
+	mux := internalapi.NewMux(internalapi.PlatformAdapters{MT5: mt5, MT4: &fakeBrokerAdapter{}}, &fakeSelfStatusProvider{}, sharedSecret, nil)
 
 	rec := doRequest(t, mux, http.MethodGet, "/internal/mt/accounts/acct-1/positions?platform=MT5", sharedSecret, "")
 	if rec.Code != http.StatusBadGateway {

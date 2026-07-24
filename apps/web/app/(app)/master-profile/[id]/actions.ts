@@ -13,6 +13,7 @@ export async function patchMasterProfileAction(
     strategyTags?: string[];
     performanceFeePercent?: number;
     isPublic?: boolean;
+    minFollowerBalance?: number;
   },
 ): Promise<MasterProfile | { error: string }> {
   const { accessToken } = await requireSession();

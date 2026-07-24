@@ -25,6 +25,7 @@ import type {
   CopyRelationship,
   CopyRelationshipStatus,
   CtraderAccountOption,
+  EngineStatus,
   FeeCollectionMethod,
   FeeLedgerDetail,
   FeeLedgerDetailPage,
@@ -78,6 +79,7 @@ export type {
   CopyRelationship,
   CopyRelationshipStatus,
   CtraderAccountOption,
+  EngineStatus,
   FeeCollectionMethod,
   FeeLedgerDetail,
   FeeLedgerDetailPage,
@@ -370,6 +372,23 @@ export async function disconnectBrokerAccount(
 }
 
 /**
+ * Bugfix — the reverse of {@link disconnectBrokerAccount}: only valid on a DISCONNECTED account
+ * (`broker_account_not_disconnected`, 409, otherwise). Flips status back to PENDING so
+ * broker-adapters' own reconcile loop re-establishes the real connection — no re-authorization
+ * needed, credentials were never touched by disconnect.
+ */
+export async function reconnectBrokerAccount(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<BrokerAccountSummary> {
+  return coreAppFetch<BrokerAccountSummary>(baseUrl, `/api/v1/broker-accounts/${id}/reconnect`, {
+    method: "POST",
+    accessToken,
+  });
+}
+
+/**
  * TICKET-101 follow-up — the automatic fallback {@link deleteBrokerAccount} takes on
  * `broker_account_in_use` (409): rather than dead-ending, this archives every referencing row
  * (copy relationships, copied trades, trade signals, performance-fee-ledger entries, management
@@ -632,6 +651,7 @@ export interface CreateMasterProfileInput {
   strategyTags?: string[];
   performanceFeePercent?: number;
   feeCollectionMethod?: FeeCollectionMethod;
+  minFollowerBalance?: number;
 }
 
 /** Throws ApiError(409) with body.existing_profile_id if the caller already has one — see MasterProfileExceptionHandler. */
@@ -650,6 +670,7 @@ export async function createMasterProfile(
       strategy_tags: input.strategyTags,
       performance_fee_percent: input.performanceFeePercent,
       fee_collection_method: input.feeCollectionMethod,
+      min_follower_balance: input.minFollowerBalance,
     }),
   });
 }
@@ -665,12 +686,17 @@ export async function getMasterProfile(
   });
 }
 
-/** TICKET-116 — the caller's own profile, by JWT subject (was only 409-discoverable before). */
-export async function getMyMasterProfile(
+/**
+ * TICKET-116 — the caller's own profile(s), by JWT subject (was only 409-discoverable before).
+ *
+ * TICKET-125 — now a list: a user may own more than one profile (one per strategy/broker
+ * account). An empty array means "no profile yet" (a legitimate state, no longer a 404).
+ */
+export async function getMyMasterProfiles(
   baseUrl: string,
   accessToken: string,
-): Promise<MasterProfile> {
-  return coreAppFetch<MasterProfile>(baseUrl, "/api/v1/master-profiles/me", {
+): Promise<MasterProfile[]> {
+  return coreAppFetch<MasterProfile[]>(baseUrl, "/api/v1/master-profiles/me", {
     method: "GET",
     accessToken,
   });
@@ -686,6 +712,9 @@ export async function patchMasterProfile(
     strategyTags?: string[];
     performanceFeePercent?: number;
     isPublic?: boolean;
+    // 0 clears a previously-set minimum (stored as no minimum) — see MasterProfileService's own
+    // normalizeMinFollowerBalance Javadoc for why 0 is used instead of a null-vs-absent convention.
+    minFollowerBalance?: number;
   },
 ): Promise<MasterProfile> {
   return coreAppFetch<MasterProfile>(baseUrl, `/api/v1/master-profiles/${id}`, {
@@ -697,6 +726,7 @@ export async function patchMasterProfile(
       strategy_tags: input.strategyTags,
       performance_fee_percent: input.performanceFeePercent,
       is_public: input.isPublic,
+      min_follower_balance: input.minFollowerBalance,
     }),
   });
 }
@@ -746,6 +776,22 @@ export async function getCopyRelationship(
   id: string,
 ): Promise<CopyRelationship> {
   return coreAppFetch<CopyRelationship>(baseUrl, `/api/v1/copy-relationships/${id}`, {
+    method: "GET",
+    accessToken,
+  });
+}
+
+/**
+ * Feature — the Master-side counterpart to {@link getCopyRelationship}, backing the Followers
+ * detail view. See `CopyRelationshipController#getByIdAsMaster`'s own Javadoc for why this is a
+ * distinct endpoint (ownership-checked against the master side, not the follower).
+ */
+export async function getCopyRelationshipAsMaster(
+  baseUrl: string,
+  accessToken: string,
+  id: string,
+): Promise<CopyRelationship> {
+  return coreAppFetch<CopyRelationship>(baseUrl, `/api/v1/copy-relationships/${id}/master-view`, {
     method: "GET",
     accessToken,
   });
@@ -1222,16 +1268,33 @@ export async function deleteUser(
 }
 
 /**
+ * TICKET-125 — resolves a Master's eligible (MASTER_ONLY/BOTH) broker accounts by email, for the
+ * admin-portal's own two-step "pick which strategy" flow ahead of linkFollowerToMaster below.
+ */
+export async function findMasterBrokerAccountsByEmail(
+  baseUrl: string,
+  accessToken: string,
+  email: string,
+): Promise<BrokerAccountSummary[]> {
+  return coreAppFetch<BrokerAccountSummary[]>(
+    baseUrl,
+    `/api/v1/admin/users/by-email/master-broker-accounts?email=${encodeURIComponent(email)}`,
+    { accessToken },
+  );
+}
+
+/**
  * #421 — ADMIN/SUPER_ADMIN-only server-side call: links an existing Follower directly to an
- * existing Master (identified by email), bypassing the invite-send/invite-accept and
- * follow-request flows. See AdminController#linkFollowerToMaster's own Javadoc for the
- * PENDING_AGREEMENT-vs-ACTIVE status derivation.
+ * existing Master's specific broker account/strategy (TICKET-125 — a Master may have more than
+ * one), bypassing the invite-send/invite-accept and follow-request flows. See
+ * AdminController#linkFollowerToMaster's own Javadoc for the PENDING_AGREEMENT-vs-ACTIVE status
+ * derivation.
  */
 export async function linkFollowerToMaster(
   baseUrl: string,
   accessToken: string,
   followerId: string,
-  input: { masterEmail: string; followerBrokerAccountId: string },
+  input: { masterBrokerAccountId: string; followerBrokerAccountId: string },
 ): Promise<LinkFollowerToMasterResult> {
   return coreAppFetch<LinkFollowerToMasterResult>(
     baseUrl,
@@ -1240,7 +1303,7 @@ export async function linkFollowerToMaster(
       method: "POST",
       accessToken,
       body: JSON.stringify({
-        master_email: input.masterEmail,
+        master_broker_account_id: input.masterBrokerAccountId,
         follower_broker_account_id: input.followerBrokerAccountId,
       }),
     },
@@ -1315,6 +1378,57 @@ export async function getSystemHealth(
 ): Promise<SystemHealthSnapshot> {
   return coreAppFetch<SystemHealthSnapshot>(baseUrl, "/api/v1/admin/system-health", {
     method: "GET",
+    accessToken,
+  });
+}
+
+/** ADMIN+SUPPORT can view — see AdminController#getEngineStatus's own Javadoc for the state model. */
+export async function getEngineStatus(
+  baseUrl: string,
+  accessToken: string,
+): Promise<EngineStatus[]> {
+  return coreAppFetch<EngineStatus[]>(baseUrl, "/api/v1/admin/engine-status", {
+    method: "GET",
+    accessToken,
+  });
+}
+
+/**
+ * ADMIN-only server-side — restarting/stopping/starting a live engine is a real operational
+ * action, not a read (same "SUPPORT cannot action platform state" distinction suspendUser/
+ * deleteUser above establish). Throws ApiError(409) if service control is disabled server-side,
+ * ApiError(502) if the underlying docker command itself failed — see
+ * AdminExceptionHandler#handleServiceControlFailure's own Javadoc.
+ */
+export async function restartEngine(
+  baseUrl: string,
+  accessToken: string,
+  serviceId: string,
+): Promise<void> {
+  await coreAppFetch<null>(baseUrl, `/api/v1/admin/engines/${serviceId}/restart`, {
+    method: "POST",
+    accessToken,
+  });
+}
+
+export async function stopEngine(
+  baseUrl: string,
+  accessToken: string,
+  serviceId: string,
+): Promise<void> {
+  await coreAppFetch<null>(baseUrl, `/api/v1/admin/engines/${serviceId}/stop`, {
+    method: "POST",
+    accessToken,
+  });
+}
+
+export async function startEngine(
+  baseUrl: string,
+  accessToken: string,
+  serviceId: string,
+): Promise<void> {
+  await coreAppFetch<null>(baseUrl, `/api/v1/admin/engines/${serviceId}/start`, {
+    method: "POST",
     accessToken,
   });
 }

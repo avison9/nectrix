@@ -40,7 +40,8 @@ public class MasterProfileController {
         request.bio(),
         request.strategyTags(),
         request.performanceFeePercent(),
-        request.feeCollectionMethod());
+        request.feeCollectionMethod(),
+        request.minFollowerBalance());
   }
 
   @GetMapping("/api/v1/master-profiles/{id}")
@@ -49,15 +50,19 @@ public class MasterProfileController {
   }
 
   /**
-   * TICKET-116 — the caller's own profile, by their own JWT subject. Registered as a distinct
+   * TICKET-116 — the caller's own profile(s), by their own JWT subject. Registered as a distinct
    * {@code @GetMapping} rather than folded into {@link #getById}'s {@code {id}} path variable —
    * Spring's path-pattern matching prioritizes this literal {@code /me} segment over the variable
    * one, so both routes coexist safely (same precedent {@code CopyRelationshipController}'s own
    * {@code /copy-relationships/trades} vs {@code /copy-relationships/{id}} already established).
+   *
+   * <p>TICKET-125 — now a list (a user may have more than one profile, one per strategy/broker
+   * account). Breaking change from the old single-object shape — every caller (web's own
+   * MasterProfilePage, admin-portal) updated in the same pass.
    */
   @GetMapping("/api/v1/master-profiles/me")
-  public MasterProfile getMyProfile(@AuthenticationPrincipal Jwt jwt) {
-    return service.getMyProfile(currentUserId(jwt));
+  public List<MasterProfile> getMyProfiles(@AuthenticationPrincipal Jwt jwt) {
+    return service.getMyProfiles(currentUserId(jwt));
   }
 
   @PatchMapping("/api/v1/master-profiles/{id}")
@@ -71,7 +76,8 @@ public class MasterProfileController {
         request.bio(),
         request.strategyTags(),
         request.performanceFeePercent(),
-        request.isPublic());
+        request.isPublic(),
+        request.minFollowerBalance());
   }
 
   private UUID currentUserId(Jwt jwt) {
@@ -84,12 +90,14 @@ public class MasterProfileController {
       String bio,
       List<String> strategyTags,
       BigDecimal performanceFeePercent,
-      String feeCollectionMethod) {}
+      String feeCollectionMethod,
+      BigDecimal minFollowerBalance) {}
 
   public record PatchRequest(
       String displayName,
       String bio,
       List<String> strategyTags,
       BigDecimal performanceFeePercent,
-      Boolean isPublic) {}
+      Boolean isPublic,
+      BigDecimal minFollowerBalance) {}
 }

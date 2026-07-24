@@ -54,8 +54,17 @@ public class BrokerAccountOAuthController {
   public CallbackResponse callback(@RequestBody CallbackRequest request) {
     BrokerLinkingService.CallbackResult result =
         linkingService.handleCallback(request.code(), request.state());
-    return new CallbackResponse(
-        result.linkSessionId(), result.accounts().stream().map(CallbackAccount::from).toList());
+    List<CallbackAccount> accounts =
+        result.accounts().stream()
+            .map(
+                account ->
+                    CallbackAccount.from(
+                        account,
+                        result
+                            .alreadyLinkedLogins()
+                            .contains(Long.toString(account.ctidTraderAccountId()))))
+            .toList();
+    return new CallbackResponse(result.linkSessionId(), accounts);
   }
 
   @PostMapping("/api/v1/broker/ctrader/link")
@@ -103,14 +112,27 @@ public class BrokerAccountOAuthController {
 
   public record CallbackResponse(String linkSessionId, List<CallbackAccount> accounts) {}
 
+  /**
+   * Bugfix — {@code alreadyLinked} lets the picking screen mark/disable accounts this user has
+   * already linked, so re-running this flow to link a second/third account (all returned by the
+   * same OAuth grant, see {@code BrokerLinkingService.handleCallback}'s own Javadoc) can't silently
+   * re-select an already-linked one and hit {@code BrokerAccountAlreadyLinkedException} with no
+   * visible explanation.
+   */
   public record CallbackAccount(
-      long ctidTraderAccountId, boolean isLive, long traderLogin, String brokerTitleShort) {
-    static CallbackAccount from(BrokerAdaptersInternalClient.CtraderAccount account) {
+      long ctidTraderAccountId,
+      boolean isLive,
+      long traderLogin,
+      String brokerTitleShort,
+      boolean alreadyLinked) {
+    static CallbackAccount from(
+        BrokerAdaptersInternalClient.CtraderAccount account, boolean alreadyLinked) {
       return new CallbackAccount(
           account.ctidTraderAccountId(),
           account.isLive(),
           account.traderLogin(),
-          account.brokerTitleShort());
+          account.brokerTitleShort(),
+          alreadyLinked);
     }
   }
 

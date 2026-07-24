@@ -77,6 +77,7 @@ type Loop struct {
 
 	mu              sync.Mutex
 	tokensByAccount map[string]string
+	lastReconcileAt time.Time
 }
 
 func New(lister Lister, credentials CredentialFetcher, registrar Registrar, interval time.Duration, logger *slog.Logger) *Loop {
@@ -152,4 +153,18 @@ func (l *Loop) reconcileOnce(ctx context.Context) {
 			l.logger.Info("pairing: unregistered pairing token (no longer listed by core-app)", "brokerAccountId", id)
 		}
 	}
+
+	// Feature — the Engine Control page's own "stale vs connected" signal, same
+	// convention as apps/broker-adapters' reconcile.Loop: set unconditionally at the
+	// end of every cycle that successfully listed accounts, whether or not any
+	// pairing token actually changed.
+	l.lastReconcileAt = time.Now()
+}
+
+// LastReconcileAt is the Engine Control page's own self-reported snapshot input,
+// served via internal/internalapi's GET /internal/self/status route.
+func (l *Loop) LastReconcileAt() time.Time {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.lastReconcileAt
 }

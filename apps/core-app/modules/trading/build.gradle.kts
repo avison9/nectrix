@@ -29,6 +29,11 @@ dependencies {
     // Master when a Follower nominates a prospect. Safe one-way edge: notifications has zero
     // dependencies of its own on any bounded-context module, so this can never cycle.
     implementation(project(":modules:notifications"))
+    // Bugfix — CopyRelationshipController.toView resolves a real masterDisplayName/
+    // followerDisplayName (UserAdminApi#getUser) instead of leaving the client to show a raw
+    // relationship/broker-account UUID. auth has zero dependencies of its own on any
+    // bounded-context module, so this can never cycle either.
+    implementation(project(":modules:auth"))
     implementation("org.springframework.boot:spring-boot-starter-jdbc") // JdbcTemplate (money_management_profiles)
     // TICKET-111 — CopyRelationshipController.
     implementation("org.springframework.boot:spring-boot-starter-web") // @RestController

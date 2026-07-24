@@ -47,7 +47,8 @@ public class MasterProfileRepository {
         rs.getString("fee_collection_method"),
         rs.getBoolean("is_public"),
         verifiedAt != null ? verifiedAt.toInstant() : null,
-        rs.getTimestamp("created_at").toInstant());
+        rs.getTimestamp("created_at").toInstant(),
+        rs.getBigDecimal("min_follower_balance"));
   }
 
   public Optional<MasterProfile> findById(UUID id) {
@@ -55,19 +56,23 @@ public class MasterProfileRepository {
         .findFirst();
   }
 
-  public Optional<MasterProfile> findByUserId(UUID userId) {
-    return jdbcTemplate
-        .query("SELECT * FROM master_profiles WHERE user_id = ?", ROW_MAPPER, userId)
-        .stream()
-        .findFirst();
+  /**
+   * TICKET-125 — every followable profile this user owns, one per eligible broker account/strategy
+   * (newest first, matching this codebase's own list-ordering convention).
+   */
+  public List<MasterProfile> findAllByUserId(UUID userId) {
+    return jdbcTemplate.query(
+        "SELECT * FROM master_profiles WHERE user_id = ? ORDER BY created_at DESC",
+        ROW_MAPPER,
+        userId);
   }
 
   /**
    * Bugfix — lets a caller ask "is this broker account currently anyone's primary?" without knowing
-   * the master_profile id up front. {@code primary_broker_account_id} isn't unique at the schema
-   * level, but is in practice (a broker account belongs to exactly one user, and {@link
-   * #findByUserId} is itself a one-row-per-user lookup) — {@code findFirst} is a defensive
-   * safeguard, not a real multi-row case.
+   * the master_profile id up front. TICKET-125 made {@code primary_broker_account_id} a real,
+   * schema-enforced {@code UNIQUE} column (one profile per broker account/strategy) — {@code
+   * findFirst} is just how {@code Optional} falls out of {@code jdbcTemplate.query}'s list result,
+   * not a defensive guard against a genuine multi-row case.
    */
   public Optional<MasterProfile> findByPrimaryBrokerAccountId(UUID brokerAccountId) {
     return jdbcTemplate
@@ -91,7 +96,8 @@ public class MasterProfileRepository {
       String bio,
       List<String> strategyTags,
       BigDecimal performanceFeePercent,
-      String feeCollectionMethod) {
+      String feeCollectionMethod,
+      BigDecimal minFollowerBalance) {
     return insert(
         userId,
         primaryBrokerAccountId,
@@ -100,7 +106,8 @@ public class MasterProfileRepository {
         strategyTags,
         performanceFeePercent,
         feeCollectionMethod,
-        true);
+        true,
+        minFollowerBalance);
   }
 
   /**
@@ -116,13 +123,14 @@ public class MasterProfileRepository {
       List<String> strategyTags,
       BigDecimal performanceFeePercent,
       String feeCollectionMethod,
-      boolean isPublic) {
+      boolean isPublic,
+      BigDecimal minFollowerBalance) {
     return jdbcTemplate.execute(
         """
         INSERT INTO master_profiles
           (user_id, primary_broker_account_id, display_name, bio, strategy_tags,
-           performance_fee_percent, fee_collection_method, is_public)
-        VALUES (?, ?, ?, ?, ?, COALESCE(?, 20.00), COALESCE(?, 'BROKER_PARTNERSHIP'), ?)
+           performance_fee_percent, fee_collection_method, is_public, min_follower_balance)
+        VALUES (?, ?, ?, ?, ?, COALESCE(?, 20.00), COALESCE(?, 'BROKER_PARTNERSHIP'), ?, ?)
         RETURNING id
         """,
         (PreparedStatement ps) -> {
@@ -134,7 +142,8 @@ public class MasterProfileRepository {
           ps.setArray(i++, toTextArray(ps, strategyTags));
           ps.setBigDecimal(i++, performanceFeePercent);
           ps.setString(i++, feeCollectionMethod);
-          ps.setBoolean(i, isPublic);
+          ps.setBoolean(i++, isPublic);
+          ps.setBigDecimal(i, minFollowerBalance);
           try (ResultSet rs = ps.executeQuery()) {
             rs.next();
             return UUID.fromString(rs.getString(1));
@@ -149,11 +158,13 @@ public class MasterProfileRepository {
       String bio,
       List<String> strategyTags,
       BigDecimal performanceFeePercent,
-      boolean isPublic) {
+      boolean isPublic,
+      BigDecimal minFollowerBalance) {
     return jdbcTemplate.execute(
         """
         UPDATE master_profiles
-        SET display_name = ?, bio = ?, strategy_tags = ?, performance_fee_percent = ?, is_public = ?
+        SET display_name = ?, bio = ?, strategy_tags = ?, performance_fee_percent = ?, is_public = ?,
+            min_follower_balance = ?
         WHERE id = ?
         """,
         (PreparedStatement ps) -> {
@@ -163,6 +174,7 @@ public class MasterProfileRepository {
           ps.setArray(i++, toTextArray(ps, strategyTags));
           ps.setBigDecimal(i++, performanceFeePercent);
           ps.setBoolean(i++, isPublic);
+          ps.setBigDecimal(i++, minFollowerBalance);
           ps.setObject(i, id);
           return ps.executeUpdate();
         });

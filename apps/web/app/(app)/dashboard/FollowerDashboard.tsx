@@ -1,5 +1,4 @@
 import {
-  getBrokerAccountPositions,
   getBrokerAccountSnapshot,
   listAllCopiedTrades,
   listCopyRelationships,
@@ -24,15 +23,10 @@ export async function FollowerDashboard({ email, accessToken }: { email: string;
   const uniqueBrokerAccountIds = [
     ...new Set(activeRelationships.map((r) => r.followerBrokerAccountId)),
   ];
-  const [snapshots, positions, openTradesPage] = await Promise.all([
+  const [snapshots, openTradesPage] = await Promise.all([
     Promise.all(
       uniqueBrokerAccountIds.map((id) =>
         getBrokerAccountSnapshot(baseUrl, accessToken, id).catch(() => null),
-      ),
-    ),
-    Promise.all(
-      uniqueBrokerAccountIds.map((id) =>
-        getBrokerAccountPositions(baseUrl, accessToken, id).catch(() => []),
       ),
     ),
     listAllCopiedTrades(baseUrl, accessToken, { role: "follower", pageSize: 50 }),
@@ -43,7 +37,10 @@ export async function FollowerDashboard({ email, accessToken }: { email: string;
   );
 
   const totalEquity = snapshots.reduce((sum, s) => sum + (s?.equity ?? 0), 0);
-  const openPositionsCount = positions.reduce((sum, p) => sum + p.length, 0);
+  // Bugfix — this used to sum every RAW open position on the broker account (including manual,
+  // never-copied trades), not just the ones Nectrix actually copied — same source Live Activity
+  // already uses below, so the two numbers can never disagree again.
+  const openPositionsCount = openPositions.length;
   const activeCount = relationships.filter((r) => r.status === "ACTIVE").length;
 
   const kpis = [
@@ -103,8 +100,8 @@ export async function FollowerDashboard({ email, accessToken }: { email: string;
                   className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border)] px-5 py-3 first:border-t-0"
                 >
                   <div>
-                    <div className="font-mono text-[12.5px] text-[var(--text)]">
-                      {r.id.slice(0, 8)}…
+                    <div className="text-[13.5px] font-semibold text-[var(--text)]">
+                      {r.masterDisplayName ?? `${r.id.slice(0, 8)}…`}
                     </div>
                     <div className="mt-0.5 text-[12px] text-[var(--text-2)]">
                       {r.copyDirection} · fee {r.feeCollectionMethod}

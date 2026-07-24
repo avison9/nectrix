@@ -11,7 +11,9 @@ import com.nectrix.coreapp.invitations.service.oauth.OAuthLinkStateStore;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.ObjectMapper;
 
@@ -84,7 +86,16 @@ public class BrokerLinkingService {
     String linkSessionId =
         stateStore.createLinkSession(
             userId, tokens.accessToken(), tokens.refreshToken(), expiresAt);
-    return new CallbackResult(linkSessionId, accounts);
+    // Bugfix — the picking screen never indicated which of these accounts this user already has
+    // linked, so re-running this flow to link a SECOND/THIRD account under the same OAuth grant
+    // made it easy to re-select an already-linked one (indistinguishable at a glance from a
+    // genuinely new account) and hit BrokerAccountAlreadyLinkedException with no explanation.
+    Set<String> alreadyLinkedLogins =
+        repository.findAllForUser(userId).stream()
+            .filter(a -> BROKER_TYPE.equals(a.brokerType()))
+            .map(BrokerAccount::brokerAccountLogin)
+            .collect(Collectors.toSet());
+    return new CallbackResult(linkSessionId, accounts, alreadyLinkedLogins);
   }
 
   private static String expiresAt(Long expiresInSeconds) {
@@ -150,7 +161,9 @@ public class BrokerLinkingService {
   }
 
   public record CallbackResult(
-      String linkSessionId, List<BrokerAdaptersInternalClient.CtraderAccount> accounts) {}
+      String linkSessionId,
+      List<BrokerAdaptersInternalClient.CtraderAccount> accounts,
+      Set<String> alreadyLinkedLogins) {}
 
   /** The JSON shape encrypted as a single opaque blob in credentials_ciphertext. */
   public record StoredCredentials(String accessToken, String refreshToken, String expiresAt) {}

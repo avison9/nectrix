@@ -81,6 +81,24 @@ public class BrokerAccountService {
   }
 
   /**
+   * Bugfix — {@link #disconnectBrokerAccount}'s own Javadoc calls disconnect "a reversible-in-
+   * intent checkpoint," but no reconnect path ever existed: a disconnected account's only self-
+   * service option was permanent deletion. This is the reverse of disconnect — sets status back to
+   * {@code PENDING} (not {@code CONNECTED} directly; broker-adapters' own reconcile loop, which
+   * already treats {@code PENDING} as "should be connected," picks it up on its next tick and
+   * reports the real {@code CONNECTED} status once the live connection is actually re-established).
+   * Credentials were never touched by disconnect, so no re-authorization is needed — this is a pure
+   * status flip, same mechanism a fresh link starts in.
+   */
+  public BrokerAccount reconnectBrokerAccount(BrokerAccount existing) {
+    if (!"DISCONNECTED".equals(existing.connectionStatus())) {
+      throw new BrokerAccountNotDisconnectedException();
+    }
+    repository.updateConnectionStatus(existing.id(), "PENDING");
+    return repository.findById(existing.id()).orElseThrow(BrokerAccountNotFoundException::new);
+  }
+
+  /**
    * {@code existing} must already have passed {@link #getBrokerAccount}'s ownership check.
    * broker_accounts has no ON DELETE CASCADE from copy_relationships — a still-referenced row's
    * DataIntegrityViolationException is translated to a clean 409, never a raw 500.

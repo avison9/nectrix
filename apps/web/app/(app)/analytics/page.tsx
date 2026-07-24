@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ApiError, getMasterAnalytics, getMyMasterProfile } from "@nectrix/api-client";
+import { getMasterAnalytics, getMyMasterProfiles } from "@nectrix/api-client";
 import type { AnalyticsPeriod } from "@nectrix/api-client";
 import { coreAppBaseUrl } from "@/lib/core-app";
 import { requireSession } from "@/lib/auth";
@@ -38,28 +38,27 @@ export default async function MasterAnalyticsPage({
   }
 
   const baseUrl = coreAppBaseUrl();
-  let profileId: string;
-  try {
-    profileId = (await getMyMasterProfile(baseUrl, accessToken)).id;
-  } catch (error) {
-    if (error instanceof ApiError && error.status === 404) {
-      return (
-        <div className="mx-auto max-w-[480px] py-16 text-center">
-          <h1 className="text-[20px] font-semibold text-[var(--text)]">Master Analytics</h1>
-          <p className="mt-2 text-[13.5px] text-[var(--text-2)]">
-            You don&apos;t have a Master profile yet.
-          </p>
-          <Link
-            href="/master-profile"
-            className="mt-4 inline-block rounded-[10px] bg-[var(--accent)] px-4 py-2 text-[13px] font-semibold text-white"
-          >
-            Become a Master
-          </Link>
-        </div>
-      );
-    }
-    throw error;
+  // TICKET-125 — a user may now own more than one profile; this page shows the first one
+  // (matching existing single-profile users' behavior unchanged) until per-strategy analytics
+  // selection is built.
+  const profiles = await getMyMasterProfiles(baseUrl, accessToken);
+  if (profiles.length === 0) {
+    return (
+      <div className="mx-auto max-w-[480px] py-16 text-center">
+        <h1 className="text-[20px] font-semibold text-[var(--text)]">Master Analytics</h1>
+        <p className="mt-2 text-[13.5px] text-[var(--text-2)]">
+          You don&apos;t have a Master profile yet.
+        </p>
+        <Link
+          href="/master-profile"
+          className="mt-4 inline-block rounded-[10px] bg-[var(--accent)] px-4 py-2 text-[13px] font-semibold text-white"
+        >
+          Become a Master
+        </Link>
+      </div>
+    );
   }
+  const profileId = profiles[0].id;
 
   const analytics = await getMasterAnalytics(baseUrl, accessToken, profileId, period);
   const { equityCurve, monthlyReturns, pnlByInstrument } = analytics;

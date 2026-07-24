@@ -16,6 +16,7 @@ export function CreateMasterProfileForm({
   const [bio, setBio] = useState("");
   const [strategyTags, setStrategyTags] = useState("");
   const [performanceFeePercent, setPerformanceFeePercent] = useState("20");
+  const [minFollowerBalance, setMinFollowerBalance] = useState("");
   const [feeCollectionMethod, setFeeCollectionMethod] =
     useState<FeeCollectionMethod>("BROKER_PARTNERSHIP");
   const [error, setError] = useState<string | undefined>();
@@ -35,6 +36,7 @@ export function CreateMasterProfileForm({
           .filter(Boolean),
         performanceFeePercent: Number(performanceFeePercent),
         feeCollectionMethod,
+        minFollowerBalance: minFollowerBalance === "" ? undefined : Number(minFollowerBalance),
       });
       if ("error" in result) {
         if (result.existingProfileId) {
@@ -115,6 +117,21 @@ export function CreateMasterProfileForm({
           required
           value={performanceFeePercent}
           onChange={(e) => setPerformanceFeePercent(e.target.value)}
+          className="h-10 rounded-[10px] border border-[var(--border)] bg-transparent px-3 text-[13.5px] text-[var(--text)] outline-none focus:border-[var(--accent)]"
+        />
+      </label>
+
+      <label className="flex flex-col gap-1.5">
+        <span className="text-[12.5px] font-medium text-[var(--text-2)]">
+          Minimum follower balance <span className="text-[var(--text-3)]">(optional)</span>
+        </span>
+        <input
+          type="number"
+          min="0"
+          step="0.01"
+          placeholder="No minimum"
+          value={minFollowerBalance}
+          onChange={(e) => setMinFollowerBalance(e.target.value)}
           className="h-10 rounded-[10px] border border-[var(--border)] bg-transparent px-3 text-[13.5px] text-[var(--text)] outline-none focus:border-[var(--accent)]"
         />
       </label>

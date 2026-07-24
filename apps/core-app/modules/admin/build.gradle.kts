@@ -49,9 +49,20 @@ dependencies {
     implementation(project(":modules:invitations"))
     // TICKET-117 — FeeLedgerAdminApi (dispute raise/list/detail/resolve).
     implementation(project(":modules:billing"))
+    // Engine Control page — RedisHealthCheck's real PING against the same shared,
+    // cluster-aware client modules:auth's own RedisClientConfiguration already registers as a bean
+    // (OAuthLinkStateStore/RateLimiterService) — one UnifiedJedis bean in bootstrap's single
+    // ApplicationContext, autowired here by type, no cross-module import of any auth-module class
+    // needed. Not yet a direct dependency of this module before now.
+    implementation("com.nectrix:redis-client")
     // #421 — AdminCopyRelationshipApi (manual follower-master linking). One-way
     // edge (trading doesn't depend on admin), same shape as the billing edge above.
     implementation(project(":modules:trading"))
+    // TICKET-125 — MasterProfileLookupApi#findByPrimaryBrokerAccountId, so the
+    // master-broker-accounts-by-email lookup only ever offers accounts that already have a
+    // master_profile (the real prerequisite linkFollowerToMaster's own AdminCopyLinkService
+    // enforces) — a MASTER_ONLY/BOTH broker account alone isn't enough.
+    implementation(project(":modules:social"))
     // AuditLogRepository — extracted into this shared-kernel module (same tier as
     // modules:crypto) once modules:invitations also needed to write audit_log
     // (the Nectrix-hosted MT5/MT4 terminal-provisioning work), exactly as that

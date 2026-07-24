@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ApiError, getMasterAnalytics, getMyMasterProfile, listAllCopiedTrades } from "@nectrix/api-client";
+import { getMasterAnalytics, getMyMasterProfiles, listAllCopiedTrades } from "@nectrix/api-client";
 import { coreAppBaseUrl } from "@/lib/core-app";
 import { requireSession } from "@/lib/auth";
 
@@ -44,22 +44,20 @@ export default async function MasterMonthDetailPage({
   }
 
   const baseUrl = coreAppBaseUrl();
-  let profileId: string;
-  try {
-    profileId = (await getMyMasterProfile(baseUrl, accessToken)).id;
-  } catch (error) {
-    if (error instanceof ApiError && error.status === 404) {
-      return (
-        <div className="mx-auto max-w-[480px] py-16 text-center">
-          <h1 className="text-[20px] font-semibold text-[var(--text)]">Month detail</h1>
-          <p className="mt-2 text-[13.5px] text-[var(--text-2)]">
-            You don&apos;t have a Master profile yet.
-          </p>
-        </div>
-      );
-    }
-    throw error;
+  // TICKET-125 — see analytics/page.tsx's own comment: shows the first profile until
+  // per-strategy analytics selection is built.
+  const profiles = await getMyMasterProfiles(baseUrl, accessToken);
+  if (profiles.length === 0) {
+    return (
+      <div className="mx-auto max-w-[480px] py-16 text-center">
+        <h1 className="text-[20px] font-semibold text-[var(--text)]">Month detail</h1>
+        <p className="mt-2 text-[13.5px] text-[var(--text-2)]">
+          You don&apos;t have a Master profile yet.
+        </p>
+      </div>
+    );
   }
+  const profileId = profiles[0].id;
 
   const [analytics, { from, to }] = [
     await getMasterAnalytics(baseUrl, accessToken, profileId, "ALL"),

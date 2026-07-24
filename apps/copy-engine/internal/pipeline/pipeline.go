@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/avison9/nectrix/copy-engine/internal/moneymgmt"
@@ -60,6 +61,13 @@ type Pipeline struct {
 	// reconciliationEventWriter (TICKET-109) is the "reconciliation" topic's
 	// own Writer, same one-writer-per-topic convention.
 	reconciliationEventWriter *kafka.Writer
+
+	// selfStatusMu guards the two fields below -- the Engine Control page's
+	// own self-reported snapshot, set at the end of every successful
+	// CheckReconciliationOnce sweep (see reconcile.go's own comment).
+	selfStatusMu            sync.Mutex
+	lastReconcileAt         time.Time
+	activeRelationshipCount int
 }
 
 func New(pool *pgxpool.Pool, deduper domain.Deduper, router *remoteadapter.Router, fx moneymgmt.FXRateProvider, kafkaWriter *kafka.Writer, riskEventWriter *kafka.Writer, copyRelationshipEventWriter *kafka.Writer, reconciliationEventWriter *kafka.Writer) *Pipeline {

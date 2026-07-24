@@ -23,4 +23,9 @@ public record MasterProfile(
     String feeCollectionMethod,
     boolean isPublic,
     Instant verifiedAt,
-    Instant createdAt) {}
+    Instant createdAt,
+    // Feature — the minimum broker-account balance a Follower must have to start copying this
+    // Master. Null means no minimum (default, unchanged behavior). Enforced at copy-relationship
+    // activation time, not an ongoing runtime check — see InvitationCopySetupService/
+    // AdminCopyLinkService in modules:trading.
+    BigDecimal minFollowerBalance) {}

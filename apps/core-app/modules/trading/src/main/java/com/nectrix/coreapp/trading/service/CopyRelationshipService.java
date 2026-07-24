@@ -58,6 +58,21 @@ public class CopyRelationshipService {
     return repository.findById(id).orElseThrow(CopyRelationshipNotFoundException::new);
   }
 
+  /**
+   * Feature — the Master-side counterpart to {@link #getCopyRelationship}: read-only, ownership
+   * checked against the MASTER side ({@code masterProfileId}'s owner) instead of the follower —
+   * deliberately a SEPARATE method, not a widened {@code @PostAuthorize} on {@link
+   * #getCopyRelationship} itself, since every mutation endpoint (pause/resume/stop/patch/etc.)
+   * reuses that method as its own fetch-then-check gate; widening it would have let a Master call
+   * Follower-only mutations too.
+   */
+  @PostAuthorize(
+      "@perms.isOwnerOrStaff(authentication,"
+          + " @masterProfileOwnership.ownerUserId(returnObject.masterProfileId()))")
+  public CopyRelationship getCopyRelationshipForMaster(UUID id) {
+    return repository.findById(id).orElseThrow(CopyRelationshipNotFoundException::new);
+  }
+
   /** List endpoint's own query is scoped to the caller at the SQL layer — never a bare findAll. */
   public List<CopyRelationship> listForUser(UUID userId, String role, String status) {
     return repository.findAllForUser(userId, role, status);

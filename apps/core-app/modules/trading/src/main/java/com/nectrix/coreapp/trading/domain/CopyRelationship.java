@@ -45,4 +45,9 @@ public record CopyRelationship(
     UUID originatingFollowRequestId,
     Instant createdAt,
     Instant stoppedAt,
-    List<String> excludedSymbols) {}
+    List<String> excludedSymbols,
+    // Feature — the follower broker account's live equity at activation time (null for
+    // relationships created before this shipped, and for IndividualCopySetupService's private
+    // profiles). The anchor for "% return since following" — see CopyRelationshipController's
+    // returnPct enrichment.
+    BigDecimal startingEquity) {}

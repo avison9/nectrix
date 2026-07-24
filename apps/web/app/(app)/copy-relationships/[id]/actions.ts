@@ -4,14 +4,13 @@ import {
   ApiError,
   acknowledgeRisk,
   getManagementAgreement,
-  listCopyRelationshipTrades,
   pauseCopyRelationship,
   resumeCopyRelationship,
   signAgreement,
   stopCopyRelationship,
   updateCopySettings,
 } from "@nectrix/api-client";
-import type { CopiedTradesPage, CopyRelationship, CopySettingsInput } from "@nectrix/api-client";
+import type { CopyRelationship, CopySettingsInput } from "@nectrix/api-client";
 import { coreAppBaseUrl } from "@/lib/core-app";
 import { requireSession } from "@/lib/auth";
 
@@ -60,11 +59,6 @@ export async function getAgreementUrlAction(
   } catch {
     return { error: "Couldn't load the signed agreement — please try again." };
   }
-}
-
-export async function loadTradesPageAction(id: string, page: number): Promise<CopiedTradesPage> {
-  const { accessToken } = await requireSession();
-  return listCopyRelationshipTrades(coreAppBaseUrl(), accessToken, id, page);
 }
 
 export async function updateCopySettingsAction(

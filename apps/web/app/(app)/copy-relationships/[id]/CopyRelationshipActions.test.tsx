@@ -49,6 +49,10 @@ function relationship(status: CopyRelationship["status"]): CopyRelationship {
     originatingFollowRequestId: null,
     highWaterMark: null,
     createdAt: "2026-01-01T00:00:00Z",
+    excludedSymbols: [],
+    masterDisplayName: "Test Master",
+    followerDisplayName: "Test Follower",
+    returnPct: null,
   };
 }
 

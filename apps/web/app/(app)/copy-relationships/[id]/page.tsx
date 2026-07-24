@@ -1,12 +1,11 @@
 import Link from "next/link";
-import { getCopyRelationship, listCopyRelationshipTrades } from "@nectrix/api-client";
+import { getCopyRelationship } from "@nectrix/api-client";
 import { coreAppBaseUrl } from "@/lib/core-app";
 import { requireSession } from "@/lib/auth";
 import { fetchOrNotFound } from "@/lib/fetchOrNotFound";
 import { CopyRelationshipStatusBadge } from "@/components/CopyRelationshipStatusBadge";
 import { CopyRelationshipActions } from "./CopyRelationshipActions";
 import { CopySettingsForm } from "./CopySettingsForm";
-import { TradesHistory } from "./TradesHistory";
 
 export default async function CopyRelationshipDetailPage({
   params,
@@ -16,7 +15,6 @@ export default async function CopyRelationshipDetailPage({
   const { accessToken } = await requireSession();
   const { id } = await params;
   const relationship = await fetchOrNotFound(getCopyRelationship(coreAppBaseUrl(), accessToken, id));
-  const tradesPage = await listCopyRelationshipTrades(coreAppBaseUrl(), accessToken, id);
 
   return (
     <div className="mx-auto max-w-[560px]">
@@ -79,8 +77,6 @@ export default async function CopyRelationshipDetailPage({
         </div>
         <CopySettingsForm relationship={relationship} />
       </div>
-
-      <TradesHistory relationshipId={id} initialPage={tradesPage} />
     </div>
   );
 }

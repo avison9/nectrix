@@ -1,5 +1,7 @@
 package com.nectrix.coreapp.admin.web;
 
+import com.nectrix.coreapp.admin.client.InfraStatusClient;
+import com.nectrix.coreapp.admin.client.InfraStatusClient.EngineSelfStatus;
 import com.nectrix.coreapp.admin.client.MtTerminalHostClient;
 import com.nectrix.coreapp.admin.client.MtTerminalHostClient.TerminalStatus;
 import com.nectrix.coreapp.admin.repository.AdminRepository;
@@ -7,6 +9,9 @@ import com.nectrix.coreapp.admin.repository.AdminRepository.BrokerConnectionCoun
 import com.nectrix.coreapp.admin.repository.AdminRepository.MtBrokerAccountRef;
 import com.nectrix.coreapp.admin.service.KafkaConsumerLagService;
 import com.nectrix.coreapp.admin.service.KafkaConsumerLagService.ConsumerGroupLag;
+import com.nectrix.coreapp.admin.service.RedisHealthCheck;
+import com.nectrix.coreapp.admin.service.ServiceControlClient;
+import com.nectrix.coreapp.admin.service.ServiceControlClient.ServiceId;
 import com.nectrix.coreapp.audit.repository.AuditLogRepository;
 import com.nectrix.coreapp.auth.api.ImpersonationApi;
 import com.nectrix.coreapp.auth.api.ImpersonationResult;
@@ -21,11 +26,13 @@ import com.nectrix.coreapp.invitations.api.BrokerAccountLookupApi;
 import com.nectrix.coreapp.invitations.api.BrokerAccountView;
 import com.nectrix.coreapp.invitations.api.TierChangeRequestAdminApi;
 import com.nectrix.coreapp.invitations.api.TierChangeRequestAdminApi.TierChangeRequestView;
+import com.nectrix.coreapp.social.api.MasterProfileLookupApi;
 import com.nectrix.coreapp.trading.api.AdminCopyRelationshipApi;
 import com.nectrix.coreapp.trading.api.AdminCopyRelationshipApi.LinkedCopyRelationshipView;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -33,6 +40,7 @@ import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.BiConsumer;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -92,9 +100,21 @@ public class AdminController {
   private final AuditLogRepository auditLogRepository;
   private final ObjectMapper objectMapper;
   private final AdminCopyRelationshipApi adminCopyRelationshipApi;
+  private final MasterProfileLookupApi masterProfileLookupApi;
+  private final InfraStatusClient infraStatusClient;
+  private final RedisHealthCheck redisHealthCheck;
+  private final Optional<ServiceControlClient> serviceControlClient;
 
   /** System Health's Copy Engine throughput/error-rate window — see {@link #getSystemHealth}. */
   private static final Duration COPY_ENGINE_WINDOW = Duration.ofMinutes(15);
+
+  /**
+   * Engine Control page's "stale" cutoff — 2x the 30s reconcile/poll interval every one of
+   * broker-adapters/copy-engine/mt5-bridge-gateway's own loops already uses (see each service's own
+   * main.go), so "stale" genuinely means "this loop stopped making progress," not just "nothing
+   * changed last cycle."
+   */
+  private static final Duration ENGINE_STALE_THRESHOLD = Duration.ofSeconds(60);
 
   public AdminController(
       ImpersonationApi impersonationApi,
@@ -108,7 +128,11 @@ public class AdminController {
       KafkaConsumerLagService kafkaConsumerLagService,
       AuditLogRepository auditLogRepository,
       ObjectMapper objectMapper,
-      AdminCopyRelationshipApi adminCopyRelationshipApi) {
+      AdminCopyRelationshipApi adminCopyRelationshipApi,
+      MasterProfileLookupApi masterProfileLookupApi,
+      InfraStatusClient infraStatusClient,
+      RedisHealthCheck redisHealthCheck,
+      Optional<ServiceControlClient> serviceControlClient) {
     this.impersonationApi = impersonationApi;
     this.brokerAccountLookupApi = brokerAccountLookupApi;
     this.userProvisioningApi = userProvisioningApi;
@@ -121,6 +145,10 @@ public class AdminController {
     this.auditLogRepository = auditLogRepository;
     this.objectMapper = objectMapper;
     this.adminCopyRelationshipApi = adminCopyRelationshipApi;
+    this.masterProfileLookupApi = masterProfileLookupApi;
+    this.infraStatusClient = infraStatusClient;
+    this.redisHealthCheck = redisHealthCheck;
+    this.serviceControlClient = serviceControlClient;
   }
 
   @PostMapping("/api/v1/admin/impersonate/{userId}")
@@ -262,11 +290,41 @@ public class AdminController {
   }
 
   /**
+   * TICKET-125 — a Master may own more than one eligible ({@code MASTER_ONLY}/{@code BOTH}) broker
+   * account, one per strategy; the admin-portal's own link form calls this after resolving a
+   * master's email, to let the admin pick WHICH of their accounts/strategies to link the follower
+   * to, instead of an implicit "the" primary account.
+   *
+   * <p>Bugfix — a {@code MASTER_ONLY}/{@code BOTH} broker account alone isn't linkable: {@code
+   * linkFollowerToMaster}'s own {@code AdminCopyLinkService} requires a real {@code
+   * master_profiles} row for the account (a {@code copy_relationships} row can't exist without
+   * one), which only exists once the Master has self-service-created a profile for it. Filtering
+   * here means the picker never offers an account that would 404 at submit time.
+   */
+  @GetMapping("/api/v1/admin/users/by-email/master-broker-accounts")
+  @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
+  public List<BrokerAccountView> findMasterBrokerAccountsByEmail(@RequestParam String email) {
+    UserView masterUser =
+        userAdminApi
+            .findByEmail(email)
+            .orElseThrow(() -> new NoSuchElementException("No such user: " + email));
+    return brokerAccountLookupApi.listForUser(masterUser.id()).stream()
+        .filter(a -> "MASTER_ONLY".equals(a.connectionRole()) || "BOTH".equals(a.connectionRole()))
+        .filter(a -> masterProfileLookupApi.findByPrimaryBrokerAccountId(a.id()).isPresent())
+        .toList();
+  }
+
+  /**
    * #421 — a SUPER_ADMIN/ADMIN can create a real {@code copy_relationships} row directly, without
    * the Master sending an invite or the Follower requesting one. ADMIN+SUPER_ADMIN — same "grants a
    * real capability" class of action {@link #approveTierChangeRequest} already establishes for
-   * SUPER_ADMIN. The Master is identified by email (resolved to a user id here, before ever
-   * reaching {@code trading}) rather than requiring a separate master-search UI/ endpoint.
+   * SUPER_ADMIN.
+   *
+   * <p>TICKET-125 — the Master is now identified by {@code masterBrokerAccountId} (resolved via
+   * {@link #findMasterBrokerAccountsByEmail} in the admin-portal's own two-step flow), not just an
+   * email resolved to a user id — a user with multiple eligible accounts can have more than one
+   * followable profile, so "which Master" alone is no longer enough to know which strategy the
+   * follower should copy.
    */
   @PostMapping("/api/v1/admin/users/{followerId}/copy-relationships")
   @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
@@ -275,14 +333,9 @@ public class AdminController {
       @RequestBody LinkFollowerToMasterRequest request,
       @AuthenticationPrincipal Jwt jwt) {
     UUID actingAdminId = currentUserId(jwt);
-    UserView masterUser =
-        userAdminApi
-            .findByEmail(request.masterEmail())
-            .orElseThrow(
-                () -> new NoSuchElementException("No such user: " + request.masterEmail()));
     LinkedCopyRelationshipView view =
         adminCopyRelationshipApi.linkFollowerToMaster(
-            followerId, masterUser.id(), request.followerBrokerAccountId());
+            followerId, request.masterBrokerAccountId(), request.followerBrokerAccountId());
     auditLogRepository.insert(
         actingAdminId,
         "ADMIN",
@@ -292,7 +345,7 @@ public class AdminController {
         objectMapper.writeValueAsString(
             Map.of(
                 "followerUserId", followerId.toString(),
-                "masterUserId", masterUser.id().toString(),
+                "masterBrokerAccountId", request.masterBrokerAccountId().toString(),
                 "status", view.status())));
     return new LinkFollowerToMasterResponse(view.id(), view.status(), view.masterDisplayName());
   }
@@ -505,6 +558,106 @@ public class AdminController {
   }
 
   /**
+   * The Engine Control page's own status snapshot — broker-adapters/copy-engine/
+   * mt5-bridge-gateway's own new {@code GET /internal/self/status} routes (4-state:
+   * CONNECTED/IDLE/STALE/DISCONNECTED), mt-terminal-host's existing pod-status call reused purely
+   * as a reachability signal (2-state), and Redis's own real {@code PING} (2-state) — see this
+   * feature's own plan doc for why each gets the state model it does.
+   */
+  @GetMapping("/api/v1/admin/engine-status")
+  @PreAuthorize("hasAnyRole('ADMIN','SUPPORT')")
+  public List<EngineStatusView> getEngineStatus() {
+    List<EngineStatusView> views = new ArrayList<>();
+    views.add(
+        buildReconcilingEngineStatus(
+            "broker-adapters", "Broker Adapters", infraStatusClient.getBrokerAdaptersStatus()));
+    views.add(
+        buildReconcilingEngineStatus(
+            "copy-engine", "Copy Engine", infraStatusClient.getCopyEngineStatus()));
+    views.add(
+        buildReconcilingEngineStatus(
+            "mt5-bridge-gateway",
+            "MT5 Bridge Gateway",
+            infraStatusClient.getMt5BridgeGatewayStatus()));
+    views.add(buildMtTerminalHostEngineStatus());
+    views.add(buildRedisEngineStatus());
+    return views;
+  }
+
+  private EngineStatusView buildReconcilingEngineStatus(
+      String serviceId, String displayName, Optional<EngineSelfStatus> statusOpt) {
+    if (statusOpt.isEmpty()) {
+      return new EngineStatusView(serviceId, displayName, "DISCONNECTED", null, null, null);
+    }
+    EngineSelfStatus status = statusOpt.get();
+    boolean stale =
+        status.lastReconcileAt() == null
+            || Duration.between(status.lastReconcileAt(), Instant.now())
+                    .compareTo(ENGINE_STALE_THRESHOLD)
+                > 0;
+    String state = stale ? "STALE" : (status.count() > 0 ? "CONNECTED" : "IDLE");
+    return new EngineStatusView(
+        serviceId, displayName, state, status.count(), status.lastReconcileAt(), null);
+  }
+
+  private EngineStatusView buildMtTerminalHostEngineStatus() {
+    Optional<List<TerminalStatus>> podStatuses = mtTerminalHostClient.listTerminalStatuses();
+    String state = podStatuses.isPresent() ? "CONNECTED" : "DISCONNECTED";
+    Integer count = podStatuses.map(List::size).orElse(null);
+    return new EngineStatusView("mt-terminal-host", "MT Terminal Host", state, count, null, null);
+  }
+
+  private EngineStatusView buildRedisEngineStatus() {
+    RedisHealthCheck.Status status = redisHealthCheck.check();
+    String state = status.connected() ? "CONNECTED" : "DISCONNECTED";
+    return new EngineStatusView("redis", "Redis", state, null, null, status.latencyMs());
+  }
+
+  /**
+   * ADMIN-only — same "SUPPORT cannot action platform state" distinction {@code
+   * /ledger-adjustments} establishes; restarting a live engine is a real operational action, not a
+   * read. Disabled (no {@link ServiceControlClient} bean at all) surfaces as a real 409 via the
+   * existing {@code IllegalStateException} handler — the same outcome whether it's disabled by
+   * config or genuinely unavailable, since a caller can't act on the distinction either way.
+   */
+  @PostMapping("/api/v1/admin/engines/{serviceId}/restart")
+  @PreAuthorize("hasRole('ADMIN')")
+  public ResponseEntity<Void> restartEngine(
+      @PathVariable String serviceId, @AuthenticationPrincipal Jwt jwt) {
+    return controlEngine(serviceId, "RESTART", jwt, ServiceControlClient::restart);
+  }
+
+  @PostMapping("/api/v1/admin/engines/{serviceId}/stop")
+  @PreAuthorize("hasRole('ADMIN')")
+  public ResponseEntity<Void> stopEngine(
+      @PathVariable String serviceId, @AuthenticationPrincipal Jwt jwt) {
+    return controlEngine(serviceId, "STOP", jwt, ServiceControlClient::stop);
+  }
+
+  @PostMapping("/api/v1/admin/engines/{serviceId}/start")
+  @PreAuthorize("hasRole('ADMIN')")
+  public ResponseEntity<Void> startEngine(
+      @PathVariable String serviceId, @AuthenticationPrincipal Jwt jwt) {
+    return controlEngine(serviceId, "START", jwt, ServiceControlClient::start);
+  }
+
+  private ResponseEntity<Void> controlEngine(
+      String serviceIdParam,
+      String action,
+      Jwt jwt,
+      BiConsumer<ServiceControlClient, ServiceId> operation) {
+    ServiceControlClient client =
+        serviceControlClient.orElseThrow(
+            () -> new IllegalStateException("service control is disabled"));
+    ServiceId serviceId = ServiceId.fromConfigKey(serviceIdParam);
+    operation.accept(client, serviceId);
+    UUID actingAdminId = currentUserId(jwt);
+    auditLogRepository.insert(
+        actingAdminId, "ADMIN", "ENGINE_" + action, "ENGINE", serviceIdParam, null);
+    return ResponseEntity.status(HttpStatus.NO_CONTENT).build();
+  }
+
+  /**
    * TICKET-123 — joins every linked MT4/MT5 {@code broker_accounts} row against mt-terminal-host's
    * live pod statuses, so "no pod at all" (never provisioned, or torn down) is distinguishable from
    * "pod exists but unhealthy" — both are real, different failure modes an Admin/Support user needs
@@ -616,7 +769,8 @@ public class AdminController {
   public record UserDetailResponse(
       UserView user, List<BrokerAccountView> brokerAccounts, MtTerminalsSection mtTerminals) {}
 
-  public record LinkFollowerToMasterRequest(String masterEmail, UUID followerBrokerAccountId) {}
+  public record LinkFollowerToMasterRequest(
+      UUID masterBrokerAccountId, UUID followerBrokerAccountId) {}
 
   public record LinkFollowerToMasterResponse(
       UUID copyRelationshipId, String status, String masterDisplayName) {}
@@ -661,4 +815,19 @@ public class AdminController {
       long reconciliationDriftLastHour,
       List<ConsumerGroupLag> kafkaConsumerLag,
       MtTerminalsSection mtTerminals) {}
+
+  /**
+   * Engine Control page's one row per engine. {@code status} is one of CONNECTED/IDLE/STALE/
+   * DISCONNECTED for broker-adapters/copy-engine/mt5-bridge-gateway, or just CONNECTED/
+   * DISCONNECTED for mt-terminal-host/redis (see {@link #getEngineStatus}'s own Javadoc). {@code
+   * connectedCount}/{@code lastReconcileAt}/{@code latencyMs} are each null whenever they don't
+   * apply to that engine's own state model, never a fabricated zero.
+   */
+  public record EngineStatusView(
+      String serviceId,
+      String displayName,
+      String status,
+      Integer connectedCount,
+      Instant lastReconcileAt,
+      Long latencyMs) {}
 }

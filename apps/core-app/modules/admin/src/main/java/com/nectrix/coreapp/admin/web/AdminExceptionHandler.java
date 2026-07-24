@@ -1,5 +1,6 @@
 package com.nectrix.coreapp.admin.web;
 
+import com.nectrix.coreapp.admin.service.ServiceControlClient.ServiceControlException;
 import java.util.NoSuchElementException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -40,6 +41,19 @@ public class AdminExceptionHandler {
   @ExceptionHandler(IllegalStateException.class)
   public ResponseEntity<ErrorBody> handleInvalidState() {
     return ResponseEntity.status(HttpStatus.CONFLICT).body(new ErrorBody("invalid_state"));
+  }
+
+  /**
+   * Engine Control page — thrown by {@code DockerServiceControlClient} when the underlying {@code
+   * docker restart/stop/start} call itself failed (container not found, docker daemon unreachable,
+   * non-zero exit) — a real 502, distinct from the 409 a disabled service-control bean produces
+   * ({@code IllegalStateException} above), since this means the action was attempted and failed,
+   * not merely refused.
+   */
+  @ExceptionHandler(ServiceControlException.class)
+  public ResponseEntity<ErrorBody> handleServiceControlFailure(ServiceControlException e) {
+    return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+        .body(new ErrorBody("service_control_failed: " + e.getMessage()));
   }
 
   public record ErrorBody(String error) {}
