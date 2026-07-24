@@ -108,6 +108,19 @@ COPY --from=install-diagnostics /diagnostics /diagnostics
 # signal; the exit code is logged only as non-fatal context.
 FROM install-diagnostics AS install-verified
 
+# Bugfix — Trivy's HIGH-severity gate (main-pipeline.yml's build-scan-push job) started flagging
+# 20 HIGH CVEs (CVE-2026-61857/61863/61866/61870) in imagemagick/libmagickcore/libmagickwand, none
+# fixed yet in Debian bookworm's own repo (wine-base's own `apt-get upgrade` can't help when no
+# fixed version exists upstream). imagemagick and x11-apps are diagnostic-only (see wine-base's own
+# comment: `convert`/`xwd`, used exclusively by install-with-diagnostics.sh's screenshot step, which
+# already ran in install-diagnostics above) — never needed by the real terminal image. Purging them
+# here, at the top of install-verified's own lineage (this stage -> compile-ea -> final), removes
+# them from every image this pipeline actually pushes/scans. diagnostics-export forked off
+# install-diagnostics BEFORE this point, so its own already-captured screenshots are unaffected.
+RUN apt-get purge -y imagemagick x11-apps \
+    && apt-get autoremove -y --purge \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN echo "mt5 install exit code (informational only, not gating — see comment above): $(cat /diagnostics/mt5-install.exitcode)"
 RUN test -f /canonical-mt5/terminal64.exe || (echo "MT5 install genuinely failed — terminal64.exe is missing; see the mt-terminal-install-diagnostics CI artifact" >&2 && exit 1)
 RUN test -f /canonical-mt5/metaeditor64.exe || (echo "MT5 install genuinely failed — metaeditor64.exe is missing; see the mt-terminal-install-diagnostics CI artifact" >&2 && exit 1)
