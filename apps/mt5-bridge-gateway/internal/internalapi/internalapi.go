@@ -157,12 +157,8 @@ type selfStatusResponse struct {
 }
 
 func handleSelfStatus(w http.ResponseWriter, r *http.Request, selfStatus SelfStatusProvider) {
-	status := selfStatus.Status()
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(selfStatusResponse{
-		ConnectedCount:  status.ConnectedCount,
-		LastReconcileAt: status.LastReconcileAt,
-	})
+	_ = json.NewEncoder(w).Encode(selfStatusResponse(selfStatus.Status()))
 }
 
 func handleGetAccountSnapshot(w http.ResponseWriter, r *http.Request, adapters PlatformAdapters, logger *slog.Logger) {

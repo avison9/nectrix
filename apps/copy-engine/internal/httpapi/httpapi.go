@@ -113,12 +113,8 @@ func NewMux(serviceName string, adapter domain.BrokerAdapter, masterHandle domai
 	// broker-adapters'/mt5-bridge-gateway's identical GET /internal/self/status route
 	// and shared-secret gating).
 	mux.Handle("GET /internal/self/status", requireSharedSecret(internalServiceToken, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		status := pl.Status()
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(selfStatusResponse{
-			ActiveRelationshipCount: status.ActiveRelationshipCount,
-			LastReconcileAt:         status.LastReconcileAt,
-		})
+		_ = json.NewEncoder(w).Encode(selfStatusResponse(pl.Status()))
 	})))
 
 	return otelhttp.NewHandler(withMetrics(mux), serviceName)
