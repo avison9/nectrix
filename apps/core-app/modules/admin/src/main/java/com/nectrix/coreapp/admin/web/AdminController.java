@@ -110,9 +110,9 @@ public class AdminController {
 
   /**
    * Engine Control page's "stale" cutoff — 2x the 30s reconcile/poll interval every one of
-   * broker-adapters/copy-engine/mt5-bridge-gateway's own loops already uses (see each service's
-   * own main.go), so "stale" genuinely means "this loop stopped making progress," not just
-   * "nothing changed last cycle."
+   * broker-adapters/copy-engine/mt5-bridge-gateway's own loops already uses (see each service's own
+   * main.go), so "stale" genuinely means "this loop stopped making progress," not just "nothing
+   * changed last cycle."
    */
   private static final Duration ENGINE_STALE_THRESHOLD = Duration.ofSeconds(60);
 
@@ -819,9 +819,9 @@ public class AdminController {
   /**
    * Engine Control page's one row per engine. {@code status} is one of CONNECTED/IDLE/STALE/
    * DISCONNECTED for broker-adapters/copy-engine/mt5-bridge-gateway, or just CONNECTED/
-   * DISCONNECTED for mt-terminal-host/redis (see {@link #getEngineStatus}'s own Javadoc).
-   * {@code connectedCount}/{@code lastReconcileAt}/{@code latencyMs} are each null whenever they
-   * don't apply to that engine's own state model, never a fabricated zero.
+   * DISCONNECTED for mt-terminal-host/redis (see {@link #getEngineStatus}'s own Javadoc). {@code
+   * connectedCount}/{@code lastReconcileAt}/{@code latencyMs} are each null whenever they don't
+   * apply to that engine's own state model, never a fabricated zero.
    */
   public record EngineStatusView(
       String serviceId,

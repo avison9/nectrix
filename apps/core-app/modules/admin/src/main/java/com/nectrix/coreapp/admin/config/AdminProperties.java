@@ -42,9 +42,10 @@ public record AdminProperties(
   /**
    * Local-Docker restart/stop/start capability (Engine Control page) — see {@code
    * DockerServiceControlClient}'s own Javadoc for why this defaults to disabled. {@code containers}
-   * maps a fixed {@code serviceId} (broker-adapters/copy-engine/mt5-bridge-gateway/mt-terminal-host)
-   * to the real {@code docker run --name} value it was started with locally — there's no
-   * docker-compose-derived naming convention to infer this from.
+   * maps a fixed {@code serviceId}
+   * (broker-adapters/copy-engine/mt5-bridge-gateway/mt-terminal-host) to the real {@code docker run
+   * --name} value it was started with locally — there's no docker-compose-derived naming convention
+   * to infer this from.
    */
   public record ServiceControl(boolean enabled, Map<String, String> containers) {}
 }

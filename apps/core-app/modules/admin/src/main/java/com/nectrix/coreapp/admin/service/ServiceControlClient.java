@@ -10,9 +10,9 @@ public interface ServiceControlClient {
 
   /**
    * The fixed set of engines this page can act on — {@code configKey} matches
-   * nectrix.admin.service-control.containers' own map keys in application.yml. A fixed enum
-   * (rather than accepting a raw serviceId string from the request) means there is no path from an
-   * HTTP request body to an unvalidated container name ever reaching a shell-out call.
+   * nectrix.admin.service-control.containers' own map keys in application.yml. A fixed enum (rather
+   * than accepting a raw serviceId string from the request) means there is no path from an HTTP
+   * request body to an unvalidated container name ever reaching a shell-out call.
    */
   enum ServiceId {
     BROKER_ADAPTERS("broker-adapters"),
@@ -30,7 +30,10 @@ public interface ServiceControlClient {
       return configKey;
     }
 
-    /** Used by AdminController to turn the {@code {serviceId}} path variable into a fixed enum value. */
+    /**
+     * Used by AdminController to turn the {@code {serviceId}} path variable into a fixed enum
+     * value.
+     */
     public static ServiceId fromConfigKey(String configKey) {
       for (ServiceId id : values()) {
         if (id.configKey.equals(configKey)) {

@@ -4,12 +4,12 @@ import org.springframework.stereotype.Service;
 import redis.clients.jedis.UnifiedJedis;
 
 /**
- * Engine Control page's own Redis card. Research turned up no existing staleness signal for
- * Redis's actual cached data — every key this codebase writes (dedup entries, rate-limit buckets,
- * OAuth link state) is short-TTL and self-expiring by design, so there's no "is this data
- * outdated" question to answer, only "is Redis reachable right now" — the same real incident
- * (broker-adapters/copy-engine silently losing their Redis connection) this page exists to
- * surface. A real {@code PING} against the same shared {@link UnifiedJedis} bean
+ * Engine Control page's own Redis card. Research turned up no existing staleness signal for Redis's
+ * actual cached data — every key this codebase writes (dedup entries, rate-limit buckets, OAuth
+ * link state) is short-TTL and self-expiring by design, so there's no "is this data outdated"
+ * question to answer, only "is Redis reachable right now" — the same real incident
+ * (broker-adapters/copy-engine silently losing their Redis connection) this page exists to surface.
+ * A real {@code PING} against the same shared {@link UnifiedJedis} bean
  * modules.auth.config.RedisClientConfiguration already registers, autowired here by type — no
  * cross-module import needed (see modules/admin's own build.gradle.kts comment).
  */

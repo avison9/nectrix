@@ -17,9 +17,9 @@ import org.springframework.web.client.RestClientException;
  * reachable-but-idle response.
  *
  * <p>copy-engine's own self-status response uses {@code activeRelationshipCount} where
- * broker-adapters/mt5-bridge-gateway use {@code connectedCount} (see each service's own doc
- * comment on why "connected count" means something different for a Kafka-consuming pipeline than
- * for a broker-connection-holding adapter) — both are normalized into this client's single {@link
+ * broker-adapters/mt5-bridge-gateway use {@code connectedCount} (see each service's own doc comment
+ * on why "connected count" means something different for a Kafka-consuming pipeline than for a
+ * broker-connection-holding adapter) — both are normalized into this client's single {@link
  * EngineSelfStatus#count()} field, since AdminController/the Engine Control page only ever need
  * "how many things is this engine actively servicing," not the field name that produced it.
  */
@@ -57,13 +57,15 @@ public class InfraStatusClient {
       if (wire == null) {
         return Optional.empty();
       }
-      return Optional.of(new EngineSelfStatus(wire.activeRelationshipCount(), wire.lastReconcileAt()));
+      return Optional.of(
+          new EngineSelfStatus(wire.activeRelationshipCount(), wire.lastReconcileAt()));
     } catch (RestClientException e) {
       return Optional.empty();
     }
   }
 
-  private Optional<EngineSelfStatus> fetchConnectedCountShape(AdminProperties.EngineService config) {
+  private Optional<EngineSelfStatus> fetchConnectedCountShape(
+      AdminProperties.EngineService config) {
     try {
       ConnectedCountStatusWire wire =
           restClient

@@ -8,8 +8,8 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
 /**
- * Shells out to the local {@code docker} CLI ({@code docker restart/stop/start <container>}) —
- * only ever valid because core-app itself runs directly on the dev host in local dev (not
+ * Shells out to the local {@code docker} CLI ({@code docker restart/stop/start <container>}) — only
+ * ever valid because core-app itself runs directly on the dev host in local dev (not
  * containerized), so it can see and control sibling containers via the host's own Docker daemon. A
  * real k8s deployment would need a k8s client + RBAC instead (deferred follow-up ticket, see
  * ServiceControlClient's own Javadoc) — this exact mechanism would NOT work if core-app itself ran
@@ -63,20 +63,29 @@ public class DockerServiceControlClient implements ServiceControlClient {
 
     try {
       Process process =
-          new ProcessBuilder("docker", action, containerName)
-              .redirectErrorStream(true)
-              .start();
+          new ProcessBuilder("docker", action, containerName).redirectErrorStream(true).start();
       boolean finished = process.waitFor(COMMAND_TIMEOUT_SECONDS, TimeUnit.SECONDS);
       if (!finished) {
         process.destroyForcibly();
         throw new ServiceControlException(
-            "docker " + action + " " + containerName + " timed out after "
-                + COMMAND_TIMEOUT_SECONDS + "s");
+            "docker "
+                + action
+                + " "
+                + containerName
+                + " timed out after "
+                + COMMAND_TIMEOUT_SECONDS
+                + "s");
       }
       if (process.exitValue() != 0) {
         String output = new String(process.getInputStream().readAllBytes());
         throw new ServiceControlException(
-            "docker " + action + " " + containerName + " exited " + process.exitValue() + ": "
+            "docker "
+                + action
+                + " "
+                + containerName
+                + " exited "
+                + process.exitValue()
+                + ": "
                 + output.strip());
       }
     } catch (IOException e) {

@@ -12,7 +12,6 @@ import org.apache.kafka.clients.CommonClientConfigs;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.ListOffsetsResult;
 import org.apache.kafka.clients.admin.OffsetSpec;
-import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.TopicPartitionInfo;
 import org.slf4j.Logger;
@@ -67,9 +66,9 @@ public class KafkaConsumerLagService {
    * {@code messagesReceived} is topic-wide (every partition's real log-end minus real log-start
    * offset, via {@code OffsetSpec.earliest()}/{@code latest()}) — independent of any one consumer
    * group, so it stays accurate even for a group that's never run. {@code messagesProcessed} is
-   * this group's own committed offset minus each partition's earliest offset, summed — "how many
-   * of the messages this topic has ever received has this group actually consumed." Both are -1 on
-   * a failure to compute, same sentinel {@code lag} already used.
+   * this group's own committed offset minus each partition's earliest offset, summed — "how many of
+   * the messages this topic has ever received has this group actually consumed." Both are -1 on a
+   * failure to compute, same sentinel {@code lag} already used.
    */
   public record ConsumerGroupLag(
       String groupId, String topic, long lag, long messagesReceived, long messagesProcessed) {}
